@@ -25,7 +25,8 @@ class Handler(BaseHTTPRequestHandler):
         elif url.path == "/cacheable":
             self.answer(200, f"cacheable {MARKER}\n".encode(), "text/plain", cacheable=True)
         elif url.path == "/":
-            self.answer(200, PAGE.replace("__MARKER__", MARKER).encode(), "text/html; charset=utf-8", cacheable=True)
+            # Never cacheable itself: a cached page would carry an earlier run's marker into this one.
+            self.answer(200, PAGE.replace("__MARKER__", MARKER).encode(), "text/html; charset=utf-8")
         else:
             self.answer(404, b"", "text/plain")
 

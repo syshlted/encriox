@@ -6,7 +6,8 @@
 # `normal` is the control: the same page in a normal tab must leave its marker on disk, or the check finds nothing
 # because it can see nothing. A page from `serve`, reached through `adb reverse`, writes a fresh marker into every
 # store a page can reach. Then the app is sent home, so that it saves what it saves, and its whole data directory and
-# its external one are searched for the marker, byte for byte. Files that appeared during the session are listed.
+# its external one are copied here and searched for the marker, as ASCII and as UTF-16. Files that appeared or changed
+# during the session are listed.
 set -eu
 
 here=$(cd "$(dirname "$0")" && pwd)
@@ -31,8 +32,13 @@ files() {
 
 $adb push "$here/geckoview-config.yaml" /data/local/tmp/$package-geckoview-config.yaml >/dev/null
 $adb shell am force-stop $package
-$adb shell am start -W -n $package/org.mozilla.fenix.encri.EncriGateActivity --es private $private >/dev/null
-sleep 2
+# Not `am start -W`: the gate finishes without drawing, and -W would wait for it forever.
+$adb logcat -c
+$adb shell am start -n $package/org.mozilla.fenix.encri.EncriGateActivity --es private $private >/dev/null
+for _ in $(seq 30); do
+    $adb logcat -d -s encriox-spike:I | grep -q "gate private=$private" && break
+    sleep 1
+done
 $adb shell am force-stop $package
 files > "$work/before"
 
@@ -40,26 +46,45 @@ files > "$work/before"
 server=$!
 $adb reverse tcp:$port tcp:$port >/dev/null
 sleep 1
-$adb shell am start -W -a android.intent.action.VIEW -d "http://127.0.0.1:$port/" \
+# A URL of this run's own, so that no cache answers with an earlier run's page, and history would hold the marker.
+$adb shell am start -W -a android.intent.action.VIEW -d "http://127.0.0.1:$port/?run=$marker" \
     -n $package/org.mozilla.fenix.IntentReceiverActivity >/dev/null
 
-stores="cookie localStorage sessionStorage indexedDB cacheAPI serviceWorker httpCache"
+stores="cookie localStorage sessionStorage indexedDB cacheAPI serviceWorker httpCache readback"
 for _ in $(seq 60); do
     reported=$(grep -c '^report' "$work/served" || true)
-    [ "$reported" -ge 7 ] && break
+    [ "$reported" -ge 8 ] && break
     sleep 1
 done
 $adb shell input keyevent KEYCODE_HOME
-sleep 10
+# Gecko writes cookies, local storage and IndexedDB to disk some while after a page does: 10 seconds after the app went
+# home, a normal session's were not yet there (the G6, 2026-11-14).
+sleep "${SETTLE:-60}"
 
 echo "== $serial, $mode, marker $marker"
 for store in $stores; do
     line=$(grep " store=$store\$" "$work/served" | head -1)
     echo "  $store: ${line:-no report}"
 done
-echo "== files holding the marker"
-$adb shell "run-as $package sh -c 'grep -r -l -a $marker . 2>/dev/null'" || true
-$adb shell "grep -r -l -a $marker /sdcard/Android/data/$package 2>/dev/null" || true
+echo "== files holding the marker, as ASCII or UTF-16"
+mkdir "$work/data" "$work/external"
+$adb exec-out run-as $package tar -cf - . 2>/dev/null | tar -xf - -C "$work/data" 2>/dev/null || true
+$adb pull /sdcard/Android/data/$package "$work/external" >/dev/null 2>&1 || true
+python3 -I - "$work" "$marker" <<'SEARCH'
+import os, sys
+work, marker = sys.argv[1], sys.argv[2]
+needles = {"ascii": marker.encode(), "utf-16": marker.encode("utf-16-le")}
+for top in ("data", "external"):
+    for path, _, names in os.walk(os.path.join(work, top)):
+        for name in names:
+            if os.path.islink(os.path.join(path, name)):
+                continue  # Gecko's profile lock, which points nowhere
+            with open(os.path.join(path, name), "rb") as f:
+                body = f.read()
+            found = [kind for kind, needle in needles.items() if needle in body]
+            if found:
+                print(f"  {'+'.join(found)}: {top}/{os.path.relpath(os.path.join(path, name), os.path.join(work, top))}")
+SEARCH
 echo "== files that appeared during the session"
 files > "$work/after"
 comm -13 "$work/before" "$work/after" | awk '{ print "  " $0 }'

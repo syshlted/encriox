@@ -38,6 +38,8 @@
   }));
   attempt("cacheAPI", () => caches.open("encriox").then((c) => c.put("/cached", new Response(marker))));
   attempt("serviceWorker", () => navigator.serviceWorker.register(`/sw.js?m=${marker}`));
-  // The HTTP cache: this page itself is sent cacheable, and so is what this fetches.
+  // The HTTP cache: what this fetches is sent cacheable, at a URL of this run's own.
   attempt("httpCache", () => fetch(`/cacheable?m=${marker}`).then((r) => r.text()));
+  // What the page reads back, which says whose marker it holds.
+  setTimeout(() => report("readback", true, `cookie=${document.cookie} local=${localStorage.getItem("encriox")}`), 2000);
 </script>
