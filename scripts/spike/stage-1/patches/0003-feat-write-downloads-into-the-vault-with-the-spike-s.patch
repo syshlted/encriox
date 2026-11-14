@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Jeremy Melanson <1080872+zish@users.noreply.github.com>
 Date: Sat, 14 Nov 2026 01:04:17 +0000
-Subject: [PATCH 3/3] feat: write downloads into the vault, with the spike's
+Subject: [PATCH] feat: write downloads into the vault, with the spike's
  controls
 
 A download goes into the folder the user gave the browser in the vault,

@@ -1,0 +1,68 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jeremy Melanson <1080872+zish@users.noreply.github.com>
+Date: Sat, 14 Nov 2026 02:17:28 +0000
+Subject: [PATCH] fix: log StrictMode violations in the spike, never die of one
+
+On the G6 at API 28 the debug build was killed between downloads: by a
+query another process made of one of its providers, and by Android
+Components' notification for a finished download, which looks for the
+file on the main thread. Neither is what the spike measures, and each
+death left the next download to time out in a fresh process. The
+spike's log shows when it happens, as Fenix's own log does.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+---
+ .../main/java/org/mozilla/fenix/encri/LoopbackServer.kt  | 2 ++
+ .../java/org/mozilla/fenix/perf/StrictModeManager.kt     | 9 ++++++++-
+ 2 files changed, 10 insertions(+), 1 deletion(-)
+
+diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/LoopbackServer.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/LoopbackServer.kt
+index d3d63475b3..13a1a6f509 100644
+--- a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/LoopbackServer.kt
++++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/LoopbackServer.kt
+@@ -47,6 +47,7 @@ object LoopbackServer {
+         socket.use {
+             val reader = it.getInputStream().bufferedReader(Charsets.ISO_8859_1)
+             val request = reader.readLine() ?: return@use
++            Log.i(TAG, "loopback request $request")
+             while (reader.readLine()?.isNotEmpty() == true) {
+                 // The headers say nothing the answer depends on.
+             }
+@@ -74,6 +75,7 @@ object LoopbackServer {
+                 }
+             }
+             out.flush()
++            Log.i(TAG, "loopback served $size bytes for $method")
+         }
+ 
+     private const val BACKLOG = 16
+diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/perf/StrictModeManager.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/perf/StrictModeManager.kt
+index 954e6d6962..54a3db9691 100644
+--- a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/perf/StrictModeManager.kt
++++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/perf/StrictModeManager.kt
+@@ -92,7 +92,7 @@ open class StrictModeManager(
+      */
+     private fun buildThreadPolicy(withPenaltyDeath: Boolean): StrictMode.ThreadPolicy {
+         val builder = StrictMode.ThreadPolicy.Builder().detectAll().penaltyLog()
+-        if (withPenaltyDeath) {
++        if (withPenaltyDeath && ENCRIOX_FATAL_VIOLATIONS) {
+             builder.penaltyDeathWithIgnores(buildManufacturerChecker)
+         }
+         return builder.build()
+@@ -240,6 +240,13 @@ open class StrictModeManager(
+  * dialogs do not show up on start up. To add a new manufacturer to the list, log "Build.MANUFACTURER" from the device
+  * to get the exact name of the manufacturer.
+  */
++/**
++ * encriox's spike (encri-firefox W1): a debug build logs StrictMode violations and is never killed for one. On the LG G6
++ * at API 28 it was killed for violations in LG's framework, in Android Components' notification for a finished
++ * download, and in a query another process made of one of its providers, none of which the spike measures.
++ */
++private const val ENCRIOX_FATAL_VIOLATIONS = false
++
+ private fun isInStrictModeExceptionList(buildManufacturerChecker: ManufacturerChecker) =
+     buildManufacturerChecker.isHuawei() || buildManufacturerChecker.isOnePlus() || buildManufacturerChecker.isOppo()
+ 
+-- 
+2.47.3
+

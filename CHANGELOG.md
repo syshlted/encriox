@@ -4,6 +4,13 @@ What happened, newest first. Why is in `docs/decisions/`, and what is next is in
 
 ## Unreleased
 
+### The stage 1 spike, on the G6 (2026-11-14)
+
+Fenix at Firefox 160.0 builds with Gradle against the GeckoView Mozilla published, with six patches and encri-api from
+source (`scripts/spike/stage-1/`). On the G6, a private session left no page's marker on disk, where a normal one left
+it in ten files, and a download went into the vault at about 35 MiB/s, a third of Fenix's own writer (W4). Private
+thumbnails, a paused download and Gecko prefs need work in stage 1. The S9, the A20 and the S24 are owed.
+
 ### encriox and encrium (2026-11-14)
 
 The user wants a second browser, on Chromium, so the two needed names that tell them apart. This one is encriox and

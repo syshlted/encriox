@@ -14,5 +14,11 @@ The first four were the study's *Open questions*, moved here when W1 was recorde
   name is encriox (W3). The package is permanent from the first build a user installs.
 - **The branch for stage 2**, release or ESR (W1). It is picked before stage 2 starts.
 - **How the fork is carried**: a series of patches applied to a pinned `firefox-main`, or a fork of its history. The
-  stage 1 spike tries one.
+  stage 1 spike carries six patches, written out with `git format-patch` and applied by its `fetch` with `git am`
+  (W4); how that fares against a two-week rebase is unmeasured.
+- **How a release sets Gecko prefs** (W4), such as `browser.privatebrowsing.forceMediaMemoryCache`: GeckoView has no
+  public API for one, and the spike's YAML file is read by a debuggable build alone.
+- **How stage 1 stops private thumbnails** (W4): Android Components writes a full-screen JPEG of each private tab to
+  `no_backup/`, unencrypted, until the next start.
+- **For encri: a vault with no folders can only be allowed whole** (W4), and encri cannot make a folder itself.
 - **Who asks Mozilla, and where** (W1, item 4). Bug 2055641 on Bugzilla is where the OS-keystore KEK is filed.

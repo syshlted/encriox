@@ -28,7 +28,9 @@ sources are there, and are not repeated here:
 3. **Spike stage 1 on the phones**, under the throwaway package `com.systemhalted.encri.browser.spike` (W1, flag 1).
    Fenix against a published GeckoView, every tab private, downloads through `openWrite`. Measure download throughput
    through the pipe against MediaStore on the S9, the A20, the G6 and the S24, and confirm that nothing of Gecko's
-   reaches `filesDir` or `cacheDir` in plaintext. The S24 only with its owner's word.
+   reaches `filesDir` or `cacheDir` in plaintext. The S24 only with its owner's word. ~~The G6~~ **Done on the G6
+   2026-11-14 (W4)**: built (`scripts/spike/stage-1/`), no page in plaintext after a private session, downloads into the
+   vault at about 35 MiB/s. Owed: the S9, the A20 and the S24, with `check-plaintext` and `measure`.
 4. **Spike stage 2 before writing any of it**: GeckoView with Lockstore's prefs on, on each phone. Pick the branch,
    release or ESR, before it. It builds GeckoView, which needs at least 30 GB of disk by Mozilla's guide; the machine
    had 63 GB free on 2026-11-13.

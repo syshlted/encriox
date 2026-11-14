@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Jeremy Melanson <1080872+zish@users.noreply.github.com>
 Date: Sat, 14 Nov 2026 01:04:08 +0000
-Subject: [PATCH 2/3] feat: make every tab private, for encriox's spike
+Subject: [PATCH] feat: make every tab private, for encriox's spike
 
 In a private tab Gecko keeps its live stores off disk (encri-firefox
 W1). A link from another app opens privately too. A setting turns this

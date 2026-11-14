@@ -44,7 +44,10 @@ Only the phones that hold encri's test vaults, and the S24 only with its owner's
 
 ```sh
 adb install -r <firefox>/obj-encriox-spike/gradle/build/mobile/android/fenix/app/outputs/apk/debug/app-arm64-v8a-debug.apk
-adb shell pm grant com.systemhalted.encri.browser.spike android.permission.WRITE_EXTERNAL_STORAGE  # API 28, the G6
+# API 28, the G6: both, then a restart, or Fenix's own writer is refused in Download/ with "Permission denied".
+adb shell pm grant com.systemhalted.encri.browser.spike android.permission.READ_EXTERNAL_STORAGE
+adb shell pm grant com.systemhalted.encri.browser.spike android.permission.WRITE_EXTERNAL_STORAGE
+adb shell am force-stop com.systemhalted.encri.browser.spike
 adb shell am start -n com.systemhalted.encri.browser.spike/org.mozilla.fenix.encri.EncriGateActivity
 ```
 

@@ -20,8 +20,16 @@ rounds=${3:?usage: measure <adb serial> <MiB> <rounds>}
 package=com.systemhalted.encri.browser.spike
 gate=$package/org.mozilla.fenix.encri.EncriGateActivity
 adb="${ADB:-$HOME/Android/Sdk/platform-tools/adb} -s $serial"
-results=$(mktemp)
-trap 'rm -f "$results"' EXIT
+
+# One logged write as a line: what, sink, MiB, copy seconds, total seconds, MiB/s over the copy.
+show() {
+    awk -v what="$1" '{
+        for (i = 1; i <= NF; i++) { split($i, kv, "="); v[kv[1]] = kv[2] }
+        mib = v["bytes"] / 1048576
+        printf "%-5s %-7s %6.1f MiB  copy %7.2f s  total %7.2f s  %7.1f MiB/s\n",
+            what, v["sink"], mib, v["copy_ms"] / 1000, v["total_ms"] / 1000, mib / (v["copy_ms"] / 1000)
+    }'
+}
 
 lines() { $adb logcat -d -s encriox-spike:I | grep -c "$1" || true; }
 
@@ -49,26 +57,26 @@ gate() {
 
 gate --ei bench "$mib" --ei rounds "$rounds"
 wait_for "bench done" 1 $((rounds * 600))
-$adb logcat -d -s encriox-spike:I | grep 'download sink=' | sed 's/^.*download /bench /' > "$results"
+$adb logcat -d -s encriox-spike:I | grep 'download sink=' | sed 's/^.*download //' | show bench
+$adb logcat -d -s encriox-spike:E | grep -A1 'bench sink=.* failed' >&2 || true
 
 round=0
 while [ $round -lt "$rounds" ]; do
     if [ $((round % 2)) -eq 0 ]; then order="default encri"; else order="encri default"; fi
     for sink in $order; do
         gate --ei fetch "$mib" --es sink $sink --ei rounds 1
-        wait_for "download sink=$sink" 1 600
-        $adb logcat -d -s encriox-spike:I | grep "download sink=$sink" | sed 's/^.*download /fetch /' \
-            >> "$results"
+        for _ in $(seq 600); do
+            [ "$(lines "download sink=$sink")" -ge 1 ] && break
+            if $adb logcat -d -s AbstractFetchDownloadService:E | grep -q 'marked as FAILED'; then
+                $adb logcat -d -s AbstractFetchDownloadService:E | grep -m 3 -E 'FAILED|Exception|Caused' >&2
+                exit 1
+            fi
+            sleep 1
+        done
+        $adb logcat -d -s encriox-spike:I | grep "download sink=$sink" | sed 's/^.*download //' | show fetch
     done
     round=$((round + 1))
 done
 
 gate --ez clean true
 wait_for "clean removed=" 1 120
-
-awk '{
-    for (i = 2; i <= NF; i++) { split($i, kv, "="); v[kv[1]] = kv[2] }
-    mib = v["bytes"] / 1048576
-    printf "%-5s %-7s %6.1f MiB  copy %7.2f s  total %7.2f s  %7.1f MiB/s\n",
-        $1, v["sink"], mib, v["copy_ms"] / 1000, v["total_ms"] / 1000, mib / (v["copy_ms"] / 1000)
-}' "$results"

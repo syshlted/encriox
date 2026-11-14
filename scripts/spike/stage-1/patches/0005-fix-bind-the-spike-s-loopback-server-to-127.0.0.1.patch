@@ -1,0 +1,30 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jeremy Melanson <1080872+zish@users.noreply.github.com>
+Date: Sat, 14 Nov 2026 01:51:46 +0000
+Subject: [PATCH] fix: bind the spike's loopback server to 127.0.0.1
+
+InetAddress.getLoopbackAddress() is ::1 on Android, so a download from
+127.0.0.1 was refused (GeckoView's WebRequestError 0x43), seen on the G6.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+---
+ .../src/main/java/org/mozilla/fenix/encri/LoopbackServer.kt    | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/LoopbackServer.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/LoopbackServer.kt
+index bfa884d6f6..d3d63475b3 100644
+--- a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/LoopbackServer.kt
++++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/LoopbackServer.kt
+@@ -32,7 +32,8 @@ object LoopbackServer {
+     fun start() {
+         if (!started.compareAndSet(false, true)) return
+         thread(name = "encriox-loopback", isDaemon = true) {
+-            ServerSocket(PORT, BACKLOG, InetAddress.getLoopbackAddress()).use { server ->
++            // Not getLoopbackAddress(), which is ::1 on Android: Gecko would be refused at 127.0.0.1.
++            ServerSocket(PORT, BACKLOG, InetAddress.getByName("127.0.0.1")).use { server ->
+                 Log.i(TAG, "loopback server on 127.0.0.1:$PORT")
+                 while (true) {
+                     val socket = server.accept()
+-- 
+2.47.3
+
