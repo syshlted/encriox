@@ -1,0 +1,16 @@
+# The stage 1 spike's mach configuration (W1): Fenix built with Gradle against a GeckoView Mozilla has
+# published, so nothing of Gecko is compiled. mach is still needed, because Fenix's Gradle build reads mach's
+# configure output for its settings.
+ac_add_options --enable-project=mobile/android
+ac_add_options --target=aarch64-linux-android
+ac_add_options --enable-artifact-builds
+# mach's own SDK, holding only build-tools 37.0.0, platforms;android-37.2 and platform-tools, so that the suite's
+# SDK, which is encri's toolchain, is left as it is.
+ac_add_options --with-android-sdk=$HOME/.mozbuild/android-sdk-linux
+# Release, so that the GeckoView artifact Fenix asks for is the release one, with no channel in its name.
+ac_add_options --enable-update-channel=release
+# mach fetches its prebuilt toolchains (embedded-uniffi-bindgen, nimbus-fml, Node) by itself only on nightly
+# checkouts, and this is a release one. Not android-sdk: the SDK is given above, and bootstrapping it would also
+# build an emulator image.
+ac_add_options --enable-bootstrap=-android-sdk
+mk_add_options MOZ_OBJDIR=@TOPSRCDIR@/obj-encriox-spike

@@ -1,0 +1,32 @@
+#!/bin/sh
+# Builds the stage 1 spike's debug APK (W1): Fenix from a Firefox checkout that `fetch` made, against the GeckoView
+# Mozilla published, with encri-api's client from source.
+#
+#   scripts/spike/stage-1/build <firefox checkout> [<encri-api checkout>]
+#
+# The APKs are under <firefox checkout>/obj-encriox-spike/gradle/build/mobile/android/fenix/app/outputs/apk/debug/.
+# Run no other Gradle build in the suite at the same time: this one includes encri-api, as the companions' do.
+set -eu
+
+here=$(cd "$(dirname "$0")" && pwd)
+firefox=$(cd "${1:?usage: build <firefox checkout> [<encri-api checkout>]}" && pwd)
+encri_api=$(cd "${2:-$here/../../../../encri-api}" && pwd)
+. "$here/versions"
+
+export MOZCONFIG="$here/mozconfig"
+export MOZBUILD_STATE_PATH="$HOME/.mozbuild"
+export MOZ_BUILD_DATE="$GECKOVIEW_BUILD_ID"
+export JAVA_HOME="$HOME/.mozbuild/jdk/$MOZ_JDK"
+export ANDROID_HOME="$HOME/.mozbuild/android-sdk-linux"
+
+cd "$firefox"
+# An artifact build: Mozilla's prebuilt Gecko for this revision is downloaded, not compiled. Fenix needs what it
+# generates into the objdir, such as Android Components' CrashReport.kt; its GeckoView is the published one.
+[ -f obj-encriox-spike/mobile/android/android-components/components/lib/crash/src/main/java/mozilla/components/lib/crash/service/CrashReport.kt ] ||
+    ./mach --no-interactive build
+
+cd mobile/android/fenix
+./gradlew --console=plain \
+    -Pencri.api.dir="$encri_api" \
+    -Pencriox.geckoview="org.mozilla.geckoview:geckoview-omni:$GECKOVIEW_VERSION" \
+    :app:assembleDebug

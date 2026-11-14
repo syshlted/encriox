@@ -1,0 +1,89 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jeremy Melanson <1080872+zish@users.noreply.github.com>
+Date: Sat, 14 Nov 2026 01:03:51 +0000
+Subject: [PATCH 1/3] build: build Fenix against a published GeckoView, as
+ encriox's spike
+
+The stage 1 spike (encri-firefox W1) compiles nothing of Gecko: the
+GeckoView it uses is named in full by `-Pencriox.geckoview`. It is a
+throwaway package, com.systemhalted.encri.browser.spike, at encri's
+floor of API 27, and it includes encri-api from source, as encri's
+companions do, for encri-client.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+---
+ .../components/browser/engine-gecko/build.gradle       |  6 ++++++
+ mobile/android/fenix/app/build.gradle                  | 10 +++++++---
+ mobile/android/fenix/settings.gradle                   |  4 ++++
+ 3 files changed, 17 insertions(+), 3 deletions(-)
+
+diff --git a/mobile/android/android-components/components/browser/engine-gecko/build.gradle b/mobile/android/android-components/components/browser/engine-gecko/build.gradle
+index 699c64e20e..d9aae8fbee 100644
+--- a/mobile/android/android-components/components/browser/engine-gecko/build.gradle
++++ b/mobile/android/android-components/components/browser/engine-gecko/build.gradle
+@@ -150,6 +150,12 @@ def computeArtifactId() {
+ }
+ 
+ def getGeckoViewDependency() {
++    // encriox (encri-firefox W1): a GeckoView Mozilla has published, named in full, so nothing of Gecko is built.
++    def published = providers.gradleProperty("encriox.geckoview").getOrNull()
++    if (published != null) {
++        rootProject.logger.lifecycle("Getting geckoview: ${published}")
++        return published
++    }
+     // on try, relax geckoview version pin to allow for --use-existing-task
+     if ('https://hg.mozilla.org/try' == System.env.GECKO_HEAD_REPOSITORY) {
+         rootProject.logger.lifecycle("Getting geckoview on try: ${computeArtifactId()}:+")
+diff --git a/mobile/android/fenix/app/build.gradle b/mobile/android/fenix/app/build.gradle
+index 03399d00fc..c09e558688 100644
+--- a/mobile/android/fenix/app/build.gradle
++++ b/mobile/android/fenix/app/build.gradle
+@@ -47,8 +47,10 @@ android {
+             arg("room.schemaLocation", "$projectDir/schemas".toString())
+         }
+ 
+-        applicationId "org.mozilla"
+-        minSdk config.minSdkVersion
++        // encriox's stage 1 spike (encri-firefox W1): a throwaway package, never published.
++        applicationId "com.systemhalted.encri.browser"
++        // encri's floor (encri D14), which encri-client declares: below it there is no encri to reach.
++        minSdk 27
+         targetSdk config.targetSdkVersion
+         versionCode 1
+         versionName Config.generateDebugVersionName()
+@@ -109,7 +111,7 @@ android {
+         debug {
+             shrinkResources = false
+             minifyEnabled = false
+-            applicationIdSuffix ".fenix.debug"
++            applicationIdSuffix ".spike"
+             resValue "bool", "IS_DEBUG", "true"
+             pseudoLocalesEnabled = true
+         }
+@@ -634,6 +636,8 @@ dependencies {
+     implementation libs.google.material
+     implementation libs.installreferrer
+     implementation libs.kotlinx.coroutines
++    // encriox's way into the vault, built from source by the included encri-api build (settings.gradle).
++    implementation "com.systemhalted.encri:encri-client:0.1.0-SNAPSHOT"
+     implementation libs.kotlinx.serialization.json
+     implementation libs.mozilla.glean
+     implementation libs.play.review
+diff --git a/mobile/android/fenix/settings.gradle b/mobile/android/fenix/settings.gradle
+index 020602418e..2ca8b0f5ca 100644
+--- a/mobile/android/fenix/settings.gradle
++++ b/mobile/android/fenix/settings.gradle
+@@ -44,6 +44,10 @@ if (gradle.ext.mozconfig.substs.MOZ_APPSERVICES_IN_TREE && gradle.ext.mozconfig.
+     apply from: file("${topsrcdir}/third_party/application-services/settings.gradle")
+ }
+ 
++// encri-api, from source, as encri's companions build it (encri D126): Gradle substitutes its encri-client project
++// for the coordinates :app names. `encri.api.dir` says where the checkout is.
++includeBuild(providers.gradleProperty("encri.api.dir").get())
++
+ include ':app'
+ include ':app:longfox'
+ include ':mozilla-detekt-rules'
+-- 
+2.47.3
+

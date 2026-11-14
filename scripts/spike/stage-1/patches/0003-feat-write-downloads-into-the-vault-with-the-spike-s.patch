@@ -1,0 +1,602 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jeremy Melanson <1080872+zish@users.noreply.github.com>
+Date: Sat, 14 Nov 2026 01:04:17 +0000
+Subject: [PATCH 3/3] feat: write downloads into the vault, with the spike's
+ controls
+
+A download goes into the folder the user gave the browser in the vault,
+through encri-client's write, unless its URL asks for Fenix's own
+writer, so one build measures both. EncriGateActivity opens the vault
+and runs the spike's measurements over adb, with a server on the
+phone's loopback to download from.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+---
+ .../fenix/app/src/main/AndroidManifest.xml    |   6 +
+ .../fenix/downloads/DownloadService.kt        |   9 +-
+ .../fenix/encri/EncriDownloadFileWriter.kt    | 141 +++++++++++
+ .../mozilla/fenix/encri/EncriGateActivity.kt  | 220 ++++++++++++++++++
+ .../org/mozilla/fenix/encri/EncriVault.kt     |  63 +++++
+ .../org/mozilla/fenix/encri/LoopbackServer.kt |  79 +++++++
+ 6 files changed, 516 insertions(+), 2 deletions(-)
+ create mode 100644 mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriDownloadFileWriter.kt
+ create mode 100644 mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt
+ create mode 100644 mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriVault.kt
+ create mode 100644 mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/LoopbackServer.kt
+
+diff --git a/mobile/android/fenix/app/src/main/AndroidManifest.xml b/mobile/android/fenix/app/src/main/AndroidManifest.xml
+index e41386e1dd..798cd61677 100644
+--- a/mobile/android/fenix/app/src/main/AndroidManifest.xml
++++ b/mobile/android/fenix/app/src/main/AndroidManifest.xml
+@@ -513,6 +513,12 @@
+             >
+         </activity>
+ 
++        <!-- encriox's stage 1 spike (encri-firefox W1): its controls, started over adb. Exported for that alone. -->
++        <activity
++            android:name=".encri.EncriGateActivity"
++            android:exported="true"
++            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
++
+         <activity
+             android:name=".HomeActivity"
+             android:theme="@style/SplashScreenThemeBase"
+diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/downloads/DownloadService.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/downloads/DownloadService.kt
+index 5768ca8036..34e7172075 100644
+--- a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/downloads/DownloadService.kt
++++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/downloads/DownloadService.kt
+@@ -16,6 +16,7 @@ import mozilla.components.support.base.android.NotificationsDelegate
+ import mozilla.components.support.utils.DefaultDownloadFileUtils
+ import mozilla.components.support.utils.DownloadFileUtils
+ import org.mozilla.fenix.R
++import org.mozilla.fenix.encri.EncriDownloadFileWriter
+ import org.mozilla.fenix.ext.components
+ import org.mozilla.fenix.settings.downloads.DownloadLocationManager
+ 
+@@ -41,10 +42,14 @@ class DownloadService : AbstractFetchDownloadService() {
+             },
+         )
+     }
++    // encriox (encri-firefox W1): a download goes into the vault, unless its URL asks for Fenix's own writer.
+     override val downloadFileWriter: DownloadFileWriter by lazy {
+-        DefaultDownloadFileWriter(
++        EncriDownloadFileWriter(
+             context = applicationContext,
+-            downloadFileUtils = downloadFileUtils,
++            default = DefaultDownloadFileWriter(
++                context = applicationContext,
++                downloadFileUtils = downloadFileUtils,
++            ),
+         )
+     }
+ }
+diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriDownloadFileWriter.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriDownloadFileWriter.kt
+new file mode 100644
+index 0000000000..031045f802
+--- /dev/null
++++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriDownloadFileWriter.kt
+@@ -0,0 +1,141 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
++
++package org.mozilla.fenix.encri
++
++import android.content.Context
++import android.os.SystemClock
++import android.util.Log
++import androidx.core.net.toUri
++import com.systemhalted.encri.client.EncriDocument
++import com.systemhalted.encri.client.EncriResult
++import com.systemhalted.encri.client.NameConflict
++import java.io.FilterOutputStream
++import java.io.IOException
++import java.io.OutputStream
++import kotlinx.coroutines.runBlocking
++import mozilla.components.browser.state.state.content.DownloadState
++import mozilla.components.feature.downloads.filewriter.DownloadFileWriter
++
++/**
++ * Writes a download into the folder the user gave this browser in the vault, through encri-client's `write`, instead
++ * of into the public Downloads collection (the stage 1 spike, encri-firefox W1).
++ *
++ * A download whose URL carries `encriox-sink=default` goes through [default] instead, Fenix's own writer, so that one
++ * build measures both. Every download logs its size and times under the tag `encriox-spike`.
++ */
++class EncriDownloadFileWriter(
++    private val context: Context,
++    private val default: DownloadFileWriter,
++) : DownloadFileWriter {
++    override fun useFileStream(
++        download: DownloadState,
++        append: Boolean,
++        shouldUseScopedStorage: Boolean,
++        onUpdateState: (DownloadState) -> Unit,
++        block: (OutputStream) -> Unit,
++    ) {
++        val sink = download.url.toUri().getQueryParameter(SINK_PARAMETER) ?: SINK_ENCRI
++        val started = SystemClock.elapsedRealtimeNanos()
++        val timing = Timing()
++        val timed: (OutputStream) -> Unit = { out ->
++            val counting = CountingOutputStream(out)
++            timing.blockStarted = SystemClock.elapsedRealtimeNanos()
++            block(counting)
++            counting.flush()
++            timing.blockEnded = SystemClock.elapsedRealtimeNanos()
++            timing.bytes = counting.count
++            // Paused or cancelled, the copy stops and returns normally. encri saves what a writer finishes, so a
++            // short copy is thrown here, which abandons it; Fenix's own writer keeps it to resume.
++            val expected = download.contentLength
++            if (sink == SINK_ENCRI && expected != null && expected > 0 && counting.count < expected) {
++                throw IOException("stopped at ${counting.count} of $expected bytes; the vault keeps nothing")
++            }
++        }
++        when (sink) {
++            SINK_DEFAULT -> default.useFileStream(download, append, shouldUseScopedStorage, onUpdateState, timed)
++            else -> {
++                if (append) throw IOException("encri replaces a document whole, so a download cannot resume into it")
++                writeToVault(download.fileName ?: "download", download.contentType, timed)
++            }
++        }
++        val ended = SystemClock.elapsedRealtimeNanos()
++        Log.i(
++            TAG,
++            "download sink=$sink bytes=${timing.bytes} " +
++                "copy_ms=${(timing.blockEnded - timing.blockStarted) / NANOS_PER_MILLI} " +
++                "total_ms=${(ended - started) / NANOS_PER_MILLI} name=${download.fileName}",
++        )
++    }
++
++    /** Creates [name] in the granted folder, under a free name, and writes it whole; the document, once saved. */
++    fun writeToVault(
++        name: String,
++        mimeType: String?,
++        writer: (OutputStream) -> Unit,
++    ): EncriDocument =
++        runBlocking {
++            val session =
++                when (val opening = EncriVault.open(context)) {
++                    is EncriVault.Opening.Open -> opening.session
++                    else -> throw IOException("the vault is not open to this browser: $opening")
++                }
++            val created =
++                when (
++                    val result =
++                        session.createFile(
++                            session.grant.scope.id,
++                            name,
++                            mimeType?.substringBefore(';')?.trim()?.ifEmpty { null } ?: OCTET_STREAM,
++                            NameConflict.PICK_FREE_NAME,
++                        )
++                ) {
++                    is EncriResult.Ok -> result.value
++                    is EncriResult.Failed -> {
++                        EncriVault.forget()
++                        throw IOException("encri would not create $name: $result")
++                    }
++                }
++            when (val written = session.write(created.id) { out -> writer(out) }) {
++                is EncriResult.Ok -> written.value
++                is EncriResult.Failed -> {
++                    session.delete(created.id)
++                    throw IOException("encri did not save $name: $written")
++                }
++            }
++        }
++
++    private class Timing {
++        var blockStarted = 0L
++        var blockEnded = 0L
++        var bytes = 0L
++    }
++
++    private class CountingOutputStream(out: OutputStream) : FilterOutputStream(out) {
++        var count = 0L
++
++        override fun write(b: Int) {
++            out.write(b)
++            count++
++        }
++
++        override fun write(
++            b: ByteArray,
++            off: Int,
++            len: Int,
++        ) {
++            out.write(b, off, len)
++            count += len
++        }
++    }
++
++    companion object {
++        const val TAG = "encriox-spike"
++        const val SINK_PARAMETER = "encriox-sink"
++        const val SINK_DEFAULT = "default"
++        const val SINK_ENCRI = "encri"
++        private const val OCTET_STREAM = "application/octet-stream"
++        private const val NANOS_PER_MILLI = 1_000_000
++    }
++}
+diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt
+new file mode 100644
+index 0000000000..3f0e6bf73b
+--- /dev/null
++++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt
+@@ -0,0 +1,220 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
++
++package org.mozilla.fenix.encri
++
++import android.os.Build
++import android.os.Bundle
++import android.os.Environment
++import android.provider.MediaStore
++import android.util.Log
++import androidx.activity.ComponentActivity
++import androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult
++import androidx.lifecycle.lifecycleScope
++import com.systemhalted.encri.client.Encri
++import com.systemhalted.encri.client.EncriResult
++import java.io.File
++import kotlin.random.Random
++import kotlinx.coroutines.CoroutineScope
++import kotlinx.coroutines.Dispatchers
++import kotlinx.coroutines.SupervisorJob
++import kotlinx.coroutines.launch
++import mozilla.components.browser.state.state.content.DownloadState
++import mozilla.components.feature.downloads.filewriter.DefaultDownloadFileWriter
++import mozilla.components.feature.downloads.manager.FetchDownloadManager
++import mozilla.components.support.utils.DefaultDownloadFileUtils
++import org.mozilla.fenix.downloads.DownloadService
++import org.mozilla.fenix.ext.components
++import org.mozilla.fenix.settings.downloads.DownloadLocationManager
++
++/**
++ * The stage 1 spike's controls, started over adb by `spikes/stage-1/run` (encri-firefox W1). It always first opens the
++ * vault to this browser: encri's own screens ask the user to allow a folder and to unlock, and it logs what it holds.
++ * Then, by its extras:
++ *
++ * - `--es private true|false` sets whether every tab is private, and does nothing else: `false` is for the control run
++ *   of `check-plaintext` alone;
++ *
++ * - `--ei bench <MiB> --ei rounds <n>` writes n rounds of that many MiB from memory, alternating which goes first,
++ *   through Fenix's own writer and through encri, as a download's copy would, in 32 KiB pieces;
++ * - `--ei fetch <MiB> --es sink default|encri --ei rounds <n>` downloads that many MiB from [LoopbackServer] through
++ *   Fenix's download service, in a private download;
++ * - `--ez clean true` deletes what the two did, in the vault and in Downloads.
++ *
++ * Every result is a line under the tag `encriox-spike`.
++ */
++class EncriGateActivity : ComponentActivity() {
++    private val asked = mutableSetOf<String>()
++    private val ask = registerForActivityResult(StartActivityForResult()) { lifecycleScope.launch { proceed() } }
++
++    override fun onCreate(savedInstanceState: Bundle?) {
++        super.onCreate(savedInstanceState)
++        intent.getStringExtra("private")?.let {
++            components.settings.encrioxPrivate = it.toBoolean()
++            done("private=${components.settings.encrioxPrivate}")
++            return
++        }
++        LoopbackServer.start()
++        lifecycleScope.launch { proceed() }
++    }
++
++    private suspend fun proceed() {
++        when (val opening = EncriVault.open(this)) {
++            EncriVault.Opening.NotAuthorized ->
++                if (asked.add(AUTHORIZE)) ask.launch(Encri.authorizationIntent(EncriVault.RIGHTS)) else done("not authorized")
++            EncriVault.Opening.Locked ->
++                if (asked.add(UNLOCK)) ask.launch(Encri.unlockIntent()) else done("still locked")
++            is EncriVault.Opening.Refused -> done("refused: ${opening.reason}")
++            is EncriVault.Opening.Open -> {
++                val scope = opening.session.grant.scope
++                Log.i(TAG, "gate open scope=${scope.name} id=${scope.id} rights=${opening.session.grant.rights}")
++                runRequested()
++                done("open")
++            }
++        }
++    }
++
++    private fun runRequested() {
++        val extras = intent.extras ?: return
++        val rounds = extras.getInt("rounds", 1)
++        val context = applicationContext
++        when {
++            extras.containsKey("bench") -> work.launch { bench(context, extras.getInt("bench"), rounds) }
++            extras.containsKey("fetch") ->
++                fetch(extras.getInt("fetch"), extras.getString("sink") ?: EncriDownloadFileWriter.SINK_ENCRI, rounds)
++            extras.getBoolean("clean") -> work.launch { clean(context) }
++        }
++    }
++
++    private fun done(state: String) {
++        Log.i(TAG, "gate $state")
++        finish()
++    }
++
++    /** Downloads from the loopback server through Fenix's own service, one round at a time. */
++    private fun fetch(
++        mib: Int,
++        sink: String,
++        rounds: Int,
++    ) {
++        val manager =
++            FetchDownloadManager(
++                applicationContext,
++                components.core.store,
++                DownloadService::class,
++                notificationsDelegate = components.notificationsDelegate,
++            )
++        repeat(rounds) { round ->
++            val name = "encriox-fetch-$mib-$sink-$round.bin"
++            val url =
++                "http://127.0.0.1:${LoopbackServer.PORT}/blob?bytes=${mib.toLong() shl MIB_SHIFT}&name=$name" +
++                    "&${EncriDownloadFileWriter.SINK_PARAMETER}=$sink"
++            manager.download(
++                DownloadState(
++                    url = url,
++                    fileName = name,
++                    contentType = OCTET_STREAM,
++                    private = true,
++                    skipConfirmation = true,
++                ),
++                cookie = "",
++            )
++            Log.i(TAG, "fetch queued $name")
++        }
++    }
++
++    companion object {
++        private const val TAG = EncriDownloadFileWriter.TAG
++        private const val AUTHORIZE = "authorize"
++        private const val UNLOCK = "unlock"
++        private const val OCTET_STREAM = "application/octet-stream"
++        private const val MIB_SHIFT = 20
++        private const val PIECE = 32 * 1024
++        private const val BENCH_PREFIX = "encriox-bench-"
++        private const val FETCH_PREFIX = "encriox-fetch-"
++
++        private val work = CoroutineScope(SupervisorJob() + Dispatchers.IO)
++
++        private fun defaultWriter(context: android.content.Context) =
++            DefaultDownloadFileWriter(
++                context = context,
++                downloadFileUtils =
++                    DefaultDownloadFileUtils(
++                        context = context,
++                        downloadLocation = {
++                            DownloadLocationManager(context.components.settings, context.contentResolver)
++                                .defaultLocation
++                        },
++                    ),
++            )
++
++        private fun bench(
++            context: android.content.Context,
++            mib: Int,
++            rounds: Int,
++        ) {
++            val piece = ByteArray(PIECE).also { Random(mib).nextBytes(it) }
++            val bytes = mib.toLong() shl MIB_SHIFT
++            val writer = EncriDownloadFileWriter(context, defaultWriter(context))
++            val sinks = listOf(EncriDownloadFileWriter.SINK_DEFAULT, EncriDownloadFileWriter.SINK_ENCRI)
++            repeat(rounds) { round ->
++                for (sink in if (round % 2 == 0) sinks else sinks.reversed()) {
++                    val download =
++                        DownloadState(
++                            url = "http://127.0.0.1/bench?${EncriDownloadFileWriter.SINK_PARAMETER}=$sink",
++                            fileName = "$BENCH_PREFIX$mib-$sink-$round.bin",
++                            contentType = OCTET_STREAM,
++                            contentLength = bytes,
++                            private = true,
++                        )
++                    runCatching {
++                        writer.useFileStream(
++                            download,
++                            append = false,
++                            shouldUseScopedStorage = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q,
++                            onUpdateState = {},
++                        ) { out ->
++                            var left = bytes
++                            while (left > 0) {
++                                val n = minOf(left, PIECE.toLong()).toInt()
++                                out.write(piece, 0, n)
++                                left -= n
++                            }
++                        }
++                    }.onFailure { Log.e(TAG, "bench sink=$sink round=$round failed", it) }
++                }
++            }
++            Log.i(TAG, "bench done mib=$mib rounds=$rounds")
++        }
++
++        private suspend fun clean(context: android.content.Context) {
++            var removed = 0
++            val opening = EncriVault.open(context)
++            if (opening is EncriVault.Opening.Open) {
++                val session = opening.session
++                val listed = session.list(session.grant.scope.id)
++                if (listed is EncriResult.Ok) {
++                    listed.value
++                        .filter { it.name.startsWith(BENCH_PREFIX) || it.name.startsWith(FETCH_PREFIX) }
++                        .forEach { if (session.delete(it.id) is EncriResult.Ok) removed++ }
++                }
++            }
++            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
++                removed +=
++                    context.contentResolver.delete(
++                        MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY),
++                        "${MediaStore.MediaColumns.DISPLAY_NAME} LIKE ? OR ${MediaStore.MediaColumns.DISPLAY_NAME} LIKE ?",
++                        arrayOf("$BENCH_PREFIX%", "$FETCH_PREFIX%"),
++                    )
++            } else {
++                @Suppress("DEPRECATION")
++                val downloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
++                downloads
++                    .listFiles { file: File -> file.name.startsWith(BENCH_PREFIX) || file.name.startsWith(FETCH_PREFIX) }
++                    ?.forEach { if (it.delete()) removed++ }
++            }
++            Log.i(TAG, "clean removed=$removed")
++        }
++    }
++}
+diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriVault.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriVault.kt
+new file mode 100644
+index 0000000000..e79a2f9dc6
+--- /dev/null
++++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriVault.kt
+@@ -0,0 +1,63 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
++
++package org.mozilla.fenix.encri
++
++import android.content.Context
++import com.systemhalted.encri.client.ConnectResult
++import com.systemhalted.encri.client.Encri
++import com.systemhalted.encri.client.EncriConnection
++import com.systemhalted.encri.client.EncriSession
++import com.systemhalted.encri.client.Right
++import com.systemhalted.encri.client.SessionOutcome
++import kotlinx.coroutines.sync.Mutex
++import kotlinx.coroutines.sync.withLock
++
++/**
++ * The stage 1 spike's way into the vault (encri-firefox W1): one connection and one session, opened on first use and
++ * kept until a request finds it gone. Nothing here asks the user anything; [EncriGateActivity] does.
++ */
++object EncriVault {
++    /** One folder's worth, never the whole vault (the study, *Encri's side*). */
++    val RIGHTS: Set<Right> = setOf(Right.READ, Right.WRITE, Right.CREATE, Right.DELETE)
++
++    private val guard = Mutex()
++    private var connection: EncriConnection? = null
++    private var session: EncriSession? = null
++
++    /** What [open] found. */
++    sealed interface Opening {
++        data class Open(val session: EncriSession) : Opening
++
++        data object NotAuthorized : Opening
++
++        data object Locked : Opening
++
++        data class Refused(val reason: String) : Opening
++    }
++
++    suspend fun open(context: Context): Opening =
++        guard.withLock {
++            val live = connection?.takeIf { it.isConnected }
++            session?.let { if (live != null) return@withLock Opening.Open(it) }
++            val held =
++                live ?: when (val result = Encri.connect(context.applicationContext)) {
++                    is ConnectResult.Connected -> result.connection.also { connection = it }
++                    else -> return@withLock Opening.Refused(result.toString())
++                }
++            when (val outcome = held.openSession()) {
++                is SessionOutcome.Opened -> Opening.Open(outcome.session.also { session = it })
++                SessionOutcome.NotAuthorized -> Opening.NotAuthorized
++                SessionOutcome.Locked -> Opening.Locked
++                else -> Opening.Refused(outcome.toString())
++            }
++        }
++
++    /** Drops the session, so that the next [open] asks encri for a new one. */
++    suspend fun forget() =
++        guard.withLock {
++            session?.close()
++            session = null
++        }
++}
+diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/LoopbackServer.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/LoopbackServer.kt
+new file mode 100644
+index 0000000000..bfa884d6f6
+--- /dev/null
++++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/LoopbackServer.kt
+@@ -0,0 +1,79 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
++
++package org.mozilla.fenix.encri
++
++import android.net.Uri
++import android.util.Log
++import java.io.BufferedOutputStream
++import java.net.InetAddress
++import java.net.ServerSocket
++import java.net.Socket
++import java.util.concurrent.atomic.AtomicBoolean
++import kotlin.concurrent.thread
++import kotlin.random.Random
++
++/**
++ * Serves `GET /blob?bytes=N&name=…` on the phone's own loopback, so that a measured download runs at the speed of
++ * its sink and Gecko's network stack, never at the Wi-Fi's (the stage 1 spike). The bytes are one MiB of seeded noise,
++ * repeated, so that nothing on the way can compress them.
++ */
++object LoopbackServer {
++    const val PORT = 8642
++    private const val TAG = "encriox-spike"
++    private const val PATTERN_BYTES = 1 shl 20
++    private const val BUFFER_BYTES = 64 * 1024
++    private const val SEED = 20261114
++
++    private val started = AtomicBoolean(false)
++    private val pattern = ByteArray(PATTERN_BYTES).also { Random(SEED).nextBytes(it) }
++
++    fun start() {
++        if (!started.compareAndSet(false, true)) return
++        thread(name = "encriox-loopback", isDaemon = true) {
++            ServerSocket(PORT, BACKLOG, InetAddress.getLoopbackAddress()).use { server ->
++                Log.i(TAG, "loopback server on 127.0.0.1:$PORT")
++                while (true) {
++                    val socket = server.accept()
++                    thread(name = "encriox-loopback-client", isDaemon = true) { serve(socket) }
++                }
++            }
++        }
++    }
++
++    private fun serve(socket: Socket) =
++        socket.use {
++            val reader = it.getInputStream().bufferedReader(Charsets.ISO_8859_1)
++            val request = reader.readLine() ?: return@use
++            while (reader.readLine()?.isNotEmpty() == true) {
++                // The headers say nothing the answer depends on.
++            }
++            val (method, target) = request.split(' ').let { parts -> parts[0] to parts.getOrElse(1) { "/" } }
++            val query = Uri.parse("http://127.0.0.1$target")
++            val size = query.getQueryParameter("bytes")?.toLongOrNull() ?: PATTERN_BYTES.toLong()
++            val name = query.getQueryParameter("name") ?: "encriox-$size.bin"
++            val out = BufferedOutputStream(it.getOutputStream(), BUFFER_BYTES)
++            out.write(
++                (
++                    "HTTP/1.1 200 OK\r\n" +
++                        "Content-Type: application/octet-stream\r\n" +
++                        "Content-Length: $size\r\n" +
++                        "Content-Disposition: attachment; filename=\"$name\"\r\n" +
++                        "Cache-Control: no-store\r\n" +
++                        "Connection: close\r\n\r\n"
++                ).toByteArray(Charsets.ISO_8859_1),
++            )
++            if (method != "HEAD") {
++                var left = size
++                while (left > 0) {
++                    val n = minOf(left, PATTERN_BYTES.toLong()).toInt()
++                    out.write(pattern, 0, n)
++                    left -= n
++                }
++            }
++            out.flush()
++        }
++
++    private const val BACKLOG = 16
++}
+-- 
+2.47.3
+

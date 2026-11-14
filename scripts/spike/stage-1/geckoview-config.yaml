@@ -1,0 +1,6 @@
+# Gecko prefs for the stage 1 spike (W1). A debuggable GeckoView reads this from
+# /data/local/tmp/<package>-geckoview-config.yaml; a release one reads nothing there, and GeckoView has no public
+# API for setting a pref, so how a release encriox sets these is open.
+prefs:
+  # Media in a private tab stays in memory, as Tor Browser sets it.
+  browser.privatebrowsing.forceMediaMemoryCache: true

@@ -1,0 +1,14 @@
+# What the stage 1 spike builds (W1), sourced by its scripts. Fenix is Firefox for Android at the release tag below,
+# with this directory's patches on top; GeckoView is the one Mozilla published for that release, so no Gecko is built.
+
+FIREFOX_REPOSITORY=https://github.com/mozilla-firefox/firefox
+FIREFOX_TAG=FIREFOX_160_0_RELEASE
+FIREFOX_COMMIT=2887d9de1f69c0e9776413da80e7ba0d1225dd9b
+
+# maven.mozilla.org, org.mozilla.geckoview:geckoview-omni. The build id is also MOZ_BUILD_DATE, which Fenix's Gradle
+# build reads in place of the buildid.h a `mach build` would write.
+GECKOVIEW_VERSION=160.0.20261104181552
+GECKOVIEW_BUILD_ID=20261104181552
+
+# Mozilla's toolchain for this release, installed under ~/.mozbuild (README.md), apart from the suite's.
+MOZ_JDK=jdk-17.0.20.1+1

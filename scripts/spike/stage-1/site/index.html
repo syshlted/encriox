@@ -1,0 +1,43 @@
+<!doctype html>
+<!-- The stage 1 spike's marker page (W1). `serve` puts a fresh marker where __MARKER__ is, and the page writes it into
+     every store a page can reach. Each store reports back to `serve`, so a run knows which were written. -->
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width">
+<title>encriox marker</title>
+<p>Marker <code id="marker">__MARKER__</code></p>
+<ul id="done"></ul>
+<script>
+  const marker = "__MARKER__";
+  const report = (store, ok, detail) => {
+    const li = document.createElement("li");
+    li.textContent = `${store}: ${ok ? "written" : "failed"} ${detail || ""}`;
+    document.getElementById("done").append(li);
+    fetch(`/report?store=${store}&ok=${ok}&detail=${encodeURIComponent(detail || "")}`, { cache: "no-store" });
+  };
+  const attempt = (store, run) => {
+    try {
+      Promise.resolve(run()).then(() => report(store, true), (e) => report(store, false, String(e)));
+    } catch (e) {
+      report(store, false, String(e));
+    }
+  };
+
+  attempt("cookie", () => { document.cookie = `encriox=${marker}; max-age=86400; path=/`; });
+  attempt("localStorage", () => localStorage.setItem("encriox", marker));
+  attempt("sessionStorage", () => sessionStorage.setItem("encriox", marker));
+  attempt("indexedDB", () => new Promise((resolve, reject) => {
+    const open = indexedDB.open("encriox", 1);
+    open.onupgradeneeded = () => open.result.createObjectStore("s");
+    open.onerror = () => reject(open.error);
+    open.onsuccess = () => {
+      const tx = open.result.transaction("s", "readwrite");
+      tx.objectStore("s").put({ marker }, "k");
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+    };
+  }));
+  attempt("cacheAPI", () => caches.open("encriox").then((c) => c.put("/cached", new Response(marker))));
+  attempt("serviceWorker", () => navigator.serviceWorker.register(`/sw.js?m=${marker}`));
+  // The HTTP cache: this page itself is sent cacheable, and so is what this fetches.
+  attempt("httpCache", () => fetch(`/cacheable?m=${marker}`).then((r) => r.text()));
+</script>

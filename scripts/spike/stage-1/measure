@@ -1,0 +1,73 @@
+#!/bin/sh
+# Measures a download into the vault against one through Fenix's own writer (W1, the study's stage 1).
+#
+#   scripts/spike/stage-1/measure <adb serial> <MiB> <rounds>
+#
+# Two measurements, each alternating which sink goes first:
+#
+# - bench: <MiB> written from memory in 32 KiB pieces, as a download's copy writes them, through each sink. This is
+#   the sink alone.
+# - fetch: <MiB> downloaded through Fenix's download service and Gecko's network stack from the spike's own server on
+#   the phone's loopback, so that the Wi-Fi is not what is measured. One download at a time.
+#
+# The vault must be open to the spike: run the gate once (README.md) and allow a folder and unlock on encri's screens.
+# Prints one line per write: what, sink, MiB, copy seconds, total seconds, MiB/s over the copy.
+set -eu
+
+serial=${1:?usage: measure <adb serial> <MiB> <rounds>}
+mib=${2:?usage: measure <adb serial> <MiB> <rounds>}
+rounds=${3:?usage: measure <adb serial> <MiB> <rounds>}
+package=com.systemhalted.encri.browser.spike
+gate=$package/org.mozilla.fenix.encri.EncriGateActivity
+adb="${ADB:-$HOME/Android/Sdk/platform-tools/adb} -s $serial"
+results=$(mktemp)
+trap 'rm -f "$results"' EXIT
+
+lines() { $adb logcat -d -s encriox-spike:I | grep -c "$1" || true; }
+
+wait_for() {
+    pattern=$1 count=$2 seconds=$3
+    for _ in $(seq "$seconds"); do
+        [ "$(lines "$pattern")" -ge "$count" ] && return 0
+        sleep 1
+    done
+    echo "measure: gave up waiting for '$pattern'" >&2
+    $adb logcat -d -s encriox-spike:I AndroidRuntime:E | tail -20 >&2
+    exit 1
+}
+
+gate() {
+    $adb logcat -c
+    $adb shell am start -W -n $gate "$@" >/dev/null
+    wait_for "gate " 1 60
+    if [ "$(lines 'gate open')" -lt 1 ]; then
+        $adb logcat -d -s encriox-spike:I | grep 'gate ' >&2
+        exit 1
+    fi
+}
+
+gate --ei bench "$mib" --ei rounds "$rounds"
+wait_for "bench done" 1 $((rounds * 600))
+$adb logcat -d -s encriox-spike:I | grep 'download sink=' | sed 's/^.*download /bench /' > "$results"
+
+round=0
+while [ $round -lt "$rounds" ]; do
+    if [ $((round % 2)) -eq 0 ]; then order="default encri"; else order="encri default"; fi
+    for sink in $order; do
+        gate --ei fetch "$mib" --es sink $sink --ei rounds 1
+        wait_for "download sink=$sink" 1 600
+        $adb logcat -d -s encriox-spike:I | grep "download sink=$sink" | sed 's/^.*download /fetch /' \
+            >> "$results"
+    done
+    round=$((round + 1))
+done
+
+gate --ez clean true
+wait_for "clean removed=" 1 120
+
+awk '{
+    for (i = 2; i <= NF; i++) { split($i, kv, "="); v[kv[1]] = kv[2] }
+    mib = v["bytes"] / 1048576
+    printf "%-5s %-7s %6.1f MiB  copy %7.2f s  total %7.2f s  %7.1f MiB/s\n",
+        $1, v["sink"], mib, v["copy_ms"] / 1000, v["total_ms"] / 1000, mib / (v["copy_ms"] / 1000)
+}' "$results"

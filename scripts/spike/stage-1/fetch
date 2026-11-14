@@ -1,0 +1,19 @@
+#!/bin/sh
+# Makes the Firefox checkout the stage 1 spike builds from (W1): the release tag in `versions`, shallow, with this
+# directory's patches committed on a branch of their own.
+#
+#   scripts/spike/stage-1/fetch <new directory>
+#
+# The checkout is about 6 GB. Keep it outside the suite's directory, so that editors and searches there skip it.
+set -eu
+
+here=$(cd "$(dirname "$0")" && pwd)
+target=${1:?usage: fetch <new directory>}
+. "$here/versions"
+
+git clone --quiet --depth 1 --branch "$FIREFOX_TAG" "$FIREFOX_REPOSITORY" "$target"
+cd "$target"
+[ "$(git rev-parse HEAD)" = "$FIREFOX_COMMIT" ] || { echo "fetch: $FIREFOX_TAG is not $FIREFOX_COMMIT" >&2; exit 1; }
+git switch --quiet -c encriox-spike-stage-1
+git am --quiet "$here"/patches/*.patch
+git log --oneline "$FIREFOX_COMMIT"..HEAD

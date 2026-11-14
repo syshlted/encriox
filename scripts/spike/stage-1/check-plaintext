@@ -1,0 +1,65 @@
+#!/bin/sh
+# Checks that a private session leaves nothing of a page in the spike's data in plaintext (W1, the study's stage 1).
+#
+#   scripts/spike/stage-1/check-plaintext <adb serial> private|normal
+#
+# `normal` is the control: the same page in a normal tab must leave its marker on disk, or the check finds nothing
+# because it can see nothing. A page from `serve`, reached through `adb reverse`, writes a fresh marker into every
+# store a page can reach. Then the app is sent home, so that it saves what it saves, and its whole data directory and
+# its external one are searched for the marker, byte for byte. Files that appeared during the session are listed.
+set -eu
+
+here=$(cd "$(dirname "$0")" && pwd)
+serial=${1:?usage: check-plaintext <adb serial> private|normal}
+mode=${2:?usage: check-plaintext <adb serial> private|normal}
+package=com.systemhalted.encri.browser.spike
+port=8643
+adb="${ADB:-$HOME/Android/Sdk/platform-tools/adb} -s $serial"
+marker="ENCRIOX$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')"
+work=$(mktemp -d)
+trap 'kill "$server" 2>/dev/null || true; $adb reverse --remove tcp:$port 2>/dev/null || true; rm -rf "$work"' EXIT
+
+case $mode in
+    private) private=true ;;
+    normal) private=false ;;
+    *) echo "check-plaintext: the mode is private or normal" >&2; exit 2 ;;
+esac
+
+files() {
+    $adb shell "run-as $package sh -c 'find . -type f -exec ls -l {} \;'" | awk '{ print $NF, $5 }' | sort
+}
+
+$adb push "$here/geckoview-config.yaml" /data/local/tmp/$package-geckoview-config.yaml >/dev/null
+$adb shell am force-stop $package
+$adb shell am start -W -n $package/org.mozilla.fenix.encri.EncriGateActivity --es private $private >/dev/null
+sleep 2
+$adb shell am force-stop $package
+files > "$work/before"
+
+"$here/serve" $port "$marker" > "$work/served" 2>&1 &
+server=$!
+$adb reverse tcp:$port tcp:$port >/dev/null
+sleep 1
+$adb shell am start -W -a android.intent.action.VIEW -d "http://127.0.0.1:$port/" \
+    -n $package/org.mozilla.fenix.IntentReceiverActivity >/dev/null
+
+stores="cookie localStorage sessionStorage indexedDB cacheAPI serviceWorker httpCache"
+for _ in $(seq 60); do
+    reported=$(grep -c '^report' "$work/served" || true)
+    [ "$reported" -ge 7 ] && break
+    sleep 1
+done
+$adb shell input keyevent KEYCODE_HOME
+sleep 10
+
+echo "== $serial, $mode, marker $marker"
+for store in $stores; do
+    line=$(grep " store=$store\$" "$work/served" | head -1)
+    echo "  $store: ${line:-no report}"
+done
+echo "== files holding the marker"
+$adb shell "run-as $package sh -c 'grep -r -l -a $marker . 2>/dev/null'" || true
+$adb shell "grep -r -l -a $marker /sdcard/Android/data/$package 2>/dev/null" || true
+echo "== files that appeared during the session"
+files > "$work/after"
+comm -13 "$work/before" "$work/after" | awk '{ print "  " $0 }'
