@@ -37,8 +37,10 @@ sources are there, and are not repeated here:
 
 ## Before the first release
 
-- **Settle what is permanent**: the product's name, which cannot contain "Firefox"; its package, on which a grant is
-  keyed for good (encri D120, D145); and its registry entry in encri-api. Moved after the spikes by W1.
+- **Settle what is permanent**: ~~the product's name, which cannot contain "Firefox";~~ **named encriox
+  2026-11-14 (W3)**; its package, on which a grant is keyed for good (encri D120, D145); and its registry entry in
+  encri-api. Moved after the spikes by W1.
+- **A trademark search for encriox**, in the US, EU, international and Japanese registers (W3).
 - **A public remote** for this repository, before any build leaves the test phones (W2).
 
 What the records left open, the study's *Open questions* included, is in `docs/decisions/open-questions.md`.

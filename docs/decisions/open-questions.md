@@ -10,8 +10,8 @@ The first four were the study's *Open questions*, moved here when W1 was recorde
   acceptable by W1, flag 2.
 - **Lock behaviour.** On `STATE_LOCKED`, does the browser close outright, or keep running tabs in memory with
   persistence paused? Closing is the conservative answer.
-- **The name and the package** (W1). The name cannot contain "Firefox" (`AGENTS.md`, hard constraint 3). Both are
-  permanent from the first build a user installs.
+- **~~The name and~~ the package** (W1). ~~The name cannot contain "Firefox" (`AGENTS.md`, hard constraint 3).~~ The
+  name is encriox (W3). The package is permanent from the first build a user installs.
 - **The branch for stage 2**, release or ESR (W1). It is picked before stage 2 starts.
 - **How the fork is carried**: a series of patches applied to a pinned `firefox-main`, or a fork of its history. The
   stage 1 spike tries one.

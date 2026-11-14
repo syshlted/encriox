@@ -1,0 +1,57 @@
+# W3 — The browsers are encriox, on Gecko, and encrium, on Chromium
+
+*2026-11-14 · accepted on the user's word ("OK confirmed encriox and encrium"), and **flagged for veto on one point**
+(below). **Amends W1**, which rejected Chromium: it is now a second browser. The names were checked against Mozilla's
+and Google's trademark lists, the web, Google Play and the domain registries on 2026-11-13. The trademark registers
+were not searched.*
+
+#### What the user decided
+
+- **Two browsers, not one.** "I want to also have a webkit-based browser like Chromium as well. So we need a way to
+  differentiate the two by name." Chromium's engine is Blink, which Google forked from WebKit in 2013, so the second
+  browser is the study's scenario 2: a Chromium fork reaching the vault through encri-api.
+- **This repository's browser is encriox; the Chromium one is encrium.**
+- **The spikes for encriox come next** ("then work on the spikes"), and encrium after them.
+
+#### What was settled
+
+1. **Both names keep *encri* whole**, so whoever can spell the vault's name can spell them. They are written in lower
+   case, as *encri* is (encri D124) and as the user wrote them.
+2. **They differ the way existing forks do.** Firefox forks mostly take animal names (IronFox, LibreWolf, Iceraven,
+   Waterfox), and Chromium forks element names (Vanadium, Bromite, Cromite; the study, [C2]). An ox is an animal, and
+   *-ium* sounds like an element.
+3. **Neither name contains a Mozilla or Google trademark.**
+   - Google lists Blink, Chrome and Chromium. Mozilla's list does not have Gecko.
+   - *-ox* is not *fox*. Mozilla's policy asks forks not to be named "[Something]-fox", and has said since 2011 that a
+     modified Firefox may not use the name "in whole or in part". Its test is whether the name suggests Mozilla
+     published the software.
+4. **encrium is a project of its own**, and its first record settles its repository, its decision prefix and its
+   licence. The study's *Scenario 2* is its starting point.
+5. **The packages are not chosen yet.** They are settled before a build leaves the test phones (`ROADMAP.md`). The
+   spikes keep W1's throwaway package.
+
+#### Flagged for veto
+
+1. **encrium's home is `encri-chromium/`, its decisions are numbered C1, C2, …, and it is BSD-3-Clause**, Chromium's
+   own licence, as encriox follows Firefox's (W2). These were proposed on 2026-11-13 and not confirmed.
+
+#### What was checked (2026-11-13)
+
+| | encriox | encrium |
+|---|---|---|
+| The web | no use found | L'Encrium, a closed tattoo studio in Cachan, France |
+| Google Play | no app of that name | no app of that name |
+| `.com` | not registered | registered |
+| `.net`, `.app` | not registered | not registered |
+
+**Owed: a trademark search for both**, in the US, EU, international and Japanese registers, before the first public
+build. encri owes the same for its own name (encri D124), and should weigh Encrisoft, a cybersecurity company found in
+the same searches.
+
+#### Rejected
+
+- **encrifox**: the "[Something]-fox" pattern Mozilla's policy names.
+- **encko**, encri and gecko: *encri* is not whole in it, and heard aloud it is typed *enko* or *enco*. `encko.com` is
+  registered and parked.
+- **A Blink pun for encrium**: Blink is Google's trademark.
+- **"Encri Browser"**, after the companions' pattern: it cannot tell two browsers apart.

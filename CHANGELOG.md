@@ -4,6 +4,13 @@ What happened, newest first. Why is in `docs/decisions/`, and what is next is in
 
 ## Unreleased
 
+### encriox and encrium (2026-11-14)
+
+The user wants a second browser, on Chromium, so the two needed names that tell them apart. This one is encriox and
+the Chromium one encrium (W3), each keeping *encri* whole and following the forks' habit of animal names for Firefox
+and element names for Chromium. W1's rejection of Chromium is amended: it is not this repository's browser, but it is
+the second one, a project of its own.
+
 ### A Firefox fork, licensed MPL-2.0 (2026-11-13)
 
 The user picked the study's scenario 1, a Firefox fork reaching the vault through encri-api (W1), and MPL-2.0 for

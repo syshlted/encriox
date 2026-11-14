@@ -6,8 +6,9 @@
 
 ## What this is
 
-**A browser for encri: a fork of Firefox for Android that reaches the vault through encri-api** (W1, 2026-11-13),
-licensed MPL-2.0 throughout (W2). `docs/feasibility-study.md` (2026-11-10) weighed it against the same on Chromium
+**encriox, a browser for encri: a fork of Firefox for Android that reaches the vault through encri-api** (W1,
+2026-11-13), licensed MPL-2.0 throughout (W2), and named in W3. Its sibling on Chromium is encrium, a project of its
+own, after encriox's spikes (W3). `docs/feasibility-study.md` (2026-11-10) weighed it against the same on Chromium
 and against encri's own code inside Chromium, and its *Scenario 1* is the design W1 adopted. **There is no code and no
 build yet.** The stage 1 spike comes first, then the stage 2 spike (`ROADMAP.md`).
 
@@ -49,8 +50,9 @@ These are external facts, each sourced in the study. They are not negotiable.
    vault can produce. Downloads, extension packages and session snapshots are written once, whole, and can.
 2. **Plaintext handed out is plaintext gone** (encri's hard constraint 2). The browser sees every byte of every page,
    and a key it holds sits in its memory while it runs.
-3. **The product's name cannot contain "Firefox"**, nor "Chrome" or "Chromium" on the other engine: each vendor's
-   trademark policy requires the fork's own branding. `encri-firefox` is a repository name, not an app name.
+3. **The product's name cannot contain "Firefox"**, nor follow the "[Something]-fox" pattern Mozilla's policy names,
+   nor contain "Chrome", "Chromium" or "Blink" on the other engine: each vendor's trademark policy requires the fork's
+   own branding. The app is encriox (W3); `encri-firefox` is a repository name, not an app name.
 4. **Files a Firefox fork modifies stay MPL-2.0**, and their source must be published.
 5. **A grant is keyed on the package for good** (encri D120, D145), and lapses with every update encri's registry has
    not reviewed (encri D120, D130). At Firefox's two-week cadence an unlisted browser would ask the user again twice a

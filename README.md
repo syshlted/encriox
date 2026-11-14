@@ -1,6 +1,6 @@
 # encri-firefox
 
-A browser for an encri vault: a fork of Firefox for Android. Its downloads, extension packages and session snapshots
+**encriox** is a browser for an encri vault: a fork of Firefox for Android. Its downloads, extension packages and session snapshots
 would land in the vault, and its live stores, such as cookies, history and the cache, would stay off disk or be
 encrypted with a key only the unlocked vault can give it. It reaches the vault through the
 [encri-api](https://github.com/syshlted/encri-api) client library, as Encri Images does.
@@ -10,7 +10,7 @@ encrypted with a key only the unlocked vault can give it. It reaches the vault t
 [W1](docs/decisions/W001-a-firefox-fork-reaching-the-vault-through-encri-api.md). See [`ROADMAP.md`](ROADMAP.md) for
 what comes next.
 
-The app will need a name of its own, without "Firefox" in it.
+Its sibling on Chromium is encrium, a project of its own, still to come.
 
 ## Licence
 
