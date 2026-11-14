@@ -1,7 +1,8 @@
 # A browser for encri: which of three scenarios is feasible
 
-*2026-11-10 · a study, not a decision. Nothing here is accepted until the user picks a scenario. The pick would be
-this repository's first decision record, as the sibling repositories keep them.*
+*2026-11-10 · a study, not a decision. ~~Nothing here is accepted until the user picks a scenario. The pick would be
+this repository's first decision record, as the sibling repositories keep them.~~ The user picked scenario 1 on
+2026-11-13 (W1), and the licence is MPL-2.0 (W2). The records win where this study and they disagree.*
 
 Encri's records are cited as *encri D26*, the contract's as *encri-api L11*. Browser facts carry a source link in
 [Sources](#sources); anything marked *unverified* was not checked against a primary source.
@@ -340,13 +341,7 @@ Profile files live in the app's data directory, and the HTTP cache under Android
 
 ## Open questions
 
-- **History.** Does stage 1 keep history at all, or only bookmarks and tabs?
-- **application-services.** `places.sqlite` and the login key are outside Lockstore. Fix them in the fork, or wait for
-  Mozilla?
-- **Web compatibility.** Is Gecko's web compatibility acceptable for the people encri is for? This is the one
-  argument for Chromium that this study cannot weigh.
-- **Lock behaviour.** On `STATE_LOCKED`, does the browser close outright, or keep running tabs in memory with
-  persistence paused? Closing is the conservative answer.
+Moved to `docs/decisions/open-questions.md` on 2026-11-13, when W1 was recorded.
 
 ## Sources
 

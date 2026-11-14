@@ -4,6 +4,14 @@ What happened, newest first. Why is in `docs/decisions/`, and what is next is in
 
 ## Unreleased
 
+### A Firefox fork, licensed MPL-2.0 (2026-11-13)
+
+The user picked the study's scenario 1, a Firefox fork reaching the vault through encri-api (W1), and MPL-2.0 for
+every file (W2). `LICENSE` holds the licence's text. The stage 1 spike comes first and the stage 2 spike next, ahead
+of the name and the package, which the study had put first. The study's open questions moved to
+`docs/decisions/open-questions.md`, and `scripts/docs/` came from encri-backup, reading W numbers, to generate the
+decision index.
+
 ### The documentation takes the suite's common shape (2026-11-11)
 
 The directory moved into the suite's superproject, whose `docs/documentation.md` sets one layout for every

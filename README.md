@@ -1,16 +1,19 @@
 # encri-firefox
 
-A browser for an encri vault, at the study stage. Its downloads, extension packages and session snapshots would land in
-the vault, and its live stores, such as cookies, history and the cache, would stay off disk or be encrypted with a key
-only the unlocked vault can give it. In the scenario the study recommends, it reaches the vault through the
+A browser for an encri vault: a fork of Firefox for Android. Its downloads, extension packages and session snapshots
+would land in the vault, and its live stores, such as cookies, history and the cache, would stay off disk or be
+encrypted with a key only the unlocked vault can give it. It reaches the vault through the
 [encri-api](https://github.com/syshlted/encri-api) client library, as Encri Images does.
 
-**Pre-release. Nothing is built, and nothing is decided.** [`docs/feasibility-study.md`](docs/feasibility-study.md)
-weighs a Firefox fork, a Chromium fork, and encri's own code inside Chromium. See [`ROADMAP.md`](ROADMAP.md) for what
-comes next.
+**Pre-release. Nothing is built yet.** The design is the Firefox fork that
+[`docs/feasibility-study.md`](docs/feasibility-study.md) found the most feasible of three, chosen in
+[W1](docs/decisions/W001-a-firefox-fork-reaching-the-vault-through-encri-api.md). See [`ROADMAP.md`](ROADMAP.md) for
+what comes next.
 
-The app will need a name of its own: neither "Firefox" nor "Chromium" may be in it.
+The app will need a name of its own, without "Firefox" in it.
 
 ## Licence
 
-Not chosen yet. In a Firefox fork the files it modifies stay MPL-2.0, and encri-client is Apache-2.0.
+Licensed under the [Mozilla Public License 2.0](LICENSE), every file
+([W2](docs/decisions/W002-mpl-2-0-for-the-whole-repository.md)). encri-client, the library it reaches the vault
+through, is Apache-2.0.
