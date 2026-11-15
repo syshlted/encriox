@@ -65,12 +65,15 @@ while [ $round -lt "$rounds" ]; do
     if [ $((round % 2)) -eq 0 ]; then order="default encri"; else order="encri default"; fi
     for sink in $order; do
         gate --ei fetch "$mib" --es sink $sink --ei rounds 1
-        for _ in $(seq 600); do
-            [ "$(lines "download sink=$sink")" -ge 1 ] && break
+        waited=0
+        until [ "$(lines "download sink=$sink")" -ge 1 ]; do
             if $adb logcat -d -s AbstractFetchDownloadService:E | grep -q 'marked as FAILED'; then
                 $adb logcat -d -s AbstractFetchDownloadService:E | grep -m 3 -E 'FAILED|Exception|Caused' >&2
                 exit 1
             fi
+            # A round that never finished is an error, not a line left out of the results.
+            [ $waited -lt 600 ] || { echo "measure: gave up waiting for the $sink download of round $round" >&2; exit 1; }
+            waited=$((waited + 1))
             sleep 1
         done
         $adb logcat -d -s encriox-spike:I | grep "download sink=$sink" | sed 's/^.*download //' | show fetch
