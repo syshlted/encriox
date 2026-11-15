@@ -1,0 +1,64 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jeremy Melanson <1080872+zish@users.noreply.github.com>
+Date: Sun, 15 Nov 2026 19:49:00 +0000
+Subject: [PATCH] fix: have the spike's private setting on disk before the gate
+ says so
+
+The gate set it through the property, whose apply() writes later, and
+the plaintext check stops the app as soon as the gate logs. On the S9
+the write was lost, so the control session ran privately and found
+nothing. The gate commits the setting now, before it answers.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+---
+ .../org/mozilla/fenix/encri/EncriGateActivity.kt    |  2 +-
+ .../main/java/org/mozilla/fenix/utils/Settings.kt   | 13 ++++++++++++-
+ 2 files changed, 13 insertions(+), 2 deletions(-)
+
+diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt
+index a8d0b662e3..f0261e8620 100644
+--- a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt
++++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt
+@@ -66,7 +66,7 @@ class EncriGateActivity : ComponentActivity() {
+     override fun onCreate(savedInstanceState: Bundle?) {
+         super.onCreate(savedInstanceState)
+         intent.getStringExtra("private")?.let {
+-            components.settings.encrioxPrivate = it.toBoolean()
++            components.settings.commitEncrioxPrivate(it.toBoolean())
+             done("private=${components.settings.encrioxPrivate}")
+             return
+         }
+diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/utils/Settings.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/utils/Settings.kt
+index 7745aaf27e..0844c53ec1 100644
+--- a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/utils/Settings.kt
++++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/utils/Settings.kt
+@@ -81,6 +81,9 @@ import org.mozilla.fenix.wallpapers.Wallpaper
+ private const val AUTOPLAY_USER_SETTING = "AUTOPLAY_USER_SETTING"
+ private const val MAX_ANIMATION_FOREGROUND = 5
+ 
++// encriox's stage 1 spike (encri-firefox W1): the key of Settings.encrioxPrivate.
++private const val ENCRIOX_PRIVATE = "encriox_private"
++
+ /**
+  * A simple wrapper for SharedPreferences that makes reading preference a little bit easier.
+  *
+@@ -654,7 +657,15 @@ class Settings(
+      * encriox's stage 1 spike (encri-firefox W1): every tab is private, a link from another app's included. Turned
+      * off only for the control run of `scripts/spike/stage-1/check-plaintext`.
+      */
+-    var encrioxPrivate by booleanPreference("encriox_private", default = true)
++    var encrioxPrivate by booleanPreference(ENCRIOX_PRIVATE, default = true)
++
++    /**
++     * Sets [encrioxPrivate] and has it on disk before this returns, which the property's own `apply()` does not: the
++     * spike's scripts stop the app as soon as the gate says it is set, and on the S9 the write was lost.
++     */
++    fun commitEncrioxPrivate(private: Boolean) {
++        preferences.edit().putBoolean(ENCRIOX_PRIVATE, private).commit()
++    }
+ 
+     val shouldSecureModeBeOverridden
+         get() =
+-- 
+2.47.3
+

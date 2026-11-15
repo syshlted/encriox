@@ -45,6 +45,11 @@ done
 # Unconfirmed, the session would run in whatever mode the last run left, under this run's label.
 [ -n "$confirmed" ] || { echo "check-plaintext: the gate did not confirm private=$private" >&2; exit 1; }
 $adb shell am force-stop $package
+# What the session will read is what is on disk, and a write the force-stop beat is lost: on the S9 the control ran
+# privately (2026-11-15). The setting is absent until first written, and true then.
+saved=$($adb shell "run-as $package cat shared_prefs/fenix_preferences.xml" |
+    sed -n 's/.*name="encriox_private" value="\([a-z]*\)".*/\1/p')
+[ "${saved:-true}" = "$private" ] || { echo "check-plaintext: private=${saved:-true} is on disk, not $private" >&2; exit 1; }
 files > "$work/before"
 
 "$here/serve" $port "$marker" > "$work/served" 2>&1 &
