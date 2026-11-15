@@ -23,5 +23,11 @@ The first four were the study's *Open questions*, moved here when W1 was recorde
   unmeasured in a release build.
 - **How stage 1 stops private thumbnails** (W4): Android Components writes a full-screen JPEG of each private tab to
   `no_backup/`, unencrypted, until the next start.
+- **What of Fenix's that reaches Mozilla or another app stays in encriox.** Glean's telemetry and Nimbus, whose
+  experiments can turn a feature on remotely, both left files in the spike's data on the S9 (W5). *Listen to Page*,
+  off by default in every channel at 160, hands a page's text to the system's speech engine, writes its audio to a
+  cache on disk, and plays it through Media3's ExoPlayer, which reports to the platform's media metrics from API 31
+  unless `setUsePlatformDiagnostics(false)` (read in the source, 2026-11-15; Encri Images turned it off in its own
+  viewer, encri-images d8de9cf).
 - **For encri: a vault with no folders can only be allowed whole** (W4), and encri cannot make a folder itself.
 - **Who asks Mozilla, and where** (W1, item 4). Bug 2055641 on Bugzilla is where the OS-keystore KEK is filed.
