@@ -1,0 +1,61 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jeremy Melanson <1080872+zish@users.noreply.github.com>
+Date: Sun, 15 Nov 2026 19:45:32 +0000
+Subject: [PATCH] fix: ask a held session before the spike trusts it
+
+The spike's way into the vault handed out the session it held for as
+long as its connection lived. A session outlives a lock, so after one
+the gate said it was open, and every request failed with LOCKED; and
+encri can end a session before the client hears of it. The held
+session is now asked for its own scope first: LOCKED is answered as
+locked, so the gate asks to unlock, and any other failure drops it for
+a new one.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+---
+ .../java/org/mozilla/fenix/encri/EncriVault.kt     | 14 ++++++++++++--
+ 1 file changed, 12 insertions(+), 2 deletions(-)
+
+diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriVault.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriVault.kt
+index e79a2f9dc6..26e4eacfe6 100644
+--- a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriVault.kt
++++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriVault.kt
+@@ -8,7 +8,9 @@ import android.content.Context
+ import com.systemhalted.encri.client.ConnectResult
+ import com.systemhalted.encri.client.Encri
+ import com.systemhalted.encri.client.EncriConnection
++import com.systemhalted.encri.client.EncriResult
+ import com.systemhalted.encri.client.EncriSession
++import com.systemhalted.encri.client.Failure
+ import com.systemhalted.encri.client.Right
+ import com.systemhalted.encri.client.SessionOutcome
+ import kotlinx.coroutines.sync.Mutex
+@@ -16,7 +18,7 @@ import kotlinx.coroutines.sync.withLock
+ 
+ /**
+  * The stage 1 spike's way into the vault (encri-firefox W1): one connection and one session, opened on first use and
+- * kept until a request finds it gone. Nothing here asks the user anything; [EncriGateActivity] does.
++ * kept while encri answers it. Nothing here asks the user anything; [EncriGateActivity] does.
+  */
+ object EncriVault {
+     /** One folder's worth, never the whole vault (the study, *Encri's side*). */
+@@ -40,7 +42,15 @@ object EncriVault {
+     suspend fun open(context: Context): Opening =
+         guard.withLock {
+             val live = connection?.takeIf { it.isConnected }
+-            session?.let { if (live != null) return@withLock Opening.Open(it) }
++            session?.takeIf { live != null && it.isOpen }?.let { held ->
++                // A session outlives a lock, and encri can end one before the client hears of it, so it is asked.
++                when (val asked = held.stat(held.grant.scope.id)) {
++                    is EncriResult.Ok -> return@withLock Opening.Open(held)
++                    is EncriResult.Failed -> if (asked.failure == Failure.LOCKED) return@withLock Opening.Locked
++                }
++                held.close()
++            }
++            session = null
+             val held =
+                 live ?: when (val result = Encri.connect(context.applicationContext)) {
+                     is ConnectResult.Connected -> result.connection.also { connection = it }
+-- 
+2.47.3
+
