@@ -1,0 +1,47 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jeremy Melanson <1080872+zish@users.noreply.github.com>
+Date: Sun, 15 Nov 2026 19:45:33 +0000
+Subject: [PATCH] fix: put StrictMode's exception-list comment back above its
+ function
+
+The spike's constant was written between the comment and the function
+it documents, which left the comment documenting the constant.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+---
+ .../java/org/mozilla/fenix/perf/StrictModeManager.kt | 12 ++++++------
+ 1 file changed, 6 insertions(+), 6 deletions(-)
+
+diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/perf/StrictModeManager.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/perf/StrictModeManager.kt
+index 54a3db9691..3527f0c1ad 100644
+--- a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/perf/StrictModeManager.kt
++++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/perf/StrictModeManager.kt
+@@ -234,12 +234,6 @@ open class StrictModeManager(
+     }
+ }
+ 
+-/**
+- * There are certain manufacturers that have custom font classes for the OS systems. These classes violates the
+- * [StrictMode] policies on startup. As a workaround, we create an exception list for these manufacturers so that
+- * dialogs do not show up on start up. To add a new manufacturer to the list, log "Build.MANUFACTURER" from the device
+- * to get the exact name of the manufacturer.
+- */
+ /**
+  * encriox's spike (encri-firefox W1): a debug build logs StrictMode violations and is never killed for one. On the LG G6
+  * at API 28 it was killed for violations in LG's framework, in Android Components' notification for a finished
+@@ -247,6 +241,12 @@ open class StrictModeManager(
+  */
+ private const val ENCRIOX_FATAL_VIOLATIONS = false
+ 
++/**
++ * There are certain manufacturers that have custom font classes for the OS systems. These classes violates the
++ * [StrictMode] policies on startup. As a workaround, we create an exception list for these manufacturers so that
++ * dialogs do not show up on start up. To add a new manufacturer to the list, log "Build.MANUFACTURER" from the device
++ * to get the exact name of the manufacturer.
++ */
+ private fun isInStrictModeExceptionList(buildManufacturerChecker: ManufacturerChecker) =
+     buildManufacturerChecker.isHuawei() || buildManufacturerChecker.isOnePlus() || buildManufacturerChecker.isOppo()
+ 
+-- 
+2.47.3
+
