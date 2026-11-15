@@ -1,0 +1,54 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jeremy Melanson <1080872+zish@users.noreply.github.com>
+Date: Sun, 15 Nov 2026 19:32:24 +0000
+Subject: [PATCH] feat: let the spike's gate lock the vault, to see what
+ follows
+
+`--ez lock true` locks the vault through the spike's session, as encri's
+own Lock would, and logs encri's answer.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+---
+ .../org/mozilla/fenix/encri/EncriGateActivity.kt     | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt
+index 4e7a919834..a8d0b662e3 100644
+--- a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt
++++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt
+@@ -54,6 +54,7 @@ import org.mozilla.fenix.settings.downloads.DownloadLocationManager
+  *   notification's button would stop it, and with `--ez retry true` then tried again as its *Try again* button would.
+  *   Every status it passes through is logged, then `fetch settled`;
+  * - `--ez list true` logs what the vault holds of the two;
++ * - `--ez lock true` locks the vault, for every app and for encri;
+  * - `--ez clean true` deletes what the two did, in the vault and in Downloads.
+  *
+  * Every result is a line under the tag `encriox-spike`.
+@@ -113,6 +114,7 @@ class EncriGateActivity : ComponentActivity() {
+                 }
+             }
+             extras.getBoolean("list") -> work.launch { list(context) }
++            extras.getBoolean("lock") -> work.launch { lock(context) }
+             extras.getBoolean("clean") -> work.launch { clean(context) }
+         }
+     }
+@@ -264,6 +266,16 @@ class EncriGateActivity : ComponentActivity() {
+                 status
+             }
+ 
++        /** Locks the vault through the session, as encri's own *Lock* would, and logs encri's answer. */
++        private suspend fun lock(context: Context) {
++            val answer =
++                when (val opening = EncriVault.open(context)) {
++                    is EncriVault.Opening.Open -> opening.session.lock()
++                    else -> opening
++                }
++            Log.i(TAG, "lock $answer")
++        }
++
+         /** Logs what the granted folder holds of the bench's and the fetches' writes, by name and size. */
+         private suspend fun list(context: Context) {
+             val opening = EncriVault.open(context)
+-- 
+2.47.3
+
