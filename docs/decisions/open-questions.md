@@ -12,12 +12,15 @@ The first four were the study's *Open questions*, moved here when W1 was recorde
   persistence paused? Closing is the conservative answer.
 - **~~The name and~~ the package** (W1). ~~The name cannot contain "Firefox" (`AGENTS.md`, hard constraint 3).~~ The
   name is encriox (W3). The package is permanent from the first build a user installs.
-- **The branch for stage 2**, release or ESR (W1). It is picked before stage 2 starts.
+- **The branch for stage 2**, release or ESR (W1). It is picked before stage 2 starts. Lockstore and its prefs are in
+  the GeckoView Mozilla published at 160 (W5), so on release its first measurements need no Gecko build.
 - **How the fork is carried**: a series of patches applied to a pinned `firefox-main`, or a fork of its history. The
   stage 1 spike carries six patches, written out with `git format-patch` and applied by its `fetch` with `git am`
   (W4); how that fares against a two-week rebase is unmeasured.
 - **How a release sets Gecko prefs** (W4), such as `browser.privatebrowsing.forceMediaMemoryCache`: GeckoView has no
-  public API for one, and the spike's YAML file is read by a debuggable build alone.
+  public API for one, and the spike's YAML file is read by a debuggable build alone. W5 found in the source that a
+  file the app names through `GeckoRuntimeSettings.Builder.configFilePath` is read whatever the build; that is
+  unmeasured in a release build.
 - **How stage 1 stops private thumbnails** (W4): Android Components writes a full-screen JPEG of each private tab to
   `no_backup/`, unencrypted, until the next start.
 - **For encri: a vault with no folders can only be allowed whole** (W4), and encri cannot make a folder itself.

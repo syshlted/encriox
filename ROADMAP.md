@@ -30,10 +30,19 @@ sources are there, and are not repeated here:
    through the pipe against MediaStore on the S9, the A20, the G6 and the S24, and confirm that nothing of Gecko's
    reaches `filesDir` or `cacheDir` in plaintext. The S24 only with its owner's word. ~~The G6~~ **Done on the G6
    2026-11-14 (W4)**: built (`scripts/spike/stage-1/`), no page in plaintext after a private session, downloads into the
-   vault at about 35 MiB/s. Owed: the S9, the A20 and the S24, with `check-plaintext` and `measure`.
+   vault at about 35 MiB/s. ~~Owed: the S9, the A20 and the S24, with `check-plaintext` and `measure`.~~ **Done on the
+   S9 and the A20 2026-11-15 (W5)**: no page in plaintext there either; downloads into the vault at about 57–65 MiB/s
+   on the S9 and 28–35 MiB/s on the A20, a third to a half of MediaStore's speed; and a download stopped part way,
+   which the vault had kept cut short, now leaves nothing. Owed:
+   - **the S24**, with `check-plaintext`, `measure` and `check-stopped`, on its owner's word;
+   - **patch 0010's locked path, on the G6**, once its owner has unlocked its vault, which the spike locked and the
+     passphrase on file does not open (W5): open the gate, lock with `--ez lock true`, and open it again, which must
+     ask to unlock.
 4. **Spike stage 2 before writing any of it**: GeckoView with Lockstore's prefs on, on each phone. Pick the branch,
    release or ESR, before it. It builds GeckoView, which needs at least 30 GB of disk by Mozilla's guide; the machine
-   had 63 GB free on 2026-11-13.
+   had 63 GB free on 2026-11-13, and 42 GB on 2026-11-15. **Lockstore is in the GeckoView Mozilla published** (W5,
+   read in its `libxul`), so on release its first questions could be asked of stage 1's build with prefs alone; only
+   a key-encryption key from the vault needs a Gecko build. Unmeasured.
 5. **Ask Mozilla before carrying a patch**: an embedder-supplied KEK in GeckoView, beside the OS-keystore KEK of bug
    2055641. Who asks, and where, is open.
 
@@ -44,5 +53,10 @@ sources are there, and are not repeated here:
   encri-api. Moved after the spikes by W1.
 - **A trademark search for encriox**, in the US, EU, international and Japanese registers (W3).
 - **A public remote** for this repository, before any build leaves the test phones (W2).
+
+## Bugs
+
+- **S4 — A download into the vault that stopped shows as failed**, a cancelled one too, where Fenix's own writer shows
+  it paused or cancelled (W5, flag 2). *Try again* starts it from the start.
 
 What the records left open, the study's *Open questions* included, is in `docs/decisions/open-questions.md`.

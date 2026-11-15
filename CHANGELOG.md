@@ -4,6 +4,26 @@ What happened, newest first. Why is in `docs/decisions/`, and what is next is in
 
 ## Unreleased
 
+### Stage 1 on the S9 and the A20, and a stopped download the vault kept (2026-11-15)
+
+On the S9 and the A20 too, a private session left no page's marker on disk, and a download went into the vault at a
+third to a half of MediaStore's speed: about 57–65 MiB/s on the S9 and 28–35 MiB/s on the A20 (W5). Each vault had no
+folder, so each was allowed whole, as the G6's was (W5, flag 1).
+
+**Fixed:** a download with no length, paused or cancelled, was saved cut short into the vault, and *Try again* from
+its notification asked for the rest and failed every time; now nothing is kept and a retry starts from the start
+(patches 0007 and 0008, `check-stopped`; W5, which amends W4). The gate trusted a held session after a lock (0010).
+The plaintext control could run privately, because the gate's setting was lost when the app was stopped (0012). The
+loopback server could kill the app when a client went away (0007). `check-plaintext` and `measure` went on where they
+should have stopped, and `check-plaintext` left its temporary directory behind. A comment of patch 0006's was
+misplaced (0011). The spike has a brief, `.claude/rules/spike.md`.
+
+**Found in the source:** a release can set Gecko prefs through `configFilePath`, and Lockstore is in the published
+GeckoView, so stage 2 could start without a Gecko build (W5). Neither is measured.
+
+**Known issues:** a stopped vault download shows as failed (`ROADMAP.md`, *Bugs*). The G6's vault is locked, and the
+passphrase on file does not open it, so patch 0010's locked path is unmeasured. The S24 is owed.
+
 ### The stage 1 spike, on the G6 (2026-11-14)
 
 Fenix at Firefox 160.0 builds with Gradle against the GeckoView Mozilla published, with six patches and encri-api from

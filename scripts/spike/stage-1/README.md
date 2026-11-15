@@ -5,7 +5,8 @@ for it, with `patches/` on top (W1, the study's *Stage 1*):
 
 - a throwaway package, `com.systemhalted.encri.browser.spike`, never published (W1, flag 1);
 - every tab private, a link from another app's included;
-- downloads into the folder the user gave it in the vault, through encri-client's `write`;
+- downloads into the folder the user gave it in the vault, through encri-client's `write`, all of one or none of it:
+  a download paused or cancelled part way leaves nothing (W5);
 - `org.mozilla.fenix.encri.EncriGateActivity`, the controls the scripts below start over adb.
 
 What it found is recorded in the decision that follows it, not here.
@@ -52,7 +53,9 @@ adb shell am start -n com.systemhalted.encri.browser.spike/org.mozilla.fenix.enc
 ```
 
 The gate opens the vault to the spike: encri's own screens ask for a folder and, if the vault is locked, its
-passphrase. `adb logcat -s encriox-spike` says `gate open scope=…` once it holds a session.
+passphrase. `adb logcat -s encriox-spike` says `gate open scope=…` once it holds a session. The scripts run `adb` from
+`$ADB` when it is set, such as `ADB="$HOME/Android/Sdk/platform-tools/adb -P 5038"` for a phone on the host's USB
+(encri's `docs/dev-environment.md`).
 
 - `check-plaintext <serial> normal`, then `check-plaintext <serial> private`: a page writes a fresh marker into every
   store a page can reach, and the app's data is searched for it. The normal run is the control and must find it.

@@ -9,8 +9,9 @@
 **encriox, a browser for encri: a fork of Firefox for Android that reaches the vault through encri-api** (W1,
 2026-11-13), licensed MPL-2.0 throughout (W2), and named in W3. Its sibling on Chromium is encrium, a project of its
 own, after encriox's spikes (W3). `docs/feasibility-study.md` (2026-11-10) weighed it against the same on Chromium
-and against encri's own code inside Chromium, and its *Scenario 1* is the design W1 adopted. **There is no code and no
-build yet.** The stage 1 spike comes first, then the stage 2 spike (`ROADMAP.md`).
+and against encri's own code inside Chromium, and its *Scenario 1* is the design W1 adopted. **Nothing of encriox is
+built yet.** The stage 1 spike, a throwaway, is built and measured on three phones (`scripts/spike/stage-1/`, W4, W5);
+the stage 2 spike is next (`ROADMAP.md`).
 
 ## Relationship to the other repositories
 
@@ -30,7 +31,7 @@ D1, …), `../encri-api` (the contract and its client, L1, …), `../encri-files
 | Level | Where | Loads | Holds |
 |---|---|---|---|
 | 0 | `AGENTS.md` | every session | constraints, hazards, conventions, this map |
-| 1 | `.claude/rules/<component>.md` | when a file matching its `paths:` is read or edited | none yet: a component gets a brief when its code exists |
+| 1 | `.claude/rules/<component>.md` | when a file matching its `paths:` is read or edited | one component's rules, traps and measurements (below) |
 | 2 | `docs/decisions/INDEX.md` | on demand | one line per decision, generated |
 | 3 | `docs/decisions/Wnnn-<slug>.md` | on demand | the records, W1 and on |
 
@@ -38,6 +39,12 @@ D1, …), `../encri-api` (the contract and its client, L1, …), `../encri-files
 `docs/feasibility-study.md` is a study, not a decision: what each scenario costs, with a source for every browser fact
 and *unverified* on anything not checked against one. Where it and a record disagree, the record wins. `ROADMAP.md` is
 what is next.
+
+## Components (level 1)
+
+| Brief | Covers |
+|---|---|
+| `spike.md` | the stage 1 spike, `scripts/spike/**`, and `LICENSE` until encriox's own build has a brief |
 
 ## Hard constraints
 
@@ -91,7 +98,7 @@ encri's lessons, which hold here before this project has any of its own.
    `*YYYY-MM-DD · accepted…*`. It says what was rejected and what was measured, and is *flagged for veto* where the
    user has not confirmed it.
 2. **Regenerate the index** with `python3 scripts/docs/decision-index.py .`, never by hand. The scripts are
-   encri-backup's, reading W numbers. Once code exists, check the briefs cover it with
+   encri-backup's, reading W numbers. Check that the briefs cover the code with
    `python3 scripts/docs/brief-coverage.py .`.
 3. **Amend earlier records in place**, with strike-through and "amended by Wnnn", and add a line to
    `docs/decisions/amendments.md`. What is next goes in `ROADMAP.md`; what landed goes in `CHANGELOG.md`.
