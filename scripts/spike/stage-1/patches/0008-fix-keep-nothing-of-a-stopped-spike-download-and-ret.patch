@@ -1,0 +1,124 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jeremy Melanson <1080872+zish@users.noreply.github.com>
+Date: Sun, 15 Nov 2026 19:27:44 +0000
+Subject: [PATCH] fix: keep nothing of a stopped spike download, and retry it
+ whole
+
+A pause or a cancel ends Android Components' copy just as the end of
+the response does. Where the response gave no length, the vault writer
+could not tell, and encri saved the cut copy under the download's name:
+6 of 16 MiB on the G6, paused or cancelled. The writer now asks the
+service whether the download is still running once its copy returns,
+and abandons it if not.
+
+The notification's Try again kept the bytes copied before the stop, so
+it asked the server for the rest, which a write that replaces a
+document whole cannot take, and failed every time. The writer now tells
+the service the vault kept nothing, and a retry asks for all of it.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+---
+ .../downloads/AbstractFetchDownloadService.kt | 16 +++++++++++
+ .../fenix/downloads/DownloadService.kt        |  2 ++
+ .../fenix/encri/EncriDownloadFileWriter.kt    | 27 ++++++++++++++-----
+ 3 files changed, 39 insertions(+), 6 deletions(-)
+
+diff --git a/mobile/android/android-components/components/feature/downloads/src/main/java/mozilla/components/feature/downloads/AbstractFetchDownloadService.kt b/mobile/android/android-components/components/feature/downloads/src/main/java/mozilla/components/feature/downloads/AbstractFetchDownloadService.kt
+index 7a51af9589..ea801cc277 100644
+--- a/mobile/android/android-components/components/feature/downloads/src/main/java/mozilla/components/feature/downloads/AbstractFetchDownloadService.kt
++++ b/mobile/android/android-components/components/feature/downloads/src/main/java/mozilla/components/feature/downloads/AbstractFetchDownloadService.kt
+@@ -174,6 +174,22 @@ abstract class AbstractFetchDownloadService : Service() {
+         }
+     }
+ 
++    /**
++     * encriox (encri-firefox W5): whether the download is still running, for a writer that keeps nothing of a download
++     * that stopped. A pause or a cancel ends the copy just as the end of the response does, so such a writer asks
++     * this once the copy returns.
++     */
++    protected fun isDownloading(downloadId: String): Boolean =
++        downloadJobs[downloadId]?.let { getDownloadJobStatus(it) == DOWNLOADING } == true
++
++    /**
++     * encriox (encri-firefox W5): forgets what was copied, for a writer that kept none of it, so that a retry asks for
++     * the whole file and not for the rest of it.
++     */
++    protected fun forgetCopiedBytes(downloadId: String) {
++        downloadJobs[downloadId]?.currentBytesCopied = 0
++    }
++
+     internal val broadcastReceiver by lazy {
+         object : BroadcastReceiver() {
+             @Suppress("LongMethod")
+diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/downloads/DownloadService.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/downloads/DownloadService.kt
+index 34e7172075..7631b3a816 100644
+--- a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/downloads/DownloadService.kt
++++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/downloads/DownloadService.kt
+@@ -50,6 +50,8 @@ class DownloadService : AbstractFetchDownloadService() {
+                 context = applicationContext,
+                 downloadFileUtils = downloadFileUtils,
+             ),
++            isRunning = ::isDownloading,
++            onNothingKept = ::forgetCopiedBytes,
+         )
+     }
+ }
+diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriDownloadFileWriter.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriDownloadFileWriter.kt
+index 031045f802..901a222a1d 100644
+--- a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriDownloadFileWriter.kt
++++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriDownloadFileWriter.kt
+@@ -24,10 +24,15 @@ import mozilla.components.feature.downloads.filewriter.DownloadFileWriter
+  *
+  * A download whose URL carries `encriox-sink=default` goes through [default] instead, Fenix's own writer, so that one
+  * build measures both. Every download logs its size and times under the tag `encriox-spike`.
++ *
++ * The vault keeps all of a download or none of it. [isRunning] says whether a download is still running once its copy
++ * returns, and [onNothingKept] is told of every one the vault kept nothing of, so that a retry starts from the start.
+  */
+ class EncriDownloadFileWriter(
+     private val context: Context,
+     private val default: DownloadFileWriter,
++    private val isRunning: (downloadId: String) -> Boolean = { true },
++    private val onNothingKept: (downloadId: String) -> Unit = {},
+ ) : DownloadFileWriter {
+     override fun useFileStream(
+         download: DownloadState,
+@@ -46,19 +51,29 @@ class EncriDownloadFileWriter(
+             counting.flush()
+             timing.blockEnded = SystemClock.elapsedRealtimeNanos()
+             timing.bytes = counting.count
+-            // Paused or cancelled, the copy stops and returns normally. encri saves what a writer finishes, so a
+-            // short copy is thrown here, which abandons it; Fenix's own writer keeps it to resume.
++            // Paused or cancelled, the copy stops and returns normally, as it does at the end of the response. encri
++            // saves what a writer finishes, so a copy that stopped is thrown here, which abandons it; Fenix's own
++            // writer keeps it to resume. Without a length, only the download's status says that it stopped.
+             val expected = download.contentLength
++            if (sink == SINK_ENCRI && !isRunning(download.id)) {
++                throw IOException("stopped at ${counting.count} bytes; the vault keeps nothing")
++            }
+             if (sink == SINK_ENCRI && expected != null && expected > 0 && counting.count < expected) {
+                 throw IOException("stopped at ${counting.count} of $expected bytes; the vault keeps nothing")
+             }
+         }
+         when (sink) {
+             SINK_DEFAULT -> default.useFileStream(download, append, shouldUseScopedStorage, onUpdateState, timed)
+-            else -> {
+-                if (append) throw IOException("encri replaces a document whole, so a download cannot resume into it")
+-                writeToVault(download.fileName ?: "download", download.contentType, timed)
+-            }
++            else ->
++                try {
++                    if (append) {
++                        throw IOException("encri replaces a document whole, so a download cannot resume into it")
++                    }
++                    writeToVault(download.fileName ?: "download", download.contentType, timed)
++                } catch (failed: IOException) {
++                    onNothingKept(download.id)
++                    throw failed
++                }
+         }
+         val ended = SystemClock.elapsedRealtimeNanos()
+         Log.i(
+-- 
+2.47.3
+
