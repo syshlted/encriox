@@ -58,3 +58,6 @@ passphrase. `adb logcat -s encriox-spike` says `gate open scope=…` once it hol
   store a page can reach, and the app's data is searched for it. The normal run is the control and must find it.
 - `measure <serial> <MiB> <rounds>`: downloads into the vault against Fenix's own writer, from memory and through
   Gecko from the spike's own server on the phone's loopback.
+- `check-stopped <serial> pause|cancel sized|unsized [retry]`: a download into the vault stopped part way, as its
+  notification's buttons stop it, and then tried again. The vault must hold nothing of a stopped one, and all of one
+  tried again.

@@ -1,0 +1,392 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jeremy Melanson <1080872+zish@users.noreply.github.com>
+Date: Sun, 15 Nov 2026 19:20:24 +0000
+Subject: [PATCH] feat: stop a spike download part way, to see what the vault
+ keeps
+
+The loopback server can leave a blob's length out, send it no faster
+than a rate, and answer a Range with the rest of a sized blob, as a
+server that lets a download resume does. A client that goes away no
+longer throws on the server's thread, where it would have killed the
+app. The gate can pause or cancel a download it queued, then try it
+again, through the broadcasts its notification's buttons send; it logs
+each status the download passes through, and lists what the vault holds
+of the spike's writes. Its comment named a script that never existed.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+---
+ .../mozilla/fenix/encri/EncriGateActivity.kt  | 159 ++++++++++++++++--
+ .../org/mozilla/fenix/encri/LoopbackServer.kt |  96 ++++++++---
+ 2 files changed, 213 insertions(+), 42 deletions(-)
+
+diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt
+index 3f0e6bf73b..4e7a919834 100644
+--- a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt
++++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt
+@@ -4,6 +4,8 @@
+ 
+ package org.mozilla.fenix.encri
+ 
++import android.content.Context
++import android.content.Intent
+ import android.os.Build
+ import android.os.Bundle
+ import android.os.Environment
+@@ -19,8 +21,14 @@ import kotlin.random.Random
+ import kotlinx.coroutines.CoroutineScope
+ import kotlinx.coroutines.Dispatchers
+ import kotlinx.coroutines.SupervisorJob
++import kotlinx.coroutines.delay
+ import kotlinx.coroutines.launch
++import kotlinx.coroutines.withTimeoutOrNull
+ import mozilla.components.browser.state.state.content.DownloadState
++import mozilla.components.browser.state.state.content.DownloadState.Status
++import mozilla.components.browser.state.store.BrowserStore
++import mozilla.components.feature.downloads.AbstractFetchDownloadService
++import mozilla.components.feature.downloads.INTENT_EXTRA_DOWNLOAD_ID
+ import mozilla.components.feature.downloads.filewriter.DefaultDownloadFileWriter
+ import mozilla.components.feature.downloads.manager.FetchDownloadManager
+ import mozilla.components.support.utils.DefaultDownloadFileUtils
+@@ -29,8 +37,9 @@ import org.mozilla.fenix.ext.components
+ import org.mozilla.fenix.settings.downloads.DownloadLocationManager
+ 
+ /**
+- * The stage 1 spike's controls, started over adb by `spikes/stage-1/run` (encri-firefox W1). It always first opens the
+- * vault to this browser: encri's own screens ask the user to allow a folder and to unlock, and it logs what it holds.
++ * The stage 1 spike's controls, started over adb by `scripts/spike/stage-1/` (encri-firefox W1). It always first opens
++ * the vault to this browser: encri's own screens ask the user to allow a folder and to unlock, and it logs what it
++ * holds.
+  * Then, by its extras:
+  *
+  * - `--es private true|false` sets whether every tab is private, and does nothing else: `false` is for the control run
+@@ -39,7 +48,12 @@ import org.mozilla.fenix.settings.downloads.DownloadLocationManager
+  * - `--ei bench <MiB> --ei rounds <n>` writes n rounds of that many MiB from memory, alternating which goes first,
+  *   through Fenix's own writer and through encri, as a download's copy would, in 32 KiB pieces;
+  * - `--ei fetch <MiB> --es sink default|encri --ei rounds <n>` downloads that many MiB from [LoopbackServer] through
+- *   Fenix's download service, in a private download;
++ *   Fenix's download service, in a private download. With `--ez unsized true` the server sends no length, and with
++ *   `--ei rate <KiB/s>` it sends no faster;
++ * - with `--es stop pause|cancel --ei stop_after <ms>` too, the first round is stopped after that long as its
++ *   notification's button would stop it, and with `--ez retry true` then tried again as its *Try again* button would.
++ *   Every status it passes through is logged, then `fetch settled`;
++ * - `--ez list true` logs what the vault holds of the two;
+  * - `--ez clean true` deletes what the two did, in the vault and in Downloads.
+  *
+  * Every result is a line under the tag `encriox-spike`.
+@@ -81,8 +95,24 @@ class EncriGateActivity : ComponentActivity() {
+         val context = applicationContext
+         when {
+             extras.containsKey("bench") -> work.launch { bench(context, extras.getInt("bench"), rounds) }
+-            extras.containsKey("fetch") ->
+-                fetch(extras.getInt("fetch"), extras.getString("sink") ?: EncriDownloadFileWriter.SINK_ENCRI, rounds)
++            extras.containsKey("fetch") -> {
++                val queued =
++                    fetch(
++                        extras.getInt("fetch"),
++                        extras.getString("sink") ?: EncriDownloadFileWriter.SINK_ENCRI,
++                        rounds,
++                        unsized = extras.getBoolean("unsized"),
++                        rate = extras.getInt("rate"),
++                    )
++                val how = extras.getString("stop")
++                val first = queued.firstOrNull()
++                if (how != null && first != null) {
++                    val after = extras.getInt("stop_after", DEFAULT_STOP_AFTER).toLong()
++                    val retry = extras.getBoolean("retry")
++                    work.launch { stopPartWay(context, first.first, first.second, how, after, retry) }
++                }
++            }
++            extras.getBoolean("list") -> work.launch { list(context) }
+             extras.getBoolean("clean") -> work.launch { clean(context) }
+         }
+     }
+@@ -92,12 +122,14 @@ class EncriGateActivity : ComponentActivity() {
+         finish()
+     }
+ 
+-    /** Downloads from the loopback server through Fenix's own service, one round at a time. */
++    /** Downloads from the loopback server through Fenix's own service, one round at a time: each one's id and name. */
+     private fun fetch(
+         mib: Int,
+         sink: String,
+         rounds: Int,
+-    ) {
++        unsized: Boolean,
++        rate: Int,
++    ): List<Pair<String, String>> {
+         val manager =
+             FetchDownloadManager(
+                 applicationContext,
+@@ -105,22 +137,24 @@ class EncriGateActivity : ComponentActivity() {
+                 DownloadService::class,
+                 notificationsDelegate = components.notificationsDelegate,
+             )
+-        repeat(rounds) { round ->
++        return List(rounds) { round ->
+             val name = "encriox-fetch-$mib-$sink-$round.bin"
+             val url =
+                 "http://127.0.0.1:${LoopbackServer.PORT}/blob?bytes=${mib.toLong() shl MIB_SHIFT}&name=$name" +
+-                    "&${EncriDownloadFileWriter.SINK_PARAMETER}=$sink"
+-            manager.download(
++                    "&${EncriDownloadFileWriter.SINK_PARAMETER}=$sink" +
++                    (if (unsized) "&unsized=true" else "") +
++                    (if (rate > 0) "&rate=$rate" else "")
++            val download =
+                 DownloadState(
+                     url = url,
+                     fileName = name,
+                     contentType = OCTET_STREAM,
+                     private = true,
+                     skipConfirmation = true,
+-                ),
+-                cookie = "",
+-            )
+-            Log.i(TAG, "fetch queued $name")
++                )
++            manager.download(download, cookie = "")
++            Log.i(TAG, "fetch queued $name id=${download.id}")
++            download.id to name
+         }
+     }
+ 
+@@ -133,6 +167,10 @@ class EncriGateActivity : ComponentActivity() {
+         private const val PIECE = 32 * 1024
+         private const val BENCH_PREFIX = "encriox-bench-"
+         private const val FETCH_PREFIX = "encriox-fetch-"
++        private const val DEFAULT_STOP_AFTER = 3000
++        private const val POLL_MILLIS = 100L
++        private const val SETTLE_MILLIS = 5000L
++        private const val RETRY_MILLIS = 120_000L
+ 
+         private val work = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+ 
+@@ -149,6 +187,99 @@ class EncriGateActivity : ComponentActivity() {
+                     ),
+             )
+ 
++        /**
++         * Stops a download [after] that many milliseconds, by [how], `pause` or `cancel`, through the broadcast its
++         * notification's button sends; then, if [retry], sends the one *Try again* sends. Each status the download
++         * passes through is logged as it happens.
++         */
++        @Suppress("LongParameterList")
++        private suspend fun stopPartWay(
++            context: Context,
++            id: String,
++            name: String,
++            how: String,
++            after: Long,
++            retry: Boolean,
++        ) {
++            val store = context.components.core.store
++            val watching = work.launch { watch(store, id, name) }
++            delay(after)
++            val action =
++                when (how) {
++                    "cancel" -> AbstractFetchDownloadService.ACTION_CANCEL
++                    else -> AbstractFetchDownloadService.ACTION_PAUSE
++                }
++            send(context, action, id)
++            Log.i(TAG, "fetch sent $how name=$name")
++            // A writer that refuses what it was given waits up to two seconds for encri's reason (encri-api L12).
++            delay(SETTLE_MILLIS)
++            if (retry) {
++                send(context, AbstractFetchDownloadService.ACTION_TRY_AGAIN, id)
++                Log.i(TAG, "fetch sent retry name=$name")
++                awaitStatus(store, id, setOf(Status.DOWNLOADING), SETTLE_MILLIS)
++                awaitStatus(store, id, setOf(Status.COMPLETED, Status.FAILED, Status.CANCELLED), RETRY_MILLIS)
++                delay(SETTLE_MILLIS)
++            }
++            watching.cancel()
++            Log.i(TAG, "fetch settled name=$name status=${store.state.downloads[id]?.status ?: "gone"}")
++        }
++
++        private fun send(
++            context: Context,
++            action: String,
++            id: String,
++        ) = context.sendBroadcast(
++            Intent(action).setPackage(context.packageName).putExtra(INTENT_EXTRA_DOWNLOAD_ID, id),
++        )
++
++        private suspend fun watch(
++            store: BrowserStore,
++            id: String,
++            name: String,
++        ) {
++            var last: String? = null
++            while (true) {
++                val download = store.state.downloads[id]
++                val now = download?.status?.name ?: "gone"
++                if (now != last) {
++                    Log.i(TAG, "fetch status name=$name status=$now copied=${download?.currentBytesCopied}")
++                    last = now
++                }
++                delay(POLL_MILLIS)
++            }
++        }
++
++        private suspend fun awaitStatus(
++            store: BrowserStore,
++            id: String,
++            wanted: Set<Status>,
++            millis: Long,
++        ): Status? =
++            withTimeoutOrNull(millis) {
++                var status = store.state.downloads[id]?.status
++                while (status == null || status !in wanted) {
++                    delay(POLL_MILLIS)
++                    status = store.state.downloads[id]?.status
++                }
++                status
++            }
++
++        /** Logs what the granted folder holds of the bench's and the fetches' writes, by name and size. */
++        private suspend fun list(context: Context) {
++            val opening = EncriVault.open(context)
++            if (opening is EncriVault.Opening.Open) {
++                val session = opening.session
++                when (val listed = session.list(session.grant.scope.id)) {
++                    is EncriResult.Ok ->
++                        listed.value
++                            .filter { it.name.startsWith(BENCH_PREFIX) || it.name.startsWith(FETCH_PREFIX) }
++                            .forEach { Log.i(TAG, "list name=${it.name} bytes=${it.sizeBytes}") }
++                    is EncriResult.Failed -> Log.e(TAG, "list failed: $listed")
++                }
++            }
++            Log.i(TAG, "list done")
++        }
++
+         private fun bench(
+             context: android.content.Context,
+             mib: Int,
+diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/LoopbackServer.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/LoopbackServer.kt
+index 13a1a6f509..e99de694e1 100644
+--- a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/LoopbackServer.kt
++++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/LoopbackServer.kt
+@@ -5,8 +5,10 @@
+ package org.mozilla.fenix.encri
+ 
+ import android.net.Uri
++import android.os.SystemClock
+ import android.util.Log
+ import java.io.BufferedOutputStream
++import java.io.IOException
+ import java.net.InetAddress
+ import java.net.ServerSocket
+ import java.net.Socket
+@@ -18,6 +20,10 @@ import kotlin.random.Random
+  * Serves `GET /blob?bytes=N&name=…` on the phone's own loopback, so that a measured download runs at the speed of
+  * its sink and Gecko's network stack, never at the Wi-Fi's (the stage 1 spike). The bytes are one MiB of seeded noise,
+  * repeated, so that nothing on the way can compress them.
++ *
++ * For a download stopped part way: `unsized=true` leaves the length out, so that the body ends when the connection
++ * closes; `rate=<KiB/s>` slows the body down; and a sized blob answers `Range: bytes=N-` with its rest, as a server
++ * that lets a download resume does.
+  */
+ object LoopbackServer {
+     const val PORT = 8642
+@@ -45,38 +51,72 @@ object LoopbackServer {
+ 
+     private fun serve(socket: Socket) =
+         socket.use {
+-            val reader = it.getInputStream().bufferedReader(Charsets.ISO_8859_1)
+-            val request = reader.readLine() ?: return@use
+-            Log.i(TAG, "loopback request $request")
+-            while (reader.readLine()?.isNotEmpty() == true) {
+-                // The headers say nothing the answer depends on.
++            try {
++                answer(it)
++            } catch (gone: IOException) {
++                // A download paused or cancelled closes its end. Uncaught on this thread, that would kill the app.
++                Log.i(TAG, "loopback client went away: $gone")
+             }
+-            val (method, target) = request.split(' ').let { parts -> parts[0] to parts.getOrElse(1) { "/" } }
+-            val query = Uri.parse("http://127.0.0.1$target")
+-            val size = query.getQueryParameter("bytes")?.toLongOrNull() ?: PATTERN_BYTES.toLong()
+-            val name = query.getQueryParameter("name") ?: "encriox-$size.bin"
+-            val out = BufferedOutputStream(it.getOutputStream(), BUFFER_BYTES)
+-            out.write(
+-                (
+-                    "HTTP/1.1 200 OK\r\n" +
+-                        "Content-Type: application/octet-stream\r\n" +
+-                        "Content-Length: $size\r\n" +
+-                        "Content-Disposition: attachment; filename=\"$name\"\r\n" +
+-                        "Cache-Control: no-store\r\n" +
+-                        "Connection: close\r\n\r\n"
+-                ).toByteArray(Charsets.ISO_8859_1),
+-            )
+-            if (method != "HEAD") {
+-                var left = size
+-                while (left > 0) {
+-                    val n = minOf(left, PATTERN_BYTES.toLong()).toInt()
+-                    out.write(pattern, 0, n)
+-                    left -= n
++        }
++
++    private fun answer(socket: Socket) {
++        val reader = socket.getInputStream().bufferedReader(Charsets.ISO_8859_1)
++        val request = reader.readLine() ?: return
++        Log.i(TAG, "loopback request $request")
++        var from = 0L
++        while (true) {
++            val header = reader.readLine()
++            if (header.isNullOrEmpty()) break
++            if (header.startsWith("Range:", ignoreCase = true)) {
++                from = header.substringAfter("bytes=").substringBefore('-').trim().toLongOrNull() ?: 0L
++                Log.i(TAG, "loopback $header")
++            }
++        }
++        val (method, target) = request.split(' ').let { parts -> parts[0] to parts.getOrElse(1) { "/" } }
++        val query = Uri.parse("http://127.0.0.1$target")
++        val size = query.getQueryParameter("bytes")?.toLongOrNull() ?: PATTERN_BYTES.toLong()
++        val name = query.getQueryParameter("name") ?: "encriox-$size.bin"
++        val unsized = query.getBooleanQueryParameter("unsized", false)
++        val rate = query.getQueryParameter("rate")?.toLongOrNull()?.takeIf { it > 0 }
++        val start = if (!unsized && from in 1 until size) from else 0L
++        val out = BufferedOutputStream(socket.getOutputStream(), BUFFER_BYTES)
++        out.write(
++            buildString {
++                append(if (start > 0) "HTTP/1.1 206 Partial Content\r\n" else "HTTP/1.1 200 OK\r\n")
++                append("Content-Type: application/octet-stream\r\n")
++                if (!unsized) {
++                    append("Content-Length: ${size - start}\r\n")
++                    append("Accept-Ranges: bytes\r\n")
++                }
++                if (start > 0) append("Content-Range: bytes $start-${size - 1}/$size\r\n")
++                append("Content-Disposition: attachment; filename=\"$name\"\r\n")
++                append("Cache-Control: no-store\r\n")
++                append("Connection: close\r\n\r\n")
++            }.toByteArray(Charsets.ISO_8859_1),
++        )
++        if (method != "HEAD") {
++            // Unslowed and from the start, a MiB at a time, as every measured download was served.
++            val piece = if (rate == null) PATTERN_BYTES else BUFFER_BYTES
++            val began = SystemClock.elapsedRealtime()
++            var at = start
++            while (at < size) {
++                val offset = (at % PATTERN_BYTES).toInt()
++                val n = minOf(size - at, piece.toLong(), (PATTERN_BYTES - offset).toLong()).toInt()
++                out.write(pattern, offset, n)
++                at += n
++                if (rate != null) {
++                    out.flush()
++                    val due = (at - start) * MILLIS_PER_SECOND / (rate * KIB)
++                    val early = due - (SystemClock.elapsedRealtime() - began)
++                    if (early > 0) Thread.sleep(early)
+                 }
+             }
+-            out.flush()
+-            Log.i(TAG, "loopback served $size bytes for $method")
+         }
++        out.flush()
++        Log.i(TAG, "loopback served ${size - start} bytes from $start for $method")
++    }
+ 
+     private const val BACKLOG = 16
++    private const val KIB = 1024L
++    private const val MILLIS_PER_SECOND = 1000L
+ }
+-- 
+2.47.3
+

@@ -1,0 +1,66 @@
+#!/bin/sh
+# Checks what the vault keeps of a download stopped part way (W4, what stage 1 has to do, item 1).
+#
+#   scripts/spike/stage-1/check-stopped <adb serial> pause|cancel sized|unsized [retry]
+#
+# A download of 16 MiB into the vault, from the spike's own server at 2 MiB/s, is stopped after 3 seconds through the
+# broadcast its notification's button sends. `unsized` has the server send no length, so the body ends when the
+# connection closes. With `retry`, it is then tried again through the broadcast the notification's *Try again* sends,
+# and a sized server answers that with the rest of the file, as a server that lets a download resume does.
+#
+# A download that stopped must leave nothing in the vault, and one tried again must arrive whole: 16777216 bytes.
+# The vault must be open to the spike: run the gate once (README.md). Prints the statuses the download passed
+# through, then what the vault holds of it.
+set -eu
+
+serial=${1:?usage: check-stopped <adb serial> pause|cancel sized|unsized [retry]}
+how=${2:?usage: check-stopped <adb serial> pause|cancel sized|unsized [retry]}
+size=${3:?usage: check-stopped <adb serial> pause|cancel sized|unsized [retry]}
+retry=${4:-}
+package=com.systemhalted.encri.browser.spike
+gate=$package/org.mozilla.fenix.encri.EncriGateActivity
+adb="${ADB:-$HOME/Android/Sdk/platform-tools/adb} -s $serial"
+
+case $how in pause|cancel) ;; *) echo "check-stopped: stop by pause or cancel" >&2; exit 2 ;; esac
+case $size in sized) unsized=false ;; unsized) unsized=true ;; *) echo "check-stopped: sized or unsized" >&2; exit 2 ;; esac
+case $retry in '') again=false ;; retry) again=true ;; *) echo "check-stopped: the fourth word is retry" >&2; exit 2 ;; esac
+
+log() { $adb logcat -d -s encriox-spike:I; }
+
+wait_for() {
+    pattern=$1 seconds=$2
+    for _ in $(seq "$seconds"); do
+        log | grep -q "$pattern" && return 0
+        sleep 1
+    done
+    echo "check-stopped: gave up waiting for '$pattern'" >&2
+    log | tail -20 >&2
+    exit 1
+}
+
+# Not `am start -W`: the gate finishes without drawing, and -W would wait for it forever.
+gate() {
+    $adb logcat -c
+    $adb shell am start -n $gate "$@" >/dev/null
+    wait_for "gate " 60
+    log | grep -q 'gate open' || { log | grep 'gate ' >&2; exit 1; }
+}
+
+gate --ez clean true
+wait_for "clean removed=" 120
+
+echo "== $serial: 16 MiB into the vault, $size, stopped by $how after 3 s${retry:+, then tried again}"
+gate --ei fetch 16 --es sink encri --ez unsized $unsized --ei rate 2048 \
+    --es stop "$how" --ei stop_after 3000 --ez retry $again
+wait_for "fetch settled" 240
+log | grep -E 'fetch (status|sent|settled)|loopback (Range|client went away)' | sed 's/^.*encriox-spike: /  /'
+$adb logcat -d -s AbstractFetchDownloadService:E | grep -m 2 -E 'marked as FAILED|IOException' | sed 's/^/  /' || true
+
+echo "== what the vault holds of it"
+gate --ez list true
+wait_for "list done" 60
+held=$(log | grep 'list name=' | sed 's/^.*encriox-spike: list /  /' || true)
+echo "${held:-  nothing}"
+
+gate --ez clean true
+wait_for "clean removed=" 120
