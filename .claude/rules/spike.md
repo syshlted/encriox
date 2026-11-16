@@ -26,6 +26,11 @@ build of encriox itself has a brief. This brief is level 1; full records are in 
   replaces a document whole, so the writer abandons any copy that stopped short: one that ended before the length
   the response promised, and one whose download was paused or cancelled, which ends the copy as the end of the
   response does (W4, W5).
+- **The browser's key is never written over, and nothing answers "none" without it** (W6). `encriox.key` is read,
+  or made where there is none and read back; one of the wrong length, two of the name, or one that does not read back
+  are refused. A store of keys that cannot be read yet waits in `awaitReady()` or throws, never answers that nothing
+  is stored: a key manager told its key is gone makes a new one, and what the old one sealed is wiped. Only a value
+  the vault's key cannot open is answered as gone, as Fenix answers one Keystore cannot (W6, flag 2).
 - **Measure from the phone's own loopback**, never over Wi-Fi: the A20's link ran at 0.4 MB/s (W4, *Rejected*).
 - **A script fails loudly.** A step that did not happen stops the run with a message; it never leaves a line out of
   the results or carries on under the wrong label.
@@ -48,6 +53,12 @@ build of encriox itself has a brief. This brief is level 1; full records are in 
 - A setting saved with `apply()` is lost if the app is stopped a moment later. The gate's private setting was, on the
   S9, so the control session ran privately and found nothing (W5, patch 0012).
 - A session outlives a lock: a held one is asked before it is trusted (W5, patch 0010).
+- Android Components' logins and autofill stores waited on themselves for good once their key was lost, or new over an
+  existing logins database: recovery went through `getStorage()`, which awaits the deferred that was recovering. The
+  S9's old canaries set it off when the keys moved to the vault's (W6, patch 0018).
+- `am start -W` waits for good while the screen is off behind the lock screen: `check-plaintext` did on the A20 (W6).
+  Its lock screen is not secure, so `input keyevent KEYCODE_WAKEUP` then `wm dismiss-keyguard` wakes it.
+- SharedPreferences' XML writes `"` as `&quot;`, so a search for a key in the clear looks for both (`check-keys`).
 - **Never lock a vault you cannot open again.** The G6's, locked to measure patch 0010, refused the passphrase on file
   though the keys typed were the file's; it waits for its owner. The A20's is passphrase-only (W5).
 - LG's framework logs every key event on the G6, so a passphrase typed there over adb is in its log until `logcat -c`.
@@ -55,8 +66,12 @@ build of encriox itself has a brief. This brief is level 1; full records are in 
 ## Measured, not assumed
 
 - **A private session left no page's marker on disk** on the G6 (W4), the S9 and the A20 (W5), where a normal one left
-  it in 10, 9 and 11 files. A private tab's full-screen JPEG stays in
-  `no_backup/mozac_browser_thumbnails/private_thumbnails/` until the next start, on all three.
+  it in 10, 9 and 11 files. A private tab's full-screen JPEG stayed in
+  `no_backup/mozac_browser_thumbnails/private_thumbnails/` until the next start, on all three, until patch 0013 kept
+  it in memory: none on disk since, on all three (W6).
+- **The logins' and the cards' keys are sealed with the vault's key** (`check-keys`, W6): no marker and no key in the
+  clear on the S9 and the A20, and logins asked for before the vault was open arrived after its key, 0.4 s later on the
+  S9 and 1.8 s on the A20. On the G6, with its vault locked, they waited more than a minute and nothing was written.
 - **64 MiB into the vault through Gecko**: 1.73–1.83 s on the G6, 0.99–1.13 s on the S9 and 1.84–2.29 s on the A20,
   against 0.56–0.73 s, 0.37–0.43 s and 0.76–1.35 s through Fenix's own writer (W4, W5). The vault's copy is as fast
   through Gecko as from memory on each, so encri's pipe sets the pace.
@@ -78,14 +93,17 @@ build of encriox itself has a brief. This brief is level 1; full records are in 
 | W2 | MPL-2.0 for every file; Exhibit A's notice on a new one (flag 1) |
 | W4 | What the spike measured on the G6, and what stage 1 has to do that it found |
 | W5 | A stopped download into the vault, and what the A20 and the S9 measured |
+| W6 | The browser's own key in the vault, sealing the logins' and the cards' keys; private thumbnails in memory |
 | encri-api L11, L12 | `write` saves only a finished writer; a writer's failure is told encri's reason |
 | encri D120, D145 | A grant is keyed on the package for good |
 
 ## Open here
 
-- How a release sets Gecko prefs, how stage 1 stops private thumbnails, and how the fork is carried
-  (`docs/decisions/open-questions.md`).
-- The S24's run waits for its owner's word.
+- How a release sets Gecko prefs, how the fork is carried, and what a lock does, which decides whether the stores' keys
+  may stay in memory after one (`docs/decisions/open-questions.md`; W6, flag 3).
+- The S24's run waits for its owner's word: `check-plaintext`, `measure`, `check-stopped` and `check-keys`.
+- W6's three flags: the key as a document in the vault, an unopenable key taken as lost, and the stores' keys left in
+  memory at a lock.
 - Patch 0010's locked path, on the G6 once its owner has unlocked it (`ROADMAP.md`).
 - A stopped download into the vault shows as failed, a cancelled one too (W5, flag 2).
 

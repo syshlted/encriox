@@ -33,8 +33,11 @@ sources are there, and are not repeated here:
    vault at about 35 MiB/s. ~~Owed: the S9, the A20 and the S24, with `check-plaintext` and `measure`.~~ **Done on the
    S9 and the A20 2026-11-15 (W5)**: no page in plaintext there either; downloads into the vault at about 57–65 MiB/s
    on the S9 and 28–35 MiB/s on the A20, a third to a half of MediaStore's speed; and a download stopped part way,
-   which the vault had kept cut short, now leaves nothing. Owed:
-   - **the S24**, with `check-plaintext`, `measure` and `check-stopped`, on its owner's word;
+   which the vault had kept cut short, now leaves nothing. **Then W6, 2026-11-16**: a private tab's thumbnail is kept
+   in memory, so a private session leaves nothing of a page on disk on all three; and the logins' and the cards' keys
+   are sealed with a key of the browser's own in the vault, `encriox.key`, measured on the S9 and the A20, with the
+   locked path on the G6. Owed:
+   - **the S24**, with `check-plaintext`, `measure`, `check-stopped` and `check-keys`, on its owner's word;
    - **patch 0010's locked path, on the G6**, once its owner has unlocked its vault, which the spike locked and the
      passphrase on file does not open (W5): open the gate, lock with `--ez lock true`, and open it again, which must
      ask to unlock.
@@ -44,7 +47,8 @@ sources are there, and are not repeated here:
    read in its `libxul`), so on release its first questions could be asked of stage 1's build with prefs alone; only
    a key-encryption key from the vault needs a Gecko build. Unmeasured.
 5. **Ask Mozilla before carrying a patch**: an embedder-supplied KEK in GeckoView, beside the OS-keystore KEK of bug
-   2055641. Who asks, and where, is open.
+   2055641. Who asks, and where, is open. Theirs to know too: Android Components' logins and autofill stores wait on
+   themselves for good once their key is lost, which the spike carries a fix for (W6, patch 0018).
 
 ## Before the first release
 
@@ -53,9 +57,15 @@ sources are there, and are not repeated here:
   encri-api. Moved after the spikes by W1.
 - **A trademark search for encriox**, in the US, EU, international and Japanese registers (W3).
 - **A public remote** for this repository, before any build leaves the test phones (W2).
+- **How encriox keeps its own key**: a document in the vault, as the spike does (W6, flag 1), the same wrapped by a
+  Keystore key of its own, or wrapped by encri for its package, which is a change to the contract
+  (`open-questions.md`).
 
 ## Bugs
 
+- **S3 — A lock leaves the logins' and the cards' keys in memory** until the process ends: the stores keep the keys
+  they were given, and the spike wipes only its own at a lock (W6, flag 3). What a lock should do is
+  `open-questions.md`'s *Lock behaviour*.
 - **S4 — A download into the vault that stopped shows as failed**, a cancelled one too, where Fenix's own writer shows
   it paused or cancelled (W5, flag 2). *Try again* starts it from the start.
 

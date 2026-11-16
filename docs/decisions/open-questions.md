@@ -10,11 +10,13 @@ The first four were the study's *Open questions*, moved here when W1 was recorde
   Mozilla? The login key is the easier half (read in the source, 2026-11-16): application-services takes the key for
   logins, and the one for addresses and cards, from a key manager the app supplies, and Fenix's keep theirs in
   `SecureAbove22Preferences`, which a release stores in plaintext (`forceInsecure = !Config.channel.isDebug`). A key
-  from the vault can take their place in Kotlin alone. `places.sqlite` has no such hook.
+  from the vault can take their place in Kotlin alone. `places.sqlite` has no such hook. The spike seals both keys with
+  the vault's key now (W6), so `places.sqlite` is what is left.
 - **Logins saved from a private tab.** Gecko offers to save a login from a private tab, because
   `signon.privateBrowsingCapture.enabled` is on by default, and nothing found in Android Components' prompts or its
   login delegate skips one. So with every tab private, a saved login still reaches the logins database (read in the
-  source, 2026-11-16; unmeasured).
+  source, 2026-11-16; unmeasured). Its username and password are sealed with a key the vault's key seals since W6,
+  but its origin, and when it was last used, are plain columns of application-services' schema.
 - **Extensions.** A package (`.xpi`) is a plain file in the profile (the study, *Stage 2*), and nothing an extension
   stores was measured (W4). An extension runs outside private browsing, so what it stores is likely on disk in
   plaintext (*unverified*).
@@ -29,29 +31,37 @@ The first four were the study's *Open questions*, moved here when W1 was recorde
     it, and ending the grant could erase the browser's stores by destroying that key. It is a change to the contract,
     for encri-api and encri to decide (L2, L18).
 
-  A key derived from the vault's own and handed to the browser would break encri's *keys never leave encri*.
+  A key derived from the vault's own and handed to the browser would break encri's *keys never leave encri*. The spike
+  keeps the first (W6, flag 1); encriox's is still to choose.
 - ~~**Web compatibility.** Is Gecko's web compatibility acceptable for the people encri is for?~~ Taken as
   acceptable by W1, flag 2.
 - **Lock behaviour.** On `STATE_LOCKED`, does the browser close outright, or keep running tabs in memory with
-  persistence paused? Closing is the conservative answer.
+  persistence paused? Closing is the conservative answer. The logins' and the cards' stores keep the keys they were
+  given until the process ends, so a browser that keeps running after a lock keeps those keys in memory too; the
+  spike wipes only its own key at a lock (W6).
 - **~~The name and~~ the package** (W1). ~~The name cannot contain "Firefox" (`AGENTS.md`, hard constraint 3).~~ The
   name is encriox (W3). The package is permanent from the first build a user installs.
 - **The branch for stage 2**, release or ESR (W1). It is picked before stage 2 starts. Lockstore and its prefs are in
   the GeckoView Mozilla published at 160 (W5), so on release its first measurements need no Gecko build.
 - **How the fork is carried**: a series of patches applied to a pinned `firefox-main`, or a fork of its history. The
-  stage 1 spike carries six patches, written out with `git format-patch` and applied by its `fetch` with `git am`
-  (W4); how that fares against a two-week rebase is unmeasured.
+  stage 1 spike carried six patches at W4 and nineteen at W6, written out with `git format-patch` and applied by its
+  `fetch` with `git am`; how that fares against a two-week rebase is unmeasured.
 - **How a release sets Gecko prefs** (W4), such as `browser.privatebrowsing.forceMediaMemoryCache`: GeckoView has no
   public API for one, and the spike's YAML file is read by a debuggable build alone. W5 found in the source that a
   file the app names through `GeckoRuntimeSettings.Builder.configFilePath` is read whatever the build; that is
   unmeasured in a release build.
-- **How stage 1 stops private thumbnails** (W4): Android Components writes a full-screen JPEG of each private tab to
-  `no_backup/`, unencrypted, until the next start.
+- ~~**How stage 1 stops private thumbnails** (W4): Android Components writes a full-screen JPEG of each private tab to
+  `no_backup/`, unencrypted, until the next start.~~ Kept in memory instead, by W6 (patch 0013).
 - **What of Fenix's that reaches Mozilla or another app stays in encriox.** Glean's telemetry and Nimbus, whose
   experiments can turn a feature on remotely, both left files in the spike's data on the S9 (W5). *Listen to Page*,
   off by default in every channel at 160, hands a page's text to the system's speech engine, writes its audio to a
   cache on disk, and plays it through Media3's ExoPlayer, which reports to the platform's media metrics from API 31
   unless `setUsePlatformDiagnostics(false)` (read in the source, 2026-11-15; Encri Images turned it off in its own
-  viewer, encri-images d8de9cf).
+  viewer, encri-images d8de9cf). In a private session on the G6, Fenix fetched Mozilla's sponsored tiles from
+  `ads.mozilla.org` and Nimbus's experiments from Mozilla's settings server, outside private browsing: both landed in
+  Gecko's normal HTTP cache, the tiles in `moz_ads.sqlite` too, and the normal cookie jar's WAL changed, none of it
+  holding the page's marker (W6).
 - **For encri: a vault with no folders can only be allowed whole** (W4), and encri cannot make a folder itself.
-- **Who asks Mozilla, and where** (W1, item 4). Bug 2055641 on Bugzilla is where the OS-keystore KEK is filed.
+- **Who asks Mozilla, and where** (W1, item 4). Bug 2055641 on Bugzilla is where the OS-keystore KEK is filed. Theirs
+  to know too: Android Components' logins and autofill stores wait on themselves for good once their key is lost, or
+  is new over an existing logins database, which the spike fixed in patch 0018 (W6).

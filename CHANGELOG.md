@@ -4,6 +4,27 @@ What happened, newest first. Why is in `docs/decisions/`, and what is next is in
 
 ## Unreleased
 
+### A key of the spike's own in the vault, and no private thumbnail on disk (2026-11-16)
+
+The spike keeps a key of its own, `encriox.key`, 32 random bytes in the folder the vault allows it, held in memory
+while the vault is open, and seals the logins' and the cards' keys with it, where a release of Fenix kept them in
+plaintext (W6, patches 0015 to 0017). On the S9 and the A20 no saved login or card, and no key, was on disk in the
+clear, and logins asked for before the vault was open arrived after its key. On the G6, with its vault locked, they
+waited and nothing was written. A private tab's thumbnail is kept in memory, so a private session left nothing of a
+page on disk on all three phones (0013, 0014). Three points are flagged for veto in W6.
+
+**Fixed:** Android Components' logins and autofill stores waited on themselves for good once their key was lost,
+which old canaries set off on the S9 (0018). A value the vault's key cannot open is answered as gone, as Fenix
+answers one Keystore cannot, instead of throwing where callers do not catch (0019). `check-plaintext` waited for good
+when the phone's screen was locked, and let a page that had not reached every store go on.
+
+**Found:** Fenix fetches Mozilla's sponsored tiles and Nimbus's experiments outside private browsing, into Gecko's
+normal cache; a bookmark from a private tab goes into `places.sqlite`; and Gecko offers to save a login from one. The
+three ways to keep the browser's key are in `open-questions.md`.
+
+**Known issues:** a lock leaves the logins' and the cards' keys in memory until the process ends (`ROADMAP.md`,
+*Bugs*). The S24 is owed.
+
 ### Stage 1 on the S9 and the A20, and a stopped download the vault kept (2026-11-15)
 
 On the S9 and the A20 too, a private session left no page's marker on disk, and a download went into the vault at a
