@@ -56,16 +56,22 @@ files > "$work/before"
 server=$!
 $adb reverse tcp:$port tcp:$port >/dev/null
 sleep 1
-# A URL of this run's own, so that no cache answers with an earlier run's page, and history would hold the marker.
-$adb shell am start -W -a android.intent.action.VIEW -d "http://127.0.0.1:$port/?run=$marker" \
-    -n $package/org.mozilla.fenix.IntentReceiverActivity >/dev/null
+# A URL of this run's own, so that no cache answers with an earlier run's page, and history would hold the marker. -W
+# waits for the page to be drawn, which never happens while the screen is off or locked: on the A20 it waited for good
+# (2026-11-16).
+timeout 120 $adb shell am start -W -a android.intent.action.VIEW -d "http://127.0.0.1:$port/?run=$marker" \
+    -n $package/org.mozilla.fenix.IntentReceiverActivity >/dev/null ||
+    { echo "check-plaintext: the page did not open in 2 minutes; is the phone's screen off or locked?" >&2; exit 1; }
 
 stores="cookie localStorage sessionStorage indexedDB cacheAPI serviceWorker httpCache readback"
+reported=0
 for _ in $(seq 60); do
     reported=$(grep -c '^report' "$work/served" || true)
     [ "$reported" -ge 8 ] && break
     sleep 1
 done
+# A store the page did not reach holds no marker, and a private run would find nothing for want of anything written.
+[ "$reported" -ge 8 ] || { echo "check-plaintext: the page reported $reported of its 8 stores" >&2; exit 1; }
 $adb shell input keyevent KEYCODE_HOME
 # Gecko writes cookies, local storage and IndexedDB to disk some while after a page does: 10 seconds after the app went
 # home, a normal session's were not yet there (the G6, 2026-11-14).
