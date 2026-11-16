@@ -3,9 +3,33 @@
 Questions a decision left open. One that is answered is struck through, followed by the record that answers it.
 The first four were the study's *Open questions*, moved here when W1 was recorded on 2026-11-13.
 
-- **History.** Does stage 1 keep history at all, or only bookmarks and tabs?
+- **History.** Does stage 1 keep history at all, or only bookmarks and tabs? A private tab records no history, but a
+  bookmark made from one goes into `places.sqlite` like any other, in plaintext: Fenix's menu does not ask which kind
+  of tab it was (read in the source, 2026-11-16).
 - **application-services.** `places.sqlite` and the login key are outside Lockstore. Fix them in the fork, or wait for
-  Mozilla?
+  Mozilla? The login key is the easier half (read in the source, 2026-11-16): application-services takes the key for
+  logins, and the one for addresses and cards, from a key manager the app supplies, and Fenix's keep theirs in
+  `SecureAbove22Preferences`, which a release stores in plaintext (`forceInsecure = !Config.channel.isDebug`). A key
+  from the vault can take their place in Kotlin alone. `places.sqlite` has no such hook.
+- **Logins saved from a private tab.** Gecko offers to save a login from a private tab, because
+  `signon.privateBrowsingCapture.enabled` is on by default, and nothing found in Android Components' prompts or its
+  login delegate skips one. So with every tab private, a saved login still reaches the logins database (read in the
+  source, 2026-11-16; unmeasured).
+- **Extensions.** A package (`.xpi`) is a plain file in the profile (the study, *Stage 2*), and nothing an extension
+  stores was measured (W4). An extension runs outside private browsing, so what it stores is likely on disk in
+  plaintext (*unverified*).
+- **How the browser's own key is kept** (the study, *a vault-gated key*). There are three ways, and the first two need
+  no change to encri:
+  - **a document in its folder of the vault**, the study's: read after each unlock and wiped at a lock, but readable by
+    any app allowed that folder or the whole vault, as each test vault was allowed to the spike (W4, W5), and every
+    store it encrypts is lost if the document is deleted;
+  - **that document wrapped by a Keystore key of the browser's own**, so that an app reading it gets nothing. Keystore
+    unwraps 32 bytes once an unlock, which encri's invariant on bulk crypto allows;
+  - **encri wrapping and unwrapping it for the package**, with a key that never leaves encri: no other app could unwrap
+    it, and ending the grant could erase the browser's stores by destroying that key. It is a change to the contract,
+    for encri-api and encri to decide (L2, L18).
+
+  A key derived from the vault's own and handed to the browser would break encri's *keys never leave encri*.
 - ~~**Web compatibility.** Is Gecko's web compatibility acceptable for the people encri is for?~~ Taken as
   acceptable by W1, flag 2.
 - **Lock behaviour.** On `STATE_LOCKED`, does the browser close outright, or keep running tabs in memory with
