@@ -1,0 +1,90 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jeremy Melanson <1080872+zish@users.noreply.github.com>
+Date: Mon, 16 Nov 2026 21:36:20 +0000
+Subject: [PATCH] fix: keep a private tab's thumbnail in memory, never on disk
+
+Android Components wrote a full-screen JPEG of each private tab to
+no_backup/ and deleted it only at the next start, so the spike left one
+unencrypted on every phone (encri-firefox W4, W5). It is kept in memory
+now, compressed as the disk cache keeps it, and goes with the process.
+What an earlier build left on disk is still cleared at start.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+---
+ .../thumbnails/storage/ThumbnailStorage.kt    | 23 ++++++++++++++++---
+ 1 file changed, 20 insertions(+), 3 deletions(-)
+
+diff --git a/mobile/android/android-components/components/browser/thumbnails/src/main/java/mozilla/components/browser/thumbnails/storage/ThumbnailStorage.kt b/mobile/android/android-components/components/browser/thumbnails/src/main/java/mozilla/components/browser/thumbnails/storage/ThumbnailStorage.kt
+index 6b9892b89d..f365a51379 100644
+--- a/mobile/android/android-components/components/browser/thumbnails/src/main/java/mozilla/components/browser/thumbnails/storage/ThumbnailStorage.kt
++++ b/mobile/android/android-components/components/browser/thumbnails/src/main/java/mozilla/components/browser/thumbnails/storage/ThumbnailStorage.kt
+@@ -6,7 +6,9 @@ package mozilla.components.browser.thumbnails.storage
+ 
+ import android.content.Context
+ import android.graphics.Bitmap
++import android.util.LruCache
+ import androidx.annotation.WorkerThread
++import java.io.ByteArrayOutputStream
+ import java.util.concurrent.Executors
+ import kotlinx.coroutines.CoroutineDispatcher
+ import kotlinx.coroutines.CoroutineScope
+@@ -31,8 +33,20 @@ private const val MAXIMUM_SCALE_FACTOR = 2.0f
+ private const val THREADS = 3
+ 
+ internal val sharedDiskCache = ThumbnailDiskCache()
++
++// Only cleared now, of what a build that wrote private thumbnails to disk left there.
+ internal val privateDiskCache = ThumbnailDiskCache(isPrivate = true)
+ 
++// encriox writes nothing of a private tab to disk, where a full-screen JPEG of it stayed until the next start
++// (encri-firefox W4): its thumbnail is kept here, compressed as the disk cache keeps it, and goes with the process.
++private const val PRIVATE_THUMBNAILS_BYTES = 16 * 1024 * 1024
++private const val PRIVATE_THUMBNAIL_QUALITY = 90
++
++internal val privateMemoryCache =
++    object : LruCache<String, ByteArray>(PRIVATE_THUMBNAILS_BYTES) {
++        override fun sizeOf(key: String, value: ByteArray) = value.size
++    }
++
+ /** Thumbnail storage layer which handles saving and loading the thumbnail from the disk cache. */
+ class ThumbnailStorage(
+     private val context: Context,
+@@ -57,13 +71,14 @@ class ThumbnailStorage(
+         logger.debug("Cleared all thumbnails from disk")
+         sharedDiskCache.clear(context)
+         privateDiskCache.clear(context)
++        privateMemoryCache.evictAll()
+     }
+ 
+     /** Deletes the given thumbnail [Bitmap] from the disk cache with the provided session ID or url as its key. */
+     fun deleteThumbnail(sessionIdOrUrl: String, isPrivate: Boolean): Job = scope.launch {
+         logger.debug("Removed thumbnail from disk (sessionIdOrUrl = $sessionIdOrUrl)")
+         if (isPrivate) {
+-            privateDiskCache.removeThumbnailData(context, sessionIdOrUrl)
++            privateMemoryCache.remove(sessionIdOrUrl)
+         } else {
+             sharedDiskCache.removeThumbnailData(context, sessionIdOrUrl)
+         }
+@@ -95,7 +110,7 @@ class ThumbnailStorage(
+ 
+         val data =
+             if (request.isPrivate) {
+-                privateDiskCache.getThumbnailData(context, request)
++                privateMemoryCache.get(request.id)
+             } else {
+                 sharedDiskCache.getThumbnailData(context, request)
+             }
+@@ -111,7 +126,9 @@ class ThumbnailStorage(
+     fun saveThumbnail(request: ImageSaveRequest, bitmap: Bitmap): Job = scope.launch {
+         logger.debug("Saved thumbnail to disk (id = $request, " + "generationId = ${bitmap.generationId})")
+         if (request.isPrivate) {
+-            privateDiskCache.putThumbnailBitmap(context, request, bitmap)
++            val jpeg = ByteArrayOutputStream()
++            bitmap.compress(Bitmap.CompressFormat.JPEG, PRIVATE_THUMBNAIL_QUALITY, jpeg)
++            privateMemoryCache.put(request.id, jpeg.toByteArray())
+         } else {
+             sharedDiskCache.putThumbnailBitmap(context, request, bitmap)
+         }
+-- 
+2.47.3
+

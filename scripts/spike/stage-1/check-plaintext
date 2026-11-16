@@ -6,8 +6,8 @@
 # `normal` is the control: the same page in a normal tab must leave its marker on disk, or the check finds nothing
 # because it can see nothing. A page from `serve`, reached through `adb reverse`, writes a fresh marker into every
 # store a page can reach. Then the app is sent home, so that it saves what it saves, and its whole data directory and
-# its external one are copied here and searched for the marker, as ASCII and as UTF-16. Files that appeared or changed
-# during the session are listed.
+# its external one are copied here and searched for the marker, as ASCII and as UTF-16. A private tab's thumbnails on
+# disk, and files that appeared or changed during the session, are listed.
 set -eu
 
 here=$(cd "$(dirname "$0")" && pwd)
@@ -95,6 +95,11 @@ for top in ("data", "external"):
             if found:
                 print(f"  {'+'.join(found)}: {top}/{os.path.relpath(os.path.join(path, name), os.path.join(work, top))}")
 SEARCH
+echo "== private tabs' thumbnails on disk"
+# Android Components kept a JPEG of each private tab here until the next start (W4); the cache's journal is not one.
+thumbnails=$(find "$work/data/no_backup/mozac_browser_thumbnails/private_thumbnails" -type f ! -name 'journal*' \
+    -printf '  %P %s\n' 2>/dev/null || true)
+echo "${thumbnails:-  none}"
 echo "== files that appeared or changed during the session"
 files > "$work/after"
 comm -13 "$work/before" "$work/after" | awk '{ print "  " $0 }'

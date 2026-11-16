@@ -1,0 +1,87 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jeremy Melanson <1080872+zish@users.noreply.github.com>
+Date: Mon, 16 Nov 2026 21:43:43 +0000
+Subject: [PATCH] fix: say where a thumbnail is kept, now a private one is in
+ memory
+
+The thumbnail storage's log lines and docs still said the disk cache for
+a private tab's thumbnail, which the previous patch keeps in memory.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+---
+ .../thumbnails/storage/ThumbnailStorage.kt    | 24 +++++++++++++------
+ 1 file changed, 17 insertions(+), 7 deletions(-)
+
+diff --git a/mobile/android/android-components/components/browser/thumbnails/src/main/java/mozilla/components/browser/thumbnails/storage/ThumbnailStorage.kt b/mobile/android/android-components/components/browser/thumbnails/src/main/java/mozilla/components/browser/thumbnails/storage/ThumbnailStorage.kt
+index f365a51379..478bb4ca2e 100644
+--- a/mobile/android/android-components/components/browser/thumbnails/src/main/java/mozilla/components/browser/thumbnails/storage/ThumbnailStorage.kt
++++ b/mobile/android/android-components/components/browser/thumbnails/src/main/java/mozilla/components/browser/thumbnails/storage/ThumbnailStorage.kt
+@@ -42,12 +42,14 @@ internal val privateDiskCache = ThumbnailDiskCache(isPrivate = true)
+ private const val PRIVATE_THUMBNAILS_BYTES = 16 * 1024 * 1024
+ private const val PRIVATE_THUMBNAIL_QUALITY = 90
+ 
++private fun where(isPrivate: Boolean) = if (isPrivate) "memory" else "disk"
++
+ internal val privateMemoryCache =
+     object : LruCache<String, ByteArray>(PRIVATE_THUMBNAILS_BYTES) {
+         override fun sizeOf(key: String, value: ByteArray) = value.size
+     }
+ 
+-/** Thumbnail storage layer which handles saving and loading the thumbnail from the disk cache. */
++/** Thumbnail storage layer, which saves and loads a thumbnail: in the disk cache, or in memory if private. */
+ class ThumbnailStorage(
+     private val context: Context,
+     jobDispatcher: CoroutineDispatcher =
+@@ -66,7 +68,7 @@ class ThumbnailStorage(
+         privateDiskCache.clear(context)
+     }
+ 
+-    /** Clears all the stored thumbnails in the disk cache. */
++    /** Clears all the stored thumbnails, on disk and in memory. */
+     fun clearThumbnails(): Job = scope.launch {
+         logger.debug("Cleared all thumbnails from disk")
+         sharedDiskCache.clear(context)
+@@ -74,9 +76,12 @@ class ThumbnailStorage(
+         privateMemoryCache.evictAll()
+     }
+ 
+-    /** Deletes the given thumbnail [Bitmap] from the disk cache with the provided session ID or url as its key. */
++    /**
++     * Deletes the given thumbnail [Bitmap] from the disk cache, or from memory for a private tab, with the provided
++     * session ID or url as its key.
++     */
+     fun deleteThumbnail(sessionIdOrUrl: String, isPrivate: Boolean): Job = scope.launch {
+-        logger.debug("Removed thumbnail from disk (sessionIdOrUrl = $sessionIdOrUrl)")
++        logger.debug("Removed thumbnail from ${where(isPrivate)} (sessionIdOrUrl = $sessionIdOrUrl)")
+         if (isPrivate) {
+             privateMemoryCache.remove(sessionIdOrUrl)
+         } else {
+@@ -89,7 +94,7 @@ class ThumbnailStorage(
+         loadThumbnailInternal(request).also { loadedThumbnail ->
+             if (loadedThumbnail != null) {
+                 logger.debug(
+-                    "Loaded thumbnail from disk (id = ${request.id}, " +
++                    "Loaded thumbnail from ${where(request.isPrivate)} (id = ${request.id}, " +
+                         "generationId = ${loadedThumbnail.generationId})"
+                 )
+             } else {
+@@ -122,9 +127,14 @@ class ThumbnailStorage(
+         return null
+     }
+ 
+-    /** Stores the given thumbnail [Bitmap] into the disk cache with the provided [ImageLoadRequest] as its key. */
++    /**
++     * Stores the given thumbnail [Bitmap] into the disk cache, or in memory for a private tab, with the provided
++     * [ImageLoadRequest] as its key.
++     */
+     fun saveThumbnail(request: ImageSaveRequest, bitmap: Bitmap): Job = scope.launch {
+-        logger.debug("Saved thumbnail to disk (id = $request, " + "generationId = ${bitmap.generationId})")
++        logger.debug(
++            "Saved thumbnail to ${where(request.isPrivate)} (id = $request, generationId = ${bitmap.generationId})",
++        )
+         if (request.isPrivate) {
+             val jpeg = ByteArrayOutputStream()
+             bitmap.compress(Bitmap.CompressFormat.JPEG, PRIVATE_THUMBNAIL_QUALITY, jpeg)
+-- 
+2.47.3
+
