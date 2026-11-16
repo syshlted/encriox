@@ -1,0 +1,184 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jeremy Melanson <1080872+zish@users.noreply.github.com>
+Date: Mon, 16 Nov 2026 21:45:25 +0000
+Subject: [PATCH] feat: let an app keep the logins' and autofill's keys in its
+ own store
+
+Android Components kept both keys in SecureAbove22Preferences, which a
+release of Fenix stores in plaintext. Its interface is public now, and
+the two stores take any implementation, so encriox's spike can seal
+them with a key the vault holds (encri-firefox W6).
+
+Such a store may not be readable yet, so the interface gains
+awaitReady(), which the two key managers wait on before asking for a
+key. A store that answered "nothing" instead would be taken for a lost
+key: the manager makes a new one, and the logins library wipes, or its
+cleanup deletes, every login the old one sealed.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+---
+ .../lib/dataprotect/SecureAbove22Preferences.kt    | 14 +++++++++++++-
+ .../AutofillCreditCardsAddressesStorage.kt         |  6 ++++--
+ .../service/sync/autofill/AutofillCrypto.kt        | 12 ++++++++++--
+ .../components/service/sync/logins/LoginsCrypto.kt | 12 ++++++++++--
+ .../service/sync/logins/SyncableLoginsStorage.kt   |  4 ++--
+ 5 files changed, 39 insertions(+), 9 deletions(-)
+
+diff --git a/mobile/android/android-components/components/lib/dataprotect/src/main/java/mozilla/components/lib/dataprotect/SecureAbove22Preferences.kt b/mobile/android/android-components/components/lib/dataprotect/src/main/java/mozilla/components/lib/dataprotect/SecureAbove22Preferences.kt
+index 73e6995bb1..58a22f70a8 100644
+--- a/mobile/android/android-components/components/lib/dataprotect/src/main/java/mozilla/components/lib/dataprotect/SecureAbove22Preferences.kt
++++ b/mobile/android/android-components/components/lib/dataprotect/src/main/java/mozilla/components/lib/dataprotect/SecureAbove22Preferences.kt
+@@ -14,7 +14,19 @@ import java.security.GeneralSecurityException
+ import mozilla.components.concept.base.crash.CrashReporting
+ import mozilla.components.support.base.log.logger.Logger
+ 
+-private interface KeyValuePreferences {
++/**
++ * A store of key material, such as [SecureAbove22Preferences]. An app can keep the logins' and autofill's keys in one
++ * of its own.
++ */
++interface KeyValuePreferences {
++    /**
++     * Waits until the store can be read and written. One that keeps its values on the device can be at once, which is
++     * the default; one whose values are sealed with a key that comes later, such as from a vault the user unlocks,
++     * waits for that key. A store that cannot be read yet must wait here rather than answer that it holds nothing: a
++     * key manager that is told its key is gone makes a new one, and what the old one sealed is lost.
++     */
++    suspend fun awaitReady() = Unit
++
+     /**
+      * Retrieves all key/value pairs present in the store.
+      *
+diff --git a/mobile/android/android-components/components/service/sync-autofill/src/main/java/mozilla/components/service/sync/autofill/AutofillCreditCardsAddressesStorage.kt b/mobile/android/android-components/components/service/sync-autofill/src/main/java/mozilla/components/service/sync/autofill/AutofillCreditCardsAddressesStorage.kt
+index 81f1aee3b6..8a12e12c2b 100644
+--- a/mobile/android/android-components/components/service/sync-autofill/src/main/java/mozilla/components/service/sync/autofill/AutofillCreditCardsAddressesStorage.kt
++++ b/mobile/android/android-components/components/service/sync-autofill/src/main/java/mozilla/components/service/sync/autofill/AutofillCreditCardsAddressesStorage.kt
+@@ -30,6 +30,7 @@ import mozilla.components.concept.storage.UpdatableCreditCardFields
+ import mozilla.components.concept.storage.constraints
+ import mozilla.components.concept.storage.periodicStorageWorkRequest
+ import mozilla.components.concept.sync.SyncableStore
++import mozilla.components.lib.dataprotect.KeyValuePreferences
+ import mozilla.components.lib.dataprotect.SecureAbove22Preferences
+ import mozilla.components.support.base.log.logger.Logger
+ import mozilla.components.support.utils.logElapsedTime
+@@ -40,12 +41,13 @@ const val AUTOFILL_DB_NAME = "autofill.sqlite"
+  * An implementation of [CreditCardsAddressesStorage] backed by the application-services' `autofill` library.
+  *
+  * @param context A [Context] used for disk access.
+- * @param securePrefs A [SecureAbove22Preferences] wrapped in [Lazy] to avoid eager instantiation. Used for storing
++ * @param securePrefs A [KeyValuePreferences], such as [SecureAbove22Preferences], wrapped in [Lazy] to avoid eager
++ *   instantiation. Used for storing
+  *   encryption key material.
+  */
+ class AutofillCreditCardsAddressesStorage(
+     private val context: Context,
+-    securePrefs: Lazy<SecureAbove22Preferences>,
++    securePrefs: Lazy<KeyValuePreferences>,
+ ) : CreditCardsAddressesStorage, SyncableStore, AutoCloseable {
+     private val logger = Logger("AutofillCCAddressesStorage")
+ 
+diff --git a/mobile/android/android-components/components/service/sync-autofill/src/main/java/mozilla/components/service/sync/autofill/AutofillCrypto.kt b/mobile/android/android-components/components/service/sync-autofill/src/main/java/mozilla/components/service/sync/autofill/AutofillCrypto.kt
+index e7946f9021..ffd917459f 100644
+--- a/mobile/android/android-components/components/service/sync-autofill/src/main/java/mozilla/components/service/sync/autofill/AutofillCrypto.kt
++++ b/mobile/android/android-components/components/service/sync-autofill/src/main/java/mozilla/components/service/sync/autofill/AutofillCrypto.kt
+@@ -13,6 +13,8 @@ import mozilla.appservices.db_crypto.createCanary
+ import mozilla.components.concept.storage.CreditCardCrypto
+ import mozilla.components.concept.storage.KeyGenerationReason
+ import mozilla.components.concept.storage.KeyManager
++import mozilla.components.concept.storage.ManagedKey
++import mozilla.components.lib.dataprotect.KeyValuePreferences
+ import mozilla.components.lib.dataprotect.SecureAbove22Preferences
+ 
+ /**
+@@ -20,11 +22,11 @@ import mozilla.components.lib.dataprotect.SecureAbove22Preferences
+  * rest. It also keeps track of abnormal events, such as the managed key going missing or getting corrupted.
+  *
+  * @param context [Context] used for obtaining [SharedPreferences] for managing internal prefs.
+- * @param securePrefs A [SecureAbove22Preferences] instance used for storing the managed key.
++ * @param securePrefs A [KeyValuePreferences], such as [SecureAbove22Preferences], used for storing the managed key.
+  */
+ class AutofillCrypto(
+     private val context: Context,
+-    private val securePrefs: SecureAbove22Preferences,
++    private val securePrefs: KeyValuePreferences,
+     private val storage: AutofillCreditCardsAddressesStorage,
+ ) : CreditCardCrypto, KeyManager() {
+     private val plaintextPrefs by lazy { context.getSharedPreferences(AUTOFILL_PREFS, Context.MODE_PRIVATE) }
+@@ -43,6 +45,12 @@ class AutofillCrypto(
+         }
+     }
+ 
++    // Before anything asks the store, so that a store that cannot be read yet is never taken for a key that is gone.
++    override suspend fun getOrGenerateKey(): ManagedKey {
++        securePrefs.awaitReady()
++        return super<KeyManager>.getOrGenerateKey()
++    }
++
+     override fun getStoredCanary(): String? {
+         return plaintextPrefs.getString(CANARY_PHRASE_CIPHERTEXT_KEY, null)
+     }
+diff --git a/mobile/android/android-components/components/service/sync-logins/src/main/java/mozilla/components/service/sync/logins/LoginsCrypto.kt b/mobile/android/android-components/components/service/sync-logins/src/main/java/mozilla/components/service/sync/logins/LoginsCrypto.kt
+index 4bc1812437..2853675900 100644
+--- a/mobile/android/android-components/components/service/sync-logins/src/main/java/mozilla/components/service/sync/logins/LoginsCrypto.kt
++++ b/mobile/android/android-components/components/service/sync-logins/src/main/java/mozilla/components/service/sync/logins/LoginsCrypto.kt
+@@ -15,6 +15,8 @@ import mozilla.appservices.logins.LoginsApiException.UnexpectedLoginsApiExceptio
+ import mozilla.appservices.logins.recordKeyRegenerationEvent
+ import mozilla.components.concept.storage.KeyGenerationReason
+ import mozilla.components.concept.storage.KeyManager
++import mozilla.components.concept.storage.ManagedKey
++import mozilla.components.lib.dataprotect.KeyValuePreferences
+ import mozilla.components.lib.dataprotect.SecureAbove22Preferences
+ import mozilla.components.support.base.log.logger.Logger
+ 
+@@ -26,11 +28,11 @@ import mozilla.components.support.base.log.logger.Logger
+  * managed key going missing or getting corrupted.
+  *
+  * @param context [Context] used for obtaining [SharedPreferences] for managing internal prefs.
+- * @param securePrefs A [SecureAbove22Preferences] instance used for storing the managed key.
++ * @param securePrefs A [KeyValuePreferences], such as [SecureAbove22Preferences], used for storing the managed key.
+  */
+ class LoginsCrypto(
+     private val context: Context,
+-    private val securePrefs: SecureAbove22Preferences,
++    private val securePrefs: KeyValuePreferences,
+     private val storage: SyncableLoginsStorage,
+     private val logger: Logger = Logger("LoginsCrypto"),
+ ) : KeyManager() {
+@@ -51,6 +53,12 @@ class LoginsCrypto(
+         }
+     }
+ 
++    // Before anything asks the store, so that a store that cannot be read yet is never taken for a key that is gone.
++    override suspend fun getOrGenerateKey(): ManagedKey {
++        securePrefs.awaitReady()
++        return super.getOrGenerateKey()
++    }
++
+     override fun getStoredCanary(): String? {
+         return plaintextPrefs.getString(CANARY_PHRASE_CIPHERTEXT_KEY, null)
+     }
+diff --git a/mobile/android/android-components/components/service/sync-logins/src/main/java/mozilla/components/service/sync/logins/SyncableLoginsStorage.kt b/mobile/android/android-components/components/service/sync-logins/src/main/java/mozilla/components/service/sync/logins/SyncableLoginsStorage.kt
+index 33578e62d5..a854dbf71e 100644
+--- a/mobile/android/android-components/components/service/sync-logins/src/main/java/mozilla/components/service/sync/logins/SyncableLoginsStorage.kt
++++ b/mobile/android/android-components/components/service/sync-logins/src/main/java/mozilla/components/service/sync/logins/SyncableLoginsStorage.kt
+@@ -27,7 +27,7 @@ import mozilla.components.concept.storage.LoginsStorage
+ import mozilla.components.concept.storage.constraints
+ import mozilla.components.concept.storage.periodicStorageWorkRequest
+ import mozilla.components.concept.sync.SyncableStore
+-import mozilla.components.lib.dataprotect.SecureAbove22Preferences
++import mozilla.components.lib.dataprotect.KeyValuePreferences
+ import mozilla.components.support.base.log.logger.Logger
+ import mozilla.components.support.utils.logElapsedTime
+ 
+@@ -78,7 +78,7 @@ typealias InvalidKey = mozilla.appservices.logins.LoginsApiException.InvalidKey
+  */
+ class SyncableLoginsStorage(
+     private val context: Context,
+-    private val securePrefs: Lazy<SecureAbove22Preferences>,
++    private val securePrefs: Lazy<KeyValuePreferences>,
+     private val coroutineDispatcher: CoroutineDispatcher = Dispatchers.IO,
+ ) : LoginsStorage, SyncableStore, AutoCloseable {
+     private val logger = Logger("SyncableLoginsStorage")
+-- 
+2.47.3
+

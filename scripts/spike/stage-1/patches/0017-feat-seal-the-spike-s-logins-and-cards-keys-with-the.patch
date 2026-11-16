@@ -1,0 +1,315 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jeremy Melanson <1080872+zish@users.noreply.github.com>
+Date: Mon, 16 Nov 2026 21:50:38 +0000
+Subject: [PATCH] feat: seal the spike's logins' and cards' keys with the
+ vault's key
+
+Fenix kept the two keys in SecureAbove22Preferences, which a release
+stores in plaintext beside the stores. The spike keeps them sealed with
+AES-256-GCM under the browser's key from the vault, each bound to its
+name, and committed rather than applied. Nothing is read or written
+until the vault has given the key: the stores wait for it, and a read
+without it throws rather than answering that nothing is stored.
+
+The gate saves, lists and deletes a login and a card of the spike's
+own, and asks for the logins before the vault is open, to see when
+they arrive (encri-firefox W6).
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+---
+ .../java/org/mozilla/fenix/components/Core.kt |   8 +-
+ .../mozilla/fenix/encri/EncriGateActivity.kt  |  99 +++++++++++++++++
+ .../fenix/encri/EncriKeyPreferences.kt        | 103 ++++++++++++++++++
+ 3 files changed, 208 insertions(+), 2 deletions(-)
+ create mode 100644 mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriKeyPreferences.kt
+
+diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/components/Core.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/components/Core.kt
+index e3007a552f..e6868fc9fa 100644
+--- a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/components/Core.kt
++++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/components/Core.kt
+@@ -122,6 +122,7 @@ import org.mozilla.fenix.components.search.ApplicationSearchMiddleware
+ import org.mozilla.fenix.components.search.SearchMigration
+ import org.mozilla.fenix.components.search.SearchWidgetMiddleware
+ import org.mozilla.fenix.downloads.DownloadService
++import org.mozilla.fenix.encri.EncriKeyPreferences
+ import org.mozilla.fenix.ext.components
+ import org.mozilla.fenix.ext.isLargeWindow
+ import org.mozilla.fenix.gecko.GeckoProvider
+@@ -542,8 +543,11 @@ class Core(
+     // We can fully initialize GeckoEngine without initialized our storage.
+     val lazyHistoryStorage = lazyMonitored { PlacesHistoryStorage(context, crashReporter) }
+     val lazyBookmarksStorage = lazyMonitored { PlacesBookmarksStorage(context) }
+-    val lazyPasswordsStorage = lazyMonitored { SyncableLoginsStorage(context, lazySecurePrefs) }
+-    val lazyAutofillStorage = lazyMonitored { AutofillCreditCardsAddressesStorage(context, lazySecurePrefs) }
++    // encriox's spike seals the logins' and the cards' keys with the key the vault holds, where a release kept them in
++    // plaintext beside the stores (encri-firefox W6).
++    private val lazyEncriKeys = lazy { EncriKeyPreferences(context) }
++    val lazyPasswordsStorage = lazyMonitored { SyncableLoginsStorage(context, lazyEncriKeys) }
++    val lazyAutofillStorage = lazyMonitored { AutofillCreditCardsAddressesStorage(context, lazyEncriKeys) }
+     val lazyDomainsAutocompleteProvider = lazyMonitored {
+         // Assume this is used together with other autocomplete providers (like history) which have priority 0
+         // and set priority 1 for the domains provider to ensure other providers' results are shown first.
+diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt
+index dcc84fb485..9967c0cb4d 100644
+--- a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt
++++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt
+@@ -9,6 +9,7 @@ import android.content.Intent
+ import android.os.Build
+ import android.os.Bundle
+ import android.os.Environment
++import android.os.SystemClock
+ import android.provider.MediaStore
+ import android.util.Log
+ import androidx.activity.ComponentActivity
+@@ -27,6 +28,8 @@ import kotlinx.coroutines.withTimeoutOrNull
+ import mozilla.components.browser.state.state.content.DownloadState
+ import mozilla.components.browser.state.state.content.DownloadState.Status
+ import mozilla.components.browser.state.store.BrowserStore
++import mozilla.components.concept.storage.LoginEntry
++import mozilla.components.concept.storage.NewCreditCardFields
+ import mozilla.components.feature.downloads.AbstractFetchDownloadService
+ import mozilla.components.feature.downloads.INTENT_EXTRA_DOWNLOAD_ID
+ import mozilla.components.feature.downloads.filewriter.DefaultDownloadFileWriter
+@@ -55,6 +58,10 @@ import org.mozilla.fenix.settings.downloads.DownloadLocationManager
+  *   Every status it passes through is logged, then `fetch settled`;
+  * - `--ez list true` logs what the vault holds of the two;
+  * - `--ez lock true` locks the vault, for every app and for encri;
++ * - `--es login <text>` saves a login under the spike's own origin, `--es card <digits>` a card in the spike's name,
++ *   and `--ez kept true` logs what the stores hold of the two, whose keys the vault's key seals (W6); `--ez forget
++ *   true` deletes them. With `--ez early true`, the logins are first asked for before the vault is open, and when
++ *   they arrive is logged;
+  * - `--ez clean true` deletes what the two did, in the vault and in Downloads.
+  *
+  * Every result is a line under the tag `encriox-spike`.
+@@ -71,6 +78,10 @@ class EncriGateActivity : ComponentActivity() {
+             return
+         }
+         LoopbackServer.start()
++        if (intent.getBooleanExtra("early", false)) {
++            val context = applicationContext
++            work.launch { early(context) }
++        }
+         lifecycleScope.launch { proceed() }
+     }
+ 
+@@ -123,6 +134,10 @@ class EncriGateActivity : ComponentActivity() {
+             }
+             extras.getBoolean("list") -> work.launch { list(context) }
+             extras.getBoolean("lock") -> work.launch { lock(context) }
++            extras.containsKey("login") -> work.launch { keepLogin(context, extras.getString("login").orEmpty()) }
++            extras.containsKey("card") -> work.launch { keepCard(context, extras.getString("card").orEmpty()) }
++            extras.getBoolean("kept") -> work.launch { listKept(context) }
++            extras.getBoolean("forget") -> work.launch { forgetKept(context) }
+             extras.getBoolean("clean") -> work.launch { clean(context) }
+         }
+     }
+@@ -181,6 +196,10 @@ class EncriGateActivity : ComponentActivity() {
+         private const val POLL_MILLIS = 100L
+         private const val SETTLE_MILLIS = 5000L
+         private const val RETRY_MILLIS = 120_000L
++        private const val KEPT_ORIGIN = "https://encriox.invalid"
++        private const val KEPT_NAME = "encriox spike"
++        private const val KEPT_MONTH = 12L
++        private const val KEPT_YEAR = 2030L
+ 
+         private val work = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+ 
+@@ -274,6 +293,86 @@ class EncriGateActivity : ComponentActivity() {
+                 status
+             }
+ 
++        /**
++         * Asks for the logins before the vault is open, as a page with a login form would, and logs when they arrive:
++         * their store waits for the vault's key rather than answering that it holds none (W6).
++         */
++        private suspend fun early(context: Context) {
++            val asked = SystemClock.elapsedRealtime()
++            val logins = runCatching { context.components.core.passwordsStorage.list() }
++            val after = SystemClock.elapsedRealtime() - asked
++            Log.i(
++                TAG,
++                logins.fold({ "early logins=${it.size} after=${after}ms" }, { "early failed after=${after}ms: $it" }),
++            )
++        }
++
++        private suspend fun keepLogin(
++            context: Context,
++            text: String,
++        ) {
++            val kept =
++                runCatching {
++                    context.components.core.passwordsStorage.add(
++                        LoginEntry(
++                            origin = KEPT_ORIGIN,
++                            formActionOrigin = KEPT_ORIGIN,
++                            username = text,
++                            password = text,
++                        ),
++                    )
++                }
++            Log.i(TAG, kept.fold({ "login kept guid=${it.guid}" }, { "login failed: $it" }))
++        }
++
++        private suspend fun keepCard(
++            context: Context,
++            number: String,
++        ) {
++            val kept =
++                runCatching {
++                    context.components.core.autofillStorage.addCreditCard(
++                        NewCreditCardFields(KEPT_NAME, number, KEPT_MONTH, KEPT_YEAR, "visa"),
++                    )
++                }
++            Log.i(TAG, kept.fold({ "card kept guid=${it.guid}" }, { "card failed: $it" }))
++        }
++
++        /** Logs the spike's own logins and cards, as the stores open them with the keys the vault's key sealed. */
++        private suspend fun listKept(context: Context) {
++            val core = context.components.core
++            val logins = runCatching { core.passwordsStorage.list().filter { it.origin == KEPT_ORIGIN } }
++            logins.getOrNull()?.forEach { Log.i(TAG, "kept login username=${it.username} password=${it.password}") }
++            val cards = runCatching { core.autofillStorage.getAllCreditCards().filter { it.billingName == KEPT_NAME } }
++            cards.getOrNull()?.forEach { Log.i(TAG, "kept card number=${it.cardNumber}") }
++            Log.i(
++                TAG,
++                "kept logins=${logins.fold({ it.size.toString() }, { "failed: $it" })} " +
++                    "cards=${cards.fold({ it.size.toString() }, { "failed: $it" })}",
++            )
++        }
++
++        private suspend fun forgetKept(context: Context) {
++            val core = context.components.core
++            val logins =
++                runCatching {
++                    core.passwordsStorage.list()
++                        .filter { it.origin == KEPT_ORIGIN }
++                        .count { core.passwordsStorage.delete(it.guid) }
++                }
++            val cards =
++                runCatching {
++                    core.autofillStorage.getAllCreditCards()
++                        .filter { it.billingName == KEPT_NAME }
++                        .count { core.autofillStorage.deleteCreditCard(it.guid) }
++                }
++            Log.i(
++                TAG,
++                "forgot logins=${logins.fold({ it.toString() }, { "failed: $it" })} " +
++                    "cards=${cards.fold({ it.toString() }, { "failed: $it" })}",
++            )
++        }
++
+         /** Locks the vault through the session, as encri's own *Lock* would, and logs encri's answer. */
+         private suspend fun lock(context: Context) {
+             val answer =
+diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriKeyPreferences.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriKeyPreferences.kt
+new file mode 100644
+index 0000000000..242ebe7c9f
+--- /dev/null
++++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriKeyPreferences.kt
+@@ -0,0 +1,103 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
++
++package org.mozilla.fenix.encri
++
++import android.content.Context
++import android.content.SharedPreferences
++import android.util.Base64
++import java.security.SecureRandom
++import java.util.concurrent.ConcurrentHashMap
++import javax.crypto.Cipher
++import javax.crypto.spec.GCMParameterSpec
++import javax.crypto.spec.SecretKeySpec
++import mozilla.components.lib.dataprotect.KeyValuePreferences
++
++/**
++ * Where the logins' and the cards' own keys are kept (encri-firefox W6): sealed with [EncriKey], the key the vault
++ * holds, in preferences of their own, instead of in Fenix's `SecureAbove22Preferences`, which a release keeps in
++ * plaintext beside the stores.
++ *
++ * Nothing here is read or written before the vault has given the browser its key, and [awaitReady] waits for that.
++ * Without it a read throws, and never answers that nothing is stored: a key manager told its key is gone makes a new
++ * one, and every login the old one sealed is lost. A value once unsealed is kept in memory until the process ends, as
++ * the stores keep the keys they were given.
++ */
++class EncriKeyPreferences(
++    private val context: Context,
++) : KeyValuePreferences {
++    private val prefs: SharedPreferences by lazy { context.getSharedPreferences(NAME, Context.MODE_PRIVATE) }
++    private val unsealed = ConcurrentHashMap<String, String>()
++    private val random = SecureRandom()
++
++    override suspend fun awaitReady() {
++        EncriKey.await()
++    }
++
++    override fun all(): Map<String, String> = prefs.all.keys.associateWith { requireNotNull(getString(it)) }
++
++    override fun getString(key: String): String? {
++        unsealed[key]?.let { return it }
++        // Even that nothing is stored is answered only with the key in hand.
++        browserKey()
++        val sealed = prefs.getString(key, null) ?: return null
++        return open(key, sealed).also { unsealed[key] = it }
++    }
++
++    override fun putString(
++        key: String,
++        value: String,
++    ) {
++        // Committed, not applied: a key lost to a stop a moment later would lose all it sealed (W5, patch 0012).
++        check(prefs.edit().putString(key, seal(key, value)).commit()) { "$key was not saved" }
++        unsealed[key] = value
++    }
++
++    override fun remove(key: String) {
++        check(prefs.edit().remove(key).commit()) { "$key was not removed" }
++        unsealed.remove(key)
++    }
++
++    override fun clear() {
++        check(prefs.edit().clear().commit()) { "the keys were not cleared" }
++        unsealed.clear()
++    }
++
++    private fun browserKey() =
++        EncriKey.current ?: throw IllegalStateException("the vault has not given the browser its key")
++
++    private fun sealingKey() = SecretKeySpec(browserKey(), "AES")
++
++    // AES-256-GCM, a fresh nonce each time, and the value's name as associated data, so a value cannot be moved to
++    // another name.
++    private fun seal(
++        key: String,
++        value: String,
++    ): String {
++        val nonce = ByteArray(NONCE_BYTES).also { random.nextBytes(it) }
++        val cipher = Cipher.getInstance(TRANSFORMATION)
++        cipher.init(Cipher.ENCRYPT_MODE, sealingKey(), GCMParameterSpec(TAG_BITS, nonce))
++        cipher.updateAAD(key.toByteArray())
++        return Base64.encodeToString(nonce + cipher.doFinal(value.toByteArray()), Base64.NO_WRAP)
++    }
++
++    private fun open(
++        key: String,
++        sealed: String,
++    ): String {
++        val bytes = Base64.decode(sealed, Base64.NO_WRAP)
++        val cipher = Cipher.getInstance(TRANSFORMATION)
++        cipher.init(Cipher.DECRYPT_MODE, sealingKey(), GCMParameterSpec(TAG_BITS, bytes, 0, NONCE_BYTES))
++        cipher.updateAAD(key.toByteArray())
++        // A value the key cannot open throws, and is never taken for one that is not there.
++        return String(cipher.doFinal(bytes, NONCE_BYTES, bytes.size - NONCE_BYTES))
++    }
++
++    private companion object {
++        const val NAME = "encriox_keys"
++        const val TRANSFORMATION = "AES/GCM/NoPadding"
++        const val NONCE_BYTES = 12
++        const val TAG_BITS = 128
++    }
++}
+-- 
+2.47.3
+

@@ -7,6 +7,10 @@ for it, with `patches/` on top (W1, the study's *Stage 1*):
 - every tab private, a link from another app's included;
 - downloads into the folder the user gave it in the vault, through encri-client's `write`, all of one or none of it:
   a download paused or cancelled part way leaves nothing (W5);
+- a private tab's thumbnail kept in memory, never on disk (W6);
+- a key of its own, `encriox.key`, 32 random bytes in that folder and held in memory while the vault is open, which
+  seals the logins' and the cards' keys in place of Fenix's `SecureAbove22Preferences`, and which those stores wait
+  for (W6);
 - `org.mozilla.fenix.encri.EncriGateActivity`, the controls the scripts below start over adb.
 
 What it found is recorded in the decision that follows it, not here.
@@ -64,3 +68,6 @@ passphrase. `adb logcat -s encriox-spike` says `gate open scope=…` once it hol
 - `check-stopped <serial> pause|cancel sized|unsized [retry]`: a download into the vault stopped part way, as its
   notification's buttons stop it, and then tried again. The vault must hold nothing of a stopped one, and all of one
   tried again.
+- `check-keys <serial>`: a login and a card, each a fresh marker, are saved, and the app's data is searched for them
+  and for a key in the clear. A new process then asks for the logins before the vault is open: they must arrive after
+  the vault's key, whole. Both are deleted after. It needs the vault unlocked, and leaves `encriox.key` in it.

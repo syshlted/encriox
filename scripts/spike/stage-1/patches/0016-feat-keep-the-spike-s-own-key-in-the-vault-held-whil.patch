@@ -1,0 +1,220 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jeremy Melanson <1080872+zish@users.noreply.github.com>
+Date: Mon, 16 Nov 2026 21:47:29 +0000
+Subject: [PATCH] feat: keep the spike's own key in the vault, held while it is
+ open
+
+The study's vault-gated key (encri-firefox W6): 32 random bytes in a
+document named encriox.key, in the folder the vault allows the browser.
+The gate reads it once the vault is open, or makes it there and reads
+it back before using it, and holds it in memory alone until the vault
+locks or the session ends. A document of the wrong length, two of the
+name, or one that does not read back are refused, never written over.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+---
+ .../mozilla/fenix/encri/EncriGateActivity.kt  |  10 +-
+ .../java/org/mozilla/fenix/encri/EncriKey.kt  | 163 ++++++++++++++++++
+ 2 files changed, 172 insertions(+), 1 deletion(-)
+ create mode 100644 mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriKey.kt
+
+diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt
+index f0261e8620..dcc84fb485 100644
+--- a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt
++++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt
+@@ -39,7 +39,7 @@ import org.mozilla.fenix.settings.downloads.DownloadLocationManager
+ /**
+  * The stage 1 spike's controls, started over adb by `scripts/spike/stage-1/` (encri-firefox W1). It always first opens
+  * the vault to this browser: encri's own screens ask the user to allow a folder and to unlock, and it logs what it
+- * holds.
++ * holds. Then it holds the browser's own key, which it reads from that folder or makes there ([EncriKey], W6).
+  * Then, by its extras:
+  *
+  * - `--es private true|false` sets whether every tab is private, and does nothing else: `false` is for the control run
+@@ -84,6 +84,14 @@ class EncriGateActivity : ComponentActivity() {
+             is EncriVault.Opening.Open -> {
+                 val scope = opening.session.grant.scope
+                 Log.i(TAG, "gate open scope=${scope.name} id=${scope.id} rights=${opening.session.grant.rights}")
++                val key =
++                    when (val holding = EncriKey.open(opening.session)) {
++                        EncriKey.Holding.Made -> "made"
++                        EncriKey.Holding.Read -> "read"
++                        EncriKey.Holding.AlreadyHeld -> "held"
++                        is EncriKey.Holding.Refused -> "refused: ${holding.reason}"
++                    }
++                Log.i(TAG, "key $key")
+                 runRequested()
+                 done("open")
+             }
+diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriKey.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriKey.kt
+new file mode 100644
+index 0000000000..0ac0201e9b
+--- /dev/null
++++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriKey.kt
+@@ -0,0 +1,163 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
++
++package org.mozilla.fenix.encri
++
++import android.os.ParcelFileDescriptor
++import com.systemhalted.encri.client.EncriDocument
++import com.systemhalted.encri.client.EncriResult
++import com.systemhalted.encri.client.EncriSession
++import com.systemhalted.encri.client.NameConflict
++import com.systemhalted.encri.client.VaultEvent
++import java.security.SecureRandom
++import kotlinx.coroutines.CoroutineScope
++import kotlinx.coroutines.Dispatchers
++import kotlinx.coroutines.Job
++import kotlinx.coroutines.SupervisorJob
++import kotlinx.coroutines.flow.MutableStateFlow
++import kotlinx.coroutines.flow.filterNotNull
++import kotlinx.coroutines.flow.first
++import kotlinx.coroutines.launch
++import kotlinx.coroutines.sync.Mutex
++import kotlinx.coroutines.sync.withLock
++import kotlinx.coroutines.withContext
++
++/**
++ * The browser's own key, the study's *vault-gated key* (encri-firefox W6): 32 random bytes, kept as a document in the
++ * folder the vault allows this browser, read once the vault is open to it, and held in memory alone until the vault
++ * locks or the session ends. It is the browser's key and not one of encri's, the content of a document, so encri's
++ * *keys never leave encri* holds.
++ *
++ * The document is never written over. One of the wrong length, two of the name, or one that does not read back as it
++ * was written are refused: whatever was sealed with the key it held would be lost.
++ */
++object EncriKey {
++    const val NAME = "encriox.key"
++    private const val BYTES = 32
++    private const val OCTET_STREAM = "application/octet-stream"
++
++    private val guard = Mutex()
++    private val held = MutableStateFlow<ByteArray?>(null)
++    private val watching = CoroutineScope(SupervisorJob() + Dispatchers.Default)
++    private var watcher: Job? = null
++
++    /** What [open] did. */
++    sealed interface Holding {
++        data object Made : Holding
++
++        data object Read : Holding
++
++        data object AlreadyHeld : Holding
++
++        data class Refused(val reason: String) : Holding
++    }
++
++    private class Refusal(reason: String) : Exception(reason)
++
++    /** The key, while the vault is open to the browser; null before and after. */
++    val current: ByteArray? get() = held.value
++
++    /** Waits until the vault has given the browser its key. */
++    suspend fun await(): ByteArray = held.filterNotNull().first()
++
++    /**
++     * Reads the key from the folder [session]'s grant is rooted at, or makes it there if there is none, and holds it
++     * until the vault locks or the session ends.
++     */
++    suspend fun open(session: EncriSession): Holding =
++        guard.withLock {
++            if (held.value != null) return@withLock Holding.AlreadyHeld
++            try {
++                val folder = session.grant.scope.id
++                val named =
++                    when (val listed = session.list(folder)) {
++                        is EncriResult.Ok -> listed.value.filter { it.name == NAME && !it.isFolder }
++                        is EncriResult.Failed -> throw Refusal("encri would not list the folder: $listed")
++                    }
++                val (key, holding) =
++                    when (named.size) {
++                        0 -> make(session, folder) to Holding.Made
++                        1 -> read(session, named.single()) to Holding.Read
++                        else -> throw Refusal("${named.size} documents are named $NAME")
++                    }
++                held.value = key
++                watcher?.cancel()
++                watcher =
++                    watching.launch {
++                        session.events.first { it == VaultEvent.Locked || it == VaultEvent.Ended }
++                        forget()
++                    }
++                holding
++            } catch (refused: Refusal) {
++                Holding.Refused(refused.message.orEmpty())
++            }
++        }
++
++    /** Drops the key, as a lock does. */
++    suspend fun forget() =
++        guard.withLock {
++            held.value?.fill(0)
++            held.value = null
++        }
++
++    private suspend fun make(
++        session: EncriSession,
++        folder: String,
++    ): ByteArray {
++        val key = ByteArray(BYTES).also { SecureRandom().nextBytes(it) }
++        try {
++            val created =
++                when (val result = session.createFile(folder, NAME, OCTET_STREAM, NameConflict.REFUSE)) {
++                    is EncriResult.Ok -> result.value
++                    is EncriResult.Failed -> throw Refusal("encri would not create $NAME: $result")
++                }
++            val written =
++                when (val result = session.write(created.id) { it.write(key) }) {
++                    is EncriResult.Ok -> result.value
++                    is EncriResult.Failed -> {
++                        session.delete(created.id)
++                        throw Refusal("encri did not save $NAME: $result")
++                    }
++                }
++            // What the vault kept is what is used, so it is read back before anything is sealed with it. Nothing was
++            // sealed with it yet, so nothing is lost if it is deleted.
++            val back =
++                try {
++                    read(session, written)
++                } catch (refused: Refusal) {
++                    session.delete(written.id)
++                    throw refused
++                }
++            if (!back.contentEquals(key)) {
++                back.fill(0)
++                session.delete(written.id)
++                throw Refusal("$NAME did not read back as it was written")
++            }
++            return back
++        } finally {
++            key.fill(0)
++        }
++    }
++
++    private suspend fun read(
++        session: EncriSession,
++        document: EncriDocument,
++    ): ByteArray {
++        if (document.sizeBytes != BYTES.toLong()) throw Refusal("$NAME holds ${document.sizeBytes} bytes, not $BYTES")
++        val descriptor =
++            when (val opened = session.openRead(document.id)) {
++                is EncriResult.Ok -> opened.value
++                is EncriResult.Failed -> throw Refusal("encri would not open $NAME: $opened")
++            }
++        val bytes =
++            withContext(Dispatchers.IO) {
++                ParcelFileDescriptor.AutoCloseInputStream(descriptor).use { it.readBytes() }
++            }
++        if (bytes.size != BYTES) {
++            bytes.fill(0)
++            throw Refusal("$NAME read as ${bytes.size} bytes, not $BYTES")
++        }
++        return bytes
++    }
++}
+-- 
+2.47.3
+

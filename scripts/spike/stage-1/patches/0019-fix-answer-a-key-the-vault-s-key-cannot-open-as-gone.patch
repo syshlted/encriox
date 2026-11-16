@@ -1,0 +1,83 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jeremy Melanson <1080872+zish@users.noreply.github.com>
+Date: Mon, 16 Nov 2026 21:58:15 +0000
+Subject: [PATCH] fix: answer a key the vault's key cannot open as gone, as
+ Fenix does
+
+The spike's sealed store threw on a value the vault's key could not
+open, which happens once encriox.key is deleted from the vault and the
+gate makes a new one. The logins and autofill stores would then fail
+for good with an exception their callers do not catch, and saving a
+login could take the app down. SecureAbove22Preferences answers a value
+Keystore cannot open as absent, so the key manager makes a new key and
+the stores start again; the spike's store does the same now, and logs
+it. Without the vault's key at all, it still throws (encri-firefox W6).
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+---
+ .../fenix/encri/EncriKeyPreferences.kt        | 22 ++++++++++++++-----
+ 1 file changed, 17 insertions(+), 5 deletions(-)
+
+diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriKeyPreferences.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriKeyPreferences.kt
+index 242ebe7c9f..dca7e7fbf6 100644
+--- a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriKeyPreferences.kt
++++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriKeyPreferences.kt
+@@ -7,6 +7,8 @@ package org.mozilla.fenix.encri
+ import android.content.Context
+ import android.content.SharedPreferences
+ import android.util.Base64
++import android.util.Log
++import java.security.GeneralSecurityException
+ import java.security.SecureRandom
+ import java.util.concurrent.ConcurrentHashMap
+ import javax.crypto.Cipher
+@@ -21,8 +23,10 @@ import mozilla.components.lib.dataprotect.KeyValuePreferences
+  *
+  * Nothing here is read or written before the vault has given the browser its key, and [awaitReady] waits for that.
+  * Without it a read throws, and never answers that nothing is stored: a key manager told its key is gone makes a new
+- * one, and every login the old one sealed is lost. A value once unsealed is kept in memory until the process ends, as
+- * the stores keep the keys they were given.
++ * one, and every login the old one sealed is lost. A value the vault's key cannot open is another matter: the key
++ * that sealed it is gone from the vault, so it is answered as gone, as `SecureAbove22Preferences` answers a value
++ * Keystore cannot open, and the stores start again (W6). A value once unsealed is kept in memory until the
++ * process ends, as the stores keep the keys they were given.
+  */
+ class EncriKeyPreferences(
+     private val context: Context,
+@@ -35,14 +39,23 @@ class EncriKeyPreferences(
+         EncriKey.await()
+     }
+ 
+-    override fun all(): Map<String, String> = prefs.all.keys.associateWith { requireNotNull(getString(it)) }
++    override fun all(): Map<String, String> =
++        prefs.all.keys.mapNotNull { key -> getString(key)?.let { key to it } }.toMap()
+ 
+     override fun getString(key: String): String? {
+         unsealed[key]?.let { return it }
+         // Even that nothing is stored is answered only with the key in hand.
+         browserKey()
+         val sealed = prefs.getString(key, null) ?: return null
+-        return open(key, sealed).also { unsealed[key] = it }
++        return try {
++            open(key, sealed).also { unsealed[key] = it }
++        } catch (unopened: GeneralSecurityException) {
++            Log.e(EncriDownloadFileWriter.TAG, "the vault's key does not open $key", unopened)
++            null
++        } catch (malformed: IllegalArgumentException) {
++            Log.e(EncriDownloadFileWriter.TAG, "$key is not a sealed value", malformed)
++            null
++        }
+     }
+ 
+     override fun putString(
+@@ -90,7 +103,6 @@ class EncriKeyPreferences(
+         val cipher = Cipher.getInstance(TRANSFORMATION)
+         cipher.init(Cipher.DECRYPT_MODE, sealingKey(), GCMParameterSpec(TAG_BITS, bytes, 0, NONCE_BYTES))
+         cipher.updateAAD(key.toByteArray())
+-        // A value the key cannot open throws, and is never taken for one that is not there.
+         return String(cipher.doFinal(bytes, NONCE_BYTES, bytes.size - NONCE_BYTES))
+     }
+ 
+-- 
+2.47.3
+

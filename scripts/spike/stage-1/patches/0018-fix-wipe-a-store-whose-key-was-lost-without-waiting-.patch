@@ -1,0 +1,140 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jeremy Melanson <1080872+zish@users.noreply.github.com>
+Date: Mon, 16 Nov 2026 21:57:47 +0000
+Subject: [PATCH] fix: wipe a store whose key was lost without waiting on the
+ store
+
+Android Components' logins and autofill stores open their connection in
+a deferred that first asks the key manager for a key. When the key was
+lost, the manager's recovery wiped the logins, or scrubbed the cards,
+through getStorage(), which awaits that same deferred: the store waited
+on itself, and every call to it after that waited for good. The logins
+store's wipe for a new key over an existing database (bug 1970409) went
+through getStorage() too, and waited the same way.
+
+The spike hit it on the S9, whose old canaries from Fenix's own keys
+made the keys sealed with the vault's key look lost: saving a login
+never returned (encri-firefox W6). The store now wipes or scrubs the
+connection it has just made, and recovery asked for from elsewhere,
+such as sync's key providers, does so only once the store is open.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+---
+ .../AutofillCreditCardsAddressesStorage.kt    | 12 ++++++++++
+ .../service/sync/autofill/AutofillCrypto.kt   |  3 ++-
+ .../service/sync/logins/LoginsCrypto.kt       |  7 ++----
+ .../sync/logins/SyncableLoginsStorage.kt      | 24 ++++++++++++++-----
+ 4 files changed, 34 insertions(+), 12 deletions(-)
+
+diff --git a/mobile/android/android-components/components/service/sync-autofill/src/main/java/mozilla/components/service/sync/autofill/AutofillCreditCardsAddressesStorage.kt b/mobile/android/android-components/components/service/sync-autofill/src/main/java/mozilla/components/service/sync/autofill/AutofillCreditCardsAddressesStorage.kt
+index 8a12e12c2b..1276186d83 100644
+--- a/mobile/android/android-components/components/service/sync-autofill/src/main/java/mozilla/components/service/sync/autofill/AutofillCreditCardsAddressesStorage.kt
++++ b/mobile/android/android-components/components/service/sync-autofill/src/main/java/mozilla/components/service/sync/autofill/AutofillCreditCardsAddressesStorage.kt
+@@ -24,6 +24,7 @@ import mozilla.appservices.autofill.createAutofillStoreWithStaticKeyManager
+ import mozilla.components.concept.storage.Address
+ import mozilla.components.concept.storage.CreditCard
+ import mozilla.components.concept.storage.CreditCardsAddressesStorage
++import mozilla.components.concept.storage.KeyGenerationReason
+ import mozilla.components.concept.storage.NewCreditCardFields
+ import mozilla.components.concept.storage.UpdatableAddressFields
+ import mozilla.components.concept.storage.UpdatableCreditCardFields
+@@ -65,12 +66,23 @@ class AutofillCreditCardsAddressesStorage(
+                 dbPath = context.getDatabasePath(AUTOFILL_DB_NAME).absolutePath,
+                 key = managedKey.key,
+             )
++            // A new key can't decrypt what an old one sealed, so after a key loss the encrypted fields are scrubbed,
++            // which AutofillCrypto.recoverFromKeyLoss leaves to this. On the connection itself: through getStorage(),
++            // the scrub would wait for this very block, and so would every autofill call after it, for good.
++            if (managedKey.wasGenerated is KeyGenerationReason.RecoveryNeeded) {
++                AutofillStorageConnection.getStorage().scrubEncryptedData()
++            }
+             AutofillStorageConnection
+         }
+     }
+ 
+     internal suspend fun getStorage(): RustAutofillStorage = conn.await().getStorage()
+ 
++    /** Scrubs the encrypted fields if the storage is open. One still opening scrubs itself, once its key was lost. */
++    internal suspend fun scrubEncryptedDataIfOpen() {
++        if (conn.isCompleted && !conn.isCancelled) scrubEncryptedData()
++    }
++
+     /** "Warms up" this storage layer by establishing the database connection. */
+     override suspend fun warmUp() =
+         withContext(coroutineContext) {
+diff --git a/mobile/android/android-components/components/service/sync-autofill/src/main/java/mozilla/components/service/sync/autofill/AutofillCrypto.kt b/mobile/android/android-components/components/service/sync-autofill/src/main/java/mozilla/components/service/sync/autofill/AutofillCrypto.kt
+index ffd917459f..f6ee08e3f6 100644
+--- a/mobile/android/android-components/components/service/sync-autofill/src/main/java/mozilla/components/service/sync/autofill/AutofillCrypto.kt
++++ b/mobile/android/android-components/components/service/sync-autofill/src/main/java/mozilla/components/service/sync/autofill/AutofillCrypto.kt
+@@ -72,7 +72,8 @@ class AutofillCrypto(
+     }
+ 
+     override suspend fun recoverFromKeyLoss(reason: KeyGenerationReason.RecoveryNeeded) {
+-        storage.scrubEncryptedData()
++        // Called while the storage opens, waiting for it would wait forever; it scrubs itself once open instead.
++        storage.scrubEncryptedDataIfOpen()
+     }
+ 
+     companion object {
+diff --git a/mobile/android/android-components/components/service/sync-logins/src/main/java/mozilla/components/service/sync/logins/LoginsCrypto.kt b/mobile/android/android-components/components/service/sync-logins/src/main/java/mozilla/components/service/sync/logins/LoginsCrypto.kt
+index 2853675900..466e7c792b 100644
+--- a/mobile/android/android-components/components/service/sync-logins/src/main/java/mozilla/components/service/sync/logins/LoginsCrypto.kt
++++ b/mobile/android/android-components/components/service/sync-logins/src/main/java/mozilla/components/service/sync/logins/LoginsCrypto.kt
+@@ -46,11 +46,8 @@ class LoginsCrypto(
+                 is KeyGenerationReason.RecoveryNeeded.AbnormalState -> KeyRegenerationEventReason.Other
+             }
+         recordKeyRegenerationEvent(telemetryEventReason)
+-        try {
+-            storage.getStorage().wipeLocal()
+-        } catch (e: LoginsApiException) {
+-            logger.error("Failed to wipe local logins storage after key loss: ", e)
+-        }
++        // Called while the storage opens, waiting for it would wait forever; it wipes itself once open instead.
++        storage.wipeLocalIfOpen()
+     }
+ 
+     // Before anything asks the store, so that a store that cannot be read yet is never taken for a key that is gone.
+diff --git a/mobile/android/android-components/components/service/sync-logins/src/main/java/mozilla/components/service/sync/logins/SyncableLoginsStorage.kt b/mobile/android/android-components/components/service/sync-logins/src/main/java/mozilla/components/service/sync/logins/SyncableLoginsStorage.kt
+index a854dbf71e..5a3d979836 100644
+--- a/mobile/android/android-components/components/service/sync-logins/src/main/java/mozilla/components/service/sync/logins/SyncableLoginsStorage.kt
++++ b/mobile/android/android-components/components/service/sync-logins/src/main/java/mozilla/components/service/sync/logins/SyncableLoginsStorage.kt
+@@ -104,18 +104,30 @@ class SyncableLoginsStorage(
+             val path = context.getDatabasePath(DB_NAME)
+             val pathExisted = path.exists()
+             val storage = DatabaseLoginsStorage(path.absolutePath, keyManager)
+-            // If the path existed, but we generated a new key, then the key can't decrypt any existing
+-            // logins.  Run wipeLocal, to try to recover
+-            // (https://bugzilla.mozilla.org/show_bug.cgi?id=1970409)
+-            if (managedKey.wasGenerated == KeyGenerationReason.New && pathExisted) {
+-                recordKeyRegenerationEvent(KeyRegenerationEventReason.Other)
+-                tryWithStorageOr(Unit) { wipeLocal() }
++            // A new key can't decrypt what an old one sealed, so the logins are wiped: when the key was lost, which
++            // LoginsCrypto.recoverFromKeyLoss leaves to this, and when the path existed but the key is new
++            // (https://bugzilla.mozilla.org/show_bug.cgi?id=1970409). On this storage itself: through getStorage(),
++            // the wipe would wait for this very block, and so would every logins call after it, for good.
++            val generated = managedKey.wasGenerated
++            val lost = generated is KeyGenerationReason.RecoveryNeeded
++            if (lost || generated == KeyGenerationReason.New && pathExisted) {
++                if (generated == KeyGenerationReason.New) recordKeyRegenerationEvent(KeyRegenerationEventReason.Other)
++                try {
++                    storage.wipeLocal()
++                } catch (e: LoginsApiException) {
++                    logger.error("Failed to wipe local logins storage after key loss: ", e)
++                }
+             }
+             storage
+         }
+ 
+     internal suspend fun getStorage(): DatabaseLoginsStorage = conn.await()
+ 
++    /** Wipes the logins if the storage is open. One still opening wipes itself, once it knows its key was lost. */
++    internal suspend fun wipeLocalIfOpen() {
++        if (conn.isCompleted && !conn.isCancelled) wipeLocal()
++    }
++
+     /** "Warms up" this storage layer by establishing the database connection. */
+     override suspend fun warmUp() =
+         withContext(coroutineContext) {
+-- 
+2.47.3
+

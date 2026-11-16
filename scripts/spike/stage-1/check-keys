@@ -1,0 +1,102 @@
+#!/bin/sh
+# Checks that the logins' and the cards' keys are sealed with the browser's own key from the vault, and that what they
+# seal comes back in a new process once the vault is open, and not before (W6).
+#
+#   scripts/spike/stage-1/check-keys <adb serial>
+#
+# The gate saves a login and a card, each a fresh marker, and the app is stopped. Its data is searched for the markers
+# and for a key in the clear: application-services' keys are JSON Web Keys, with `"kty":"oct"` in them, which
+# SharedPreferences' XML writes with `&quot;` for each `"`. Then a new
+# process asks for the logins before the vault is open, as a page with a login form would, and must get them once the
+# vault's key arrives, not an empty answer before it; and the gate must read both markers back. Both are deleted at the
+# end. The key itself stays in the vault, as `encriox.key` in the folder the spike was allowed.
+set -eu
+
+serial=${1:?usage: check-keys <adb serial>}
+package=com.systemhalted.encri.browser.spike
+adb="${ADB:-$HOME/Android/Sdk/platform-tools/adb} -s $serial"
+marker="ENCRIOX$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')"
+# A card number is digits alone: sixteen fresh ones.
+number=$(od -An -N8 -tu1 /dev/urandom | tr -s ' ' '\n' | sed '/^$/d' | awk '{ printf "%02d", $1 % 100 }')
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+
+log() { $adb logcat -d -s encriox-spike:I; }
+
+# Starts the gate with the extras after the first two arguments, and waits up to $2 seconds for a line matching $1.
+gate() {
+    want=$1
+    wait=$2
+    shift 2
+    $adb logcat -c
+    # Not `am start -W`: the gate finishes without drawing, and -W would wait for it forever.
+    $adb shell am start -n $package/org.mozilla.fenix.encri.EncriGateActivity "$@" >/dev/null
+    for _ in $(seq "$wait"); do
+        log | grep -qE "$want" && return 0
+        sleep 1
+    done
+    echo "check-keys: the gate did not log /$want/ within ${wait}s" >&2
+    log >&2
+    exit 1
+}
+
+said() { log | grep -E "$1" | head -1 | sed 's/^.*encriox-spike: //'; }
+
+echo "== $serial, marker $marker, card $number"
+$adb shell am force-stop $package
+gate "login (kept|failed)" 120 --es login "$marker"
+echo "  $(said ' key ')"
+echo "  $(said 'login (kept|failed)')"
+said ' key (made|read|held)$' | grep -q . || { echo "check-keys: the gate holds no key" >&2; exit 1; }
+said 'login kept' | grep -q . || { echo "check-keys: the login was not saved" >&2; exit 1; }
+gate "card (kept|failed)" 60 --es card "$number"
+echo "  $(said 'card (kept|failed)')"
+said 'card kept' | grep -q . || { echo "check-keys: the card was not saved" >&2; exit 1; }
+$adb shell am force-stop $package
+
+echo "== files holding a marker or a key in the clear, as ASCII or UTF-16"
+mkdir "$work/data"
+$adb exec-out run-as $package tar -cf - . 2>/dev/null | tar -xf - -C "$work/data" 2>/dev/null || true
+python3 -I - "$work/data" "$marker" "$number" <<'SEARCH'
+import os, sys
+top, marker, number = sys.argv[1:]
+needles = {"login": [marker], "card": [number], "key": ['"kty":"oct"', "&quot;kty&quot;:&quot;oct&quot;"]}
+for path, _, names in os.walk(top):
+    for name in names:
+        full = os.path.join(path, name)
+        if os.path.islink(full):
+            continue  # Gecko's profile lock, which points nowhere
+        with open(full, "rb") as f:
+            body = f.read()
+        found = sorted({f"{what} {kind}" for what, texts in needles.items() for text in texts
+                        for kind, encoded in (("ascii", text.encode()), ("utf-16", text.encode("utf-16-le")))
+                        if encoded in body})
+        if found:
+            print(f"  {', '.join(found)}: {os.path.relpath(full, top)}")
+SEARCH
+echo "== where the keys are, by name: Fenix's own preferences, and the spike's sealed ones"
+for prefs in "$work"/data/shared_prefs/core_prefs*.xml "$work/data/shared_prefs/encriox_keys.xml"; do
+    [ -f "$prefs" ] || { echo "  $(basename "$prefs"): absent"; continue; }
+    names=$(sed -n 's/.*<string name="\([^"]*\)".*/\1/p' "$prefs" | tr '\n' ' ')
+    echo "  $(basename "$prefs"): ${names:-nothing}"
+done
+
+echo "== a new process, asking for the logins before the vault is open"
+gate "kept logins=" 120 --ez early true --ez kept true
+for _ in $(seq 30); do
+    log | grep -qE "early (logins|failed)" && break
+    sleep 1
+done
+log | grep -E " key |early |kept " | sed 's/^.*encriox-spike: /  /'
+# Asked first, the logins must arrive after the key, and hold the login just saved.
+key_at=$(log | grep -nE " key (made|read|held)$" | head -1 | cut -d: -f1)
+early_at=$(log | grep -nE "early logins=[1-9]" | head -1 | cut -d: -f1)
+[ -n "$key_at" ] && [ -n "$early_at" ] && [ "$early_at" -gt "$key_at" ] ||
+    { echo "check-keys: the logins did not wait for the vault's key" >&2; exit 1; }
+said "kept login username=$marker password=$marker\$" | grep -q . ||
+    { echo "check-keys: the login did not come back" >&2; exit 1; }
+said "kept card number=$number\$" | grep -q . || { echo "check-keys: the card did not come back" >&2; exit 1; }
+echo "  both came back, after the key"
+
+gate "forgot " 60 --ez forget true
+echo "== $(said 'forgot ')"
