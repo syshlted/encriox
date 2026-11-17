@@ -4,6 +4,15 @@ What happened, newest first. Why is in `docs/decisions/`, and what is next is in
 
 ## Unreleased
 
+### The trademark search for encriox (2026-11-17)
+
+A knock-out search, owed by W3, found nothing that blocks the name (`docs/trademark-search.md`). No mark ENCRIOX is in
+TMview, which holds the EU's, its national offices', the US's, Japan's and WIPO's records, or in Trademarkia's US data;
+nothing named encriox is in use on the web, in the app stores or on GitHub; and `encriox.com`, `.net`, `.org` and
+`.app` are unregistered. The nearest marks are Encrox, a German mark one letter off and expired, and ENCRY and
+MacPaw's ENCRYPTO, live in class 9. The offices' own searches could not be queried, being JavaScript applications or
+behind a CAPTCHA. `encrium.com` is registered, to 2026-12-20.
+
 ### Stage 2 on release, the package, following Firefox, and a hidden key (2026-11-17)
 
 The user settled four of what was open before encriox itself is written. Stage 2 tracks Firefox's release, not an

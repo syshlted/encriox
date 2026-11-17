@@ -37,7 +37,8 @@ D1, …), `../encri-api` (the contract and its client, L1, …), `../encri-files
 
 `docs/decisions/open-questions.md` is what the records left open, and `amendments.md` beside it their corrections.
 `docs/feasibility-study.md` is a study, not a decision: what each scenario costs, with a source for every browser fact
-and *unverified* on anything not checked against one. Where it and a record disagree, the record wins. `ROADMAP.md` is
+and *unverified* on anything not checked against one. `docs/trademark-search.md` is the knock-out search for the
+name (2026-11-17), kept the same way. Where either and a record disagree, the record wins. `ROADMAP.md` is
 what is next.
 
 ## Components (level 1)

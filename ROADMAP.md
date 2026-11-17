@@ -73,7 +73,10 @@ sources are there, and are not repeated here:
   series to the newest release tag, builds and tests, and stops at the first thing it cannot do; the About screen's
   line; and `README.md` and each release's `CHANGELOG.md` entry naming the release. encriox's own version is open
   (`open-questions.md`).
-- **A trademark search for encriox**, in the US, EU, international and Japanese registers (W3).
+- ~~**A trademark search for encriox**, in the US, EU, international and Japanese registers (W3).~~ **A knock-out
+  search, 2026-11-17** (`docs/trademark-search.md`): no ENCRIOX in TMview, which holds those registers' records, or in
+  Trademarkia's US data; no use found; and `.com`, `.net`, `.org` and `.app` unregistered. The offices' own searches
+  could not be queried. Whether counsel runs a clearance search before the first public build is the user's to say.
 - **A public remote** for this repository, before any build leaves the test phones (W2).
 - ~~**How encriox keeps its own key**: a document in the vault, as the spike does (W6, flag 1), the same wrapped by a
   Keystore key of its own, or wrapped by encri for its package, which is a change to the contract
