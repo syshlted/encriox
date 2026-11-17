@@ -32,20 +32,29 @@ The first four were the study's *Open questions*, moved here when W1 was recorde
     for encri-api and encri to decide (L2, L18).
 
   A key derived from the vault's own and handed to the browser would break encri's *keys never leave encri*. The spike
-  keeps the first (W6, flag 1); encriox's is still to choose.
+  keeps the first (W6, flag 1). ~~encriox's is still to choose.~~ encriox keeps the first too, under a hidden name,
+  `.encriox.key`, for now (W10); the other two are weighed with app-level security controls (`ROADMAP.md`, *Later*).
 - ~~**Web compatibility.** Is Gecko's web compatibility acceptable for the people encri is for?~~ Taken as
   acceptable by W1, flag 2.
 - **Lock behaviour.** On `STATE_LOCKED`, does the browser close outright, or keep running tabs in memory with
   persistence paused? Closing is the conservative answer. The logins' and the cards' stores keep the keys they were
   given until the process ends, so a browser that keeps running after a lock keeps those keys in memory too; the
   spike wipes only its own key at a lock (W6).
-- **~~The name and~~ the package** (W1). ~~The name cannot contain "Firefox" (`AGENTS.md`, hard constraint 3).~~ The
-  name is encriox (W3). The package is permanent from the first build a user installs.
-- **The branch for stage 2**, release or ESR (W1). It is picked before stage 2 starts. Lockstore and its prefs are in
-  the GeckoView Mozilla published at 160 (W5), so on release its first measurements need no Gecko build.
-- **How the fork is carried**: a series of patches applied to a pinned `firefox-main`, or a fork of its history. The
-  stage 1 spike carried six patches at W4 and nineteen at W6, written out with `git format-patch` and applied by its
-  `fetch` with `git am`; how that fares against a two-week rebase is unmeasured.
+- ~~**The name and the package** (W1). The name cannot contain "Firefox" (`AGENTS.md`, hard constraint 3).~~ The name
+  is encriox (W3), and the package `com.systemhalted.encriox` (W8), permanent from the first build a user installs.
+- ~~**The branch for stage 2**, release or ESR (W1). It is picked before stage 2 starts.~~ Release (W7). Lockstore and
+  its prefs are in the GeckoView Mozilla published at 160 (W5), so on release its first measurements need no Gecko
+  build.
+- ~~**How the fork is carried**: a series of patches applied to a pinned `firefox-main`, or a fork of its history.~~ A
+  series of patches on each release tag, followed automatically up to a tested build (W9, flag 1). The stage 1 spike
+  carried six patches at W4 and nineteen at W6, written out with `git format-patch` and applied by its `fetch` with
+  `git am`; how that fares against a two-week rebase is unmeasured.
+- **encriox's version**: its version name and code, beside the Firefox release it is built on (W9). Fenix makes its
+  version code from the build's time (`generateFennecVersionCode`), counting hours since 2014-12-28 in 17 bits, a
+  little under 15 years by its own comment, and the registry's floor is a version code (encri-api L15).
+- **For Encri Files: a name that begins with a dot** (W10, flag 2). Nothing in the suite hides one, so `.encriox.key`
+  is listed in Encri Files and Encri Images like any other document. Whether to hide such names, and to show them on
+  request, is Encri Files' to decide.
 - **How a release sets Gecko prefs** (W4), such as `browser.privatebrowsing.forceMediaMemoryCache`: GeckoView has no
   public API for one, and the spike's YAML file is read by a debuggable build alone. W5 found in the source that a
   file the app names through `GeckoRuntimeSettings.Builder.configFilePath` is read whatever the build; that is

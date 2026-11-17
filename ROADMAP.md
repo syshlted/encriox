@@ -41,11 +41,12 @@ sources are there, and are not repeated here:
    - **patch 0010's locked path, on the G6**, once its owner has unlocked its vault, which the spike locked and the
      passphrase on file does not open (W5): open the gate, lock with `--ez lock true`, and open it again, which must
      ask to unlock.
-4. **Spike stage 2 before writing any of it**: GeckoView with Lockstore's prefs on, on each phone. Pick the branch,
-   release or ESR, before it. It builds GeckoView, which needs at least 30 GB of disk by Mozilla's guide; the machine
-   had 63 GB free on 2026-11-13, and 42 GB on 2026-11-15. **Lockstore is in the GeckoView Mozilla published** (W5,
-   read in its `libxul`), so on release its first questions could be asked of stage 1's build with prefs alone; only
-   a key-encryption key from the vault needs a Gecko build. Unmeasured.
+4. **Spike stage 2 before writing any of it**: GeckoView with Lockstore's prefs on, on each phone. ~~Pick the branch,
+   release or ESR, before it.~~ **Release, picked 2026-11-17 (W7)**, from stage 1's Firefox 160.0. A Gecko build needs
+   at least 30 GB of disk by Mozilla's guide, and ~~the machine had 63 GB free on 2026-11-13, and 42 GB on
+   2026-11-15~~ **stage 2's go on `/home/coder/extra_space/encri-extraspace`, 387 GB free on 2026-11-17** (W7).
+   **Lockstore is in the GeckoView Mozilla published** (W5, read in its `libxul`), so its first questions are asked
+   of stage 1's build with prefs alone; only a key-encryption key from the vault needs a Gecko build. Unmeasured.
 5. **Ask Mozilla before carrying a patch**: an embedder-supplied KEK in GeckoView, beside the OS-keystore KEK of bug
    2055641. Who asks, and where, is open. Theirs to know too: Android Components' logins and autofill stores wait on
    themselves for good once their key is lost, which the spike carries a fix for (W6, patch 0018).
@@ -53,13 +54,23 @@ sources are there, and are not repeated here:
 ## Before the first release
 
 - **Settle what is permanent**: ~~the product's name, which cannot contain "Firefox";~~ **named encriox
-  2026-11-14 (W3)**; its package, on which a grant is keyed for good (encri D120, D145); and its registry entry in
-  encri-api. Moved after the spikes by W1.
+  2026-11-14 (W3)**; ~~its package, on which a grant is keyed for good (encri D120, D145);~~ **`com.systemhalted.encriox`
+  2026-11-17 (W8)**; and its registry entry in encri-api, `registry/com.systemhalted.encriox.app` with a floor, without
+  which a user consents again at every release (W8, encri D130). Moved after the spikes by W1.
+- **Following Firefox's releases** (W9): the file naming the release encriox is built on; the script that applies the
+  series to the newest release tag, builds and tests, and stops at the first thing it cannot do; the About screen's
+  line; and `README.md` and each release's `CHANGELOG.md` entry naming the release. encriox's own version is open
+  (`open-questions.md`).
 - **A trademark search for encriox**, in the US, EU, international and Japanese registers (W3).
 - **A public remote** for this repository, before any build leaves the test phones (W2).
-- **How encriox keeps its own key**: a document in the vault, as the spike does (W6, flag 1), the same wrapped by a
+- ~~**How encriox keeps its own key**: a document in the vault, as the spike does (W6, flag 1), the same wrapped by a
   Keystore key of its own, or wrapped by encri for its package, which is a change to the contract
-  (`open-questions.md`).
+  (`open-questions.md`).~~ **A hidden document in the vault, `.encriox.key`, for now (W10).**
+
+## Later
+
+- **App-level security controls**, which the user expects users to benefit from (W10). With them, the two other ways
+  of keeping encriox's key: wrapped by a Keystore key of its own, or by encri for its package (`open-questions.md`).
 
 ## Bugs
 

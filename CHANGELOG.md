@@ -4,6 +4,20 @@ What happened, newest first. Why is in `docs/decisions/`, and what is next is in
 
 ## Unreleased
 
+### Stage 2 on release, the package, following Firefox, and a hidden key (2026-11-17)
+
+The user settled four of what was open before encriox itself is written. Stage 2 tracks Firefox's release, not an
+ESR, starting from stage 1's 160.0, and its builds go on a drive of their own, with 387 GB free (W7). The package is
+`com.systemhalted.encriox`, with Fenix's code namespaces kept, and encri-api's registry lists it before the first
+release so that a grant survives each update (W8). encriox follows every Firefox release: a script applies its patch
+series to the newest release tag, builds and tests, and stops for a person at the first thing it cannot do; publishing
+stays by hand; and the About screen and the documentation name the release it is built on (W9). Its key is a hidden
+document in the vault, `.encriox.key`, for now, with app-level security controls later (W10). Five points are flagged
+for veto across W8 to W10.
+
+**Found:** Firefox 160.0.1 is tagged, and Mozilla's Maven has no GeckoView for it (W7). Nothing in encri or encri-api
+matches a package by prefix (W8). encri takes a name beginning with a dot, and nothing in the suite hides one (W10).
+
 ### A key of the spike's own in the vault, and no private thumbnail on disk (2026-11-16)
 
 The spike keeps a key of its own, `encriox.key`, 32 random bytes in the folder the vault allows it, held in memory
