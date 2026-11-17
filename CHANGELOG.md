@@ -17,6 +17,10 @@ for veto across W8 to W10.
 
 **Found:** Firefox 160.0.1 is tagged, and Mozilla's Maven has no GeckoView for it (W7). Nothing in encri or encri-api
 matches a package by prefix (W8). encri takes a name beginning with a dot, and nothing in the suite hides one (W10).
+At 160, Lockstore's three switches for SQLite, the HTTP cache and site storage are off, and the SQLite one corrupts a
+profile it is turned on over; and a built-in extension could give Lockstore a key from the vault without a Gecko
+build, read in the source and unmeasured. Stage 2's rounds are in `ROADMAP.md`. The S24 waits for a vault again: its
+old one was destroyed when its encri became a debug build.
 
 ### A key of the spike's own in the vault, and no private thumbnail on disk (2026-11-16)
 

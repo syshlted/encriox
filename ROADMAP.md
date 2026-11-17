@@ -37,7 +37,9 @@ sources are there, and are not repeated here:
    in memory, so a private session leaves nothing of a page on disk on all three; and the logins' and the cards' keys
    are sealed with a key of the browser's own in the vault, `encriox.key`, measured on the S9 and the A20, with the
    locked path on the G6. Owed:
-   - **the S24**, with `check-plaintext`, `measure`, `check-stopped` and `check-keys`, on its owner's word;
+   - **the S24**, with `check-plaintext`, `measure`, `check-stopped` and `check-keys`, on its owner's word and once it
+     has a vault again: its old one was destroyed on 2026-11-17, when its encri gave way to a debug build (the
+     suite's `CHANGELOG.md`);
    - **patch 0010's locked path, on the G6**, once its owner has unlocked its vault, which the spike locked and the
      passphrase on file does not open (W5): open the gate, lock with `--ez lock true`, and open it again, which must
      ask to unlock.
@@ -46,7 +48,17 @@ sources are there, and are not repeated here:
    at least 30 GB of disk by Mozilla's guide, and ~~the machine had 63 GB free on 2026-11-13, and 42 GB on
    2026-11-15~~ **stage 2's go on `/home/coder/extra_space/encri-extraspace`, 387 GB free on 2026-11-17** (W7).
    **Lockstore is in the GeckoView Mozilla published** (W5, read in its `libxul`), so its first questions are asked
-   of stage 1's build with prefs alone; only a key-encryption key from the vault needs a Gecko build. Unmeasured.
+   of stage 1's build with prefs alone; ~~only a key-encryption key from the vault needs a Gecko build~~ a
+   key-encryption key from the vault may not need one either (`open-questions.md`, read in the source 2026-11-17).
+   Unmeasured. Its rounds, on the G6, the S9 and the A20:
+   - **What the prefs cover**, with Lockstore's own local key: `security.storage.encryption.sqlite.enabled`,
+     `browser.cache.disk.encryption.enabled` and `dom.quotaManager.encryption.enabled` on, all off by default at 160,
+     on a fresh profile, and `check-plaintext <phone> normal`. Which stores still hold the marker, and does the
+     profile open a second time? The SQLite switch says it corrupts a profile it is turned on over, so a fresh one only.
+   - **A key-encryption key from the vault**: the profile's keys moved under a password key whose secret comes from
+     `.encriox.key`, and locked at the vault's lock. Does the profile open a second time, and what does each store do
+     when that key is locked at start or mid-session? Razing is the failure to look for.
+   - **What `obfsvfs` costs** against plain SQLite.
 5. **Ask Mozilla before carrying a patch**: an embedder-supplied KEK in GeckoView, beside the OS-keystore KEK of bug
    2055641. Who asks, and where, is open. Theirs to know too: Android Components' logins and autofill stores wait on
    themselves for good once their key is lost, which the spike carries a fix for (W6, patch 0018).
