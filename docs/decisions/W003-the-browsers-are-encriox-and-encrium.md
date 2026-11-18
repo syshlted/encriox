@@ -1,4 +1,4 @@
-# W3 — The browsers are encriox, on Gecko, and encrium, on Chromium
+# W3 — The browsers are encriox, on Gecko, and encrium, on Chromium *Amended by W11 (2026-11-18): the Chromium one is encrimium, with the package `com.systemhalted.encrimium`.*
 
 *2026-11-14 · accepted on the user's word ("OK confirmed encriox and encrium"), and **flagged for veto on one point**
 (below). **Amends W1**, which rejected Chromium: it is now a second browser. The names were checked against Mozilla's
@@ -10,7 +10,7 @@ were not searched.*
 - **Two browsers, not one.** "I want to also have a webkit-based browser like Chromium as well. So we need a way to
   differentiate the two by name." Chromium's engine is Blink, which Google forked from WebKit in 2013, so the second
   browser is the study's scenario 2: a Chromium fork reaching the vault through encri-api.
-- **This repository's browser is encriox; the Chromium one is encrium.**
+- **This repository's browser is encriox; the Chromium one is ~~encrium~~ encrimium** (amended by W11).
 - **The spikes for encriox come next** ("then work on the spikes"), and encrium after them.
 
 #### What was settled
@@ -25,14 +25,15 @@ were not searched.*
    - *-ox* is not *fox*. Mozilla's policy asks forks not to be named "[Something]-fox", and has said since 2011 that a
      modified Firefox may not use the name "in whole or in part". Its test is whether the name suggests Mozilla
      published the software.
-4. **encrium is a project of its own**, and its first record settles its repository, its decision prefix and its
+4. **~~encrium~~ encrimium (amended by W11) is a project of its own**, and its first record settles its repository, its decision prefix and its
    licence. The study's *Scenario 2* is its starting point.
-5. **The packages are not chosen yet.** They are settled before a build leaves the test phones (`ROADMAP.md`). The
+5. ~~**The packages are not chosen yet.**~~ **Chosen since**: `com.systemhalted.encriox` (W8) and
+   `com.systemhalted.encrimium` (W11). ~~They are settled before a build leaves the test phones (`ROADMAP.md`).~~ The
    spikes keep W1's throwaway package.
 
 #### Flagged for veto
 
-1. **encrium's home is `encri-chromium/`, its decisions are numbered C1, C2, …, and it is BSD-3-Clause**, Chromium's
+1. **~~encrium's~~ encrimium's (amended by W11) home is `encri-chromium/`, its decisions are numbered C1, C2, …, and it is BSD-3-Clause**, Chromium's
    own licence, as encriox follows Firefox's (W2). These were proposed on 2026-11-13 and not confirmed.
 
 #### What was checked (2026-11-13)
@@ -64,5 +65,8 @@ the same searches.
   with the web, the app stores and the domain registries (`docs/trademark-search.md`). Nothing found blocks the name;
   the nearest live marks are ENCRY and MacPaw's ENCRYPTO, and Encrox, one letter off, is expired. encrium's is still
   owed, by its own project.
+- **W3's name for the Chromium browser** (2026-11-18, W11): encrium is given up, because `encrium.com` appears to be a
+  French technical-training academy's, and the browser is encrimium, *encri* and *(chro)mium*, with the package
+  `com.systemhalted.encrimium`. Its knock-out search found nothing that blocks it (`docs/trademark-search.md`).
 
 <!-- /amendments -->

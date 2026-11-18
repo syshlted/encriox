@@ -4,6 +4,13 @@ What happened, newest first. Why is in `docs/decisions/`, and what is next is in
 
 ## Unreleased
 
+### The Chromium browser is encrimium (2026-11-18)
+
+encrium is given up, because `encrium.com` appears to belong to a French technical-training academy, and the
+Chromium browser is encrimium, *encri* and *(chro)mium*, with the package `com.systemhalted.encrimium` (W11, amending
+W3). Its knock-out search, the same as encriox's, found no mark, use or domain in the way
+(`docs/trademark-search.md`). encrimium's repository, decision prefix and licence are still its own first record's.
+
 ### The trademark search for encriox (2026-11-17)
 
 A knock-out search, owed by W3, found nothing that blocks the name (`docs/trademark-search.md`). No mark ENCRIOX is in

@@ -36,5 +36,6 @@ point** (below). Settles the package W1 moved after the spikes. Nothing is built
 
 #### Rejected
 
-- **`com.systemhalted.encri.browser`**, the spike's package without its suffix: it cannot tell encriox from encrium.
+- **`com.systemhalted.encri.browser`**, the spike's package without its suffix: it cannot tell encriox from ~~encrium~~ encrimium
+  (amended by W11).
 - **`com.systemhalted.encri.encriox`**, after the companions: it says *encri* twice.

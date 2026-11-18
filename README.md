@@ -11,7 +11,7 @@ phones ([`scripts/spike/stage-1/`](scripts/spike/stage-1/README.md)). The design
 [W1](docs/decisions/W001-a-firefox-fork-reaching-the-vault-through-encri-api.md). See [`ROADMAP.md`](ROADMAP.md) for
 what comes next.
 
-Its sibling on Chromium is encrium, a project of its own, still to come.
+Its sibling on Chromium is encrimium, a project of its own, still to come.
 
 ## Licence
 

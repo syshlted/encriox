@@ -43,7 +43,7 @@ measurements.
 - ~~**Scenario 2, Chromium through encri-api.** It can be built, but it needs a full Chromium build for any change and
   at-rest encryption the fork writes and rebases every two weeks, and it has no password store or extensions on phones
   (the study, *Scenario 2*).~~ **Amended by W3**: rejected as this repository's browser, but wanted as a second one,
-  encrium, a project of its own.
+  ~~encrium~~ encrimium (amended by W11), a project of its own.
 - **Scenario 3, encri's own code inside Chromium.** It costs everything scenario 2 does, plus a JNI bridge, a second
   vault and LGPL obligations. It would also put keys in a process with network access, which encri D70 rules out.
 - **Settling the name and the package before the spikes**, as the study recommended. The user put the spikes first.

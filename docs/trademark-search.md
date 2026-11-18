@@ -1,9 +1,10 @@
-# encriox: a knock-out trademark search
+# encriox and encrimium: knock-out trademark searches
 
-*2026-11-17, 17:25–17:34 UTC. A search for marks and uses that would block the name, owed by W3. It is not a legal
-opinion, and not a clearance search by counsel. Where this and a record disagree, the record wins.*
+*2026-11-17, 17:25–17:34 UTC, for encriox, and 2026-11-18 for encrimium (W11). Searches for marks and uses that would
+block a name, owed by W3. They are not a legal opinion, and not a clearance search by counsel. Where this and
+a record disagree, the record wins.*
 
-## Verdict
+## Verdict for encriox
 
 **Nothing blocks encriox in what could be searched.** No mark ENCRIOX or close to it is live in any register TMview
 holds, the EU's, its national offices', the US's, Japan's and WIPO's Madrid records among them, nor in Trademarkia's US
@@ -67,7 +68,31 @@ ENCROCHAT is the encrypted-phone network police shut down in 2020: not a legal q
 
   Unregistered is not the same as for sale: a registry can hold a name as premium or reserved.
 
+## encrimium (2026-11-18)
+
+**Nothing blocks encrimium either**, the name W11 gives the Chromium browser in encrium's place. Searched the same way,
+with the same controls answering:
+
+| Query | TMview | Trademarkia (US) |
+|---|---|---|
+| ENCRIMIUM, contains and fuzzy | 0 | 0 |
+| ENCRIMUM, contains and fuzzy; ENCRINIUM, ENKRIMIUM, contains; ENCRYMIUM, contains and fuzzy | 0 each | encrimum, encrinium: 0 |
+| ENCRIM…, ENKRIM…, begins with | 0 | `encrim*`: 0 |
+| …CRIMIUM, contains or ends with | DISCRIMIUM, ES, Grupo Stibium, medicines (class 5), registered | — |
+| ENCRI…, begins with (53 records) | none beginning ENCRIM; the live ones in classes 9 and 42 are words for *encrypt* in Spanish and Portuguese (ENCRIPTOR, ENCRIPTIA, ENCRIPTO) and ENCRIP (CN) | — |
+| ENCRYM, contains and fuzzy | no ENCRYM; fuzzy: ENCRY (above), encryp (DE) | 0 |
+
+- **Use**: no exact match on the web; no app on Google Play, which answered *No results for encrimium*, nor in the App
+  Store (US, GB, DE, FR, JP) or on F-Droid; nothing on GitHub, GitLab, npm, PyPI or crates.io; and none in France's
+  company register, whose control search found L'Encrium. The nearest is **EncryM**, a blockchain secure-messaging
+  app from Peterborough, Canada (encrym.com), whose name is in no register TMview or Trademarkia holds.
+- **Domains**: `.com`, `.net`, `.org`, `.app`, `.dev`, `.io` and `.co` not registered; `.eu` and `.de` available.
+- **Not searched**: as for encriox. The UK's Companies House is not counted: its control search for *mozilla* found
+  nothing too.
+
 ## encrium, in passing
+
+*Given up on 2026-11-18 (W11): `encrium.com` appears to belong to a French technical-training academy.*
 
 TMview and Trademarkia hold no ENCRIUM. TMview's fuzzy search found ENERIUM (EM, cl 9, live), ENRIUM (FR, live, not
 cl 9) and enorium (TR, cl 9/42, live), and ENCORIUM (EM, expired). **`encrium.com` is registered**, since 2024-12-20 at

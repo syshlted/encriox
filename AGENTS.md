@@ -7,8 +7,8 @@
 ## What this is
 
 **encriox, a browser for encri: a fork of Firefox for Android that reaches the vault through encri-api** (W1,
-2026-11-13), licensed MPL-2.0 throughout (W2), and named in W3. Its sibling on Chromium is encrium, a project of its
-own, after encriox's spikes (W3). `docs/feasibility-study.md` (2026-11-10) weighed it against the same on Chromium
+2026-11-13), licensed MPL-2.0 throughout (W2), and named in W3. Its sibling on Chromium is encrimium, a project of
+its own, after encriox's spikes (W3, W11). `docs/feasibility-study.md` (2026-11-10) weighed it against the same on Chromium
 and against encri's own code inside Chromium, and its *Scenario 1* is the design W1 adopted. **Nothing of encriox is
 built yet.** The stage 1 spike, a throwaway, is built and measured on three phones (`scripts/spike/stage-1/`, W4 to W6);
 the stage 2 spike is next (`ROADMAP.md`).
