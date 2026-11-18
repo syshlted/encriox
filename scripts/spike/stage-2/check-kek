@@ -13,6 +13,10 @@
 # 4. Locked mid-session: a session with the secret, whose keys the gate then locks; then the marker page on a second
 #    origin, whose site storage needs keys that cannot be made while they are locked. A start with the secret then
 #    reads both origins back.
+# 5. The vault's key dropped mid-session, as a lock of the vault drops it, with the vault left open: the app must lock
+#    Gecko's keys, and a third origin's site storage fails; then the gate reads the key again, the app must unlock
+#    them, and a fourth origin's site storage is written, and read back at the next start. The third and the fourth
+#    are 127.0.0.1 on other ports: site storage is the origin's, port and all, but a cookie is the host's.
 #
 # The phone's vault must be open to the spike, which `check-plaintext` does not ask. The gate is left giving the
 # secret.
@@ -25,11 +29,13 @@ stage1=$(cd "$here/../stage-1" && pwd)
 serial=${1:?usage: check-kek <adb serial>}
 package=com.systemhalted.encri.browser.spike
 port=8643
+# Every port `adb reverse` was given, for the trap to take back.
+ports=$port
 adb="${ADB:-$HOME/Android/Sdk/platform-tools/adb} -s $serial"
 work=$(mktemp -d)
 server=
 # The server is empty until `serve` starts, and set -u would stop the trap at it before the rest ran.
-trap '[ -z "$server" ] || kill "$server" 2>/dev/null || true; $adb reverse --remove tcp:$port 2>/dev/null || true; rm -rf "$work"' EXIT
+trap '[ -z "$server" ] || kill "$server" 2>/dev/null || true; for p in $ports; do $adb reverse --remove tcp:$p 2>/dev/null || true; done; rm -rf "$work"' EXIT
 
 applog() { $adb logcat -d -s encriox-spike:I | sed 's/^.*encriox-spike: //'; }
 # What Gecko said of the profile KEK, and of stores that could not be opened.
@@ -57,29 +63,42 @@ gate() {
     exit 1
 }
 
+# Waits up to $2 seconds for the app to log a line matching $1, without clearing the log first.
+awaitlog() {
+    for _ in $(seq "$2"); do
+        applog | grep -qE "$1" && return 0
+        sleep 1
+    done
+    echo "check-kek: the app did not log /$1/ within $2s" >&2
+    applog >&2
+    exit 1
+}
+
 # The phone awake and its keyguard down: `am start -W` waits for good for a page the screen does not draw (W6).
 wake() {
     $adb shell input keyevent KEYCODE_WAKEUP
     $adb shell wm dismiss-keyguard
 }
 
-# Serves $2 and opens $1's page with it, on host $3: `/` writes the marker into every store, `/read` reads it back.
-# Waits for $4 reports, and prints the stores' lines.
+# Serves $2 and opens $1's page with it, on host $3 and port $5, 8643 by default: `/` writes the marker into every
+# store, `/read` reads it back. Waits for $4 reports, and prints the stores' lines.
 page() {
     path=$1
     marker=$2
     host=$3
     want=$4
+    at=${5:-$port}
     [ -z "$server" ] || kill "$server" 2>/dev/null || true
-    "$stage1/serve" $port "$marker" > "$work/served" 2>&1 &
+    "$stage1/serve" "$at" "$marker" > "$work/served" 2>&1 &
     server=$!
-    $adb reverse tcp:$port tcp:$port >/dev/null
+    case " $ports " in *" $at "*) ;; *) ports="$ports $at" ;; esac
+    $adb reverse tcp:"$at" tcp:"$at" >/dev/null
     sleep 1
     wake
     $adb logcat -c
     case $path in
-        /) url="http://$host:$port/?run=$marker" ;;
-        *) url="http://$host:$port/read?m=$marker" ;;
+        /) url="http://$host:$at/?run=$marker" ;;
+        *) url="http://$host:$at/read?m=$marker" ;;
     esac
     timeout 120 $adb shell am start -W -a android.intent.action.VIEW -d "$url" \
         -n $package/org.mozilla.fenix.IntentReceiverActivity >/dev/null ||
@@ -214,6 +233,24 @@ echo "== a start with the secret, reading back $m2 on localhost, then $m1"
 page /read "$m2" localhost 6
 applog | grep -E 'profile ' | sed 's/^/    /' || true
 page /read "$m1" 127.0.0.1 6
+
+echo "== 5. the vault's key dropped mid-session, as a lock drops it, then read again"
+m3="ENCRIOX$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')"
+m4="ENCRIOX$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')"
+# The session from the read-back above, which was given the secret, goes on.
+gate "key dropped" 60 --ez drop true
+awaitlog "profile lock(ed| failed)" 30
+applog | grep -E 'key dropped|profile ' | sed 's/^/    /'
+page / "$m3" 127.0.0.1 8 8644
+gate "gate open" 60 --ez list true
+awaitlog "profile unlock(ed| failed)" 30
+applog | grep -E 'key |profile ' | sed 's/^/    /'
+page / "$m4" 127.0.0.1 8 8645
+$adb shell input keyevent KEYCODE_HOME
+sleep "${SETTLE:-60}"
+$adb shell am force-stop $package
+echo "== a start with the secret, reading back $m4 on port 8645"
+page /read "$m4" 127.0.0.1 6 8645
 $adb shell am force-stop $package
 echo "== the key store at the end"
 keystore "$work/keys-5"
