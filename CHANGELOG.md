@@ -4,6 +4,20 @@ What happened, newest first. Why is in `docs/decisions/`, and what is next is in
 
 ## Unreleased
 
+### Stage 2's first round: what Lockstore's switches do at 160 (2026-11-18)
+
+On the G6, the S9 and the A20, stage 1's build ran with Lockstore's three switches on, on a fresh profile
+(`scripts/spike/stage-2/`, W12). A normal session left its marker in 4 or 5 files where it had left it in 9 to 11:
+Fenix's saved tabs and history, the cookies' WAL and the service worker's registration. **The HTTP cache's switch
+works** with a pref alone, and its entries came back after a restart. **Site storage's encrypts, and then breaks at the
+next start**: on the S9 and the G6, QuotaManager recorded the origin as plaintext, so local storage, IndexedDB and the
+Cache API could not be read. Setting the missing flag by hand on the G6 brought all of it back, so nothing was lost but
+the flag. The cause is in Gecko, at 160 and on `main`. **SQLite's switch is locked off** in `all.js`, so no pref turns
+it on. The next two rounds wait on a Gecko build or on Mozilla, which is the user's call. One point is flagged for veto.
+
+`check-plaintext` takes the Gecko config to push from `CONFIG`, and refuses one whose SQLite switch disagrees with the
+profile on the phone. `serve` has a page that reads back what the marker page wrote.
+
 ### The Chromium browser is encrimium (2026-11-18)
 
 encrium is given up, because `encrium.com` appears to belong to a French technical-training academy, and the

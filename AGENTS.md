@@ -11,7 +11,8 @@
 its own, after encriox's spikes (W3, W11). `docs/feasibility-study.md` (2026-11-10) weighed it against the same on Chromium
 and against encri's own code inside Chromium, and its *Scenario 1* is the design W1 adopted. **Nothing of encriox is
 built yet.** The stage 1 spike, a throwaway, is built and measured on three phones (`scripts/spike/stage-1/`, W4 to W6);
-the stage 2 spike is next (`ROADMAP.md`).
+the stage 2 spike's first round ran on its build, with prefs alone (`scripts/spike/stage-2/`, W12), and its next two
+wait on a Gecko build or on Mozilla (`ROADMAP.md`).
 
 ## Relationship to the other repositories
 
@@ -45,7 +46,7 @@ what is next.
 
 | Brief | Covers |
 |---|---|
-| `spike.md` | the stage 1 spike, `scripts/spike/**`, and `LICENSE` until encriox's own build has a brief |
+| `spike.md` | the spikes, stages 1 and 2, `scripts/spike/**`, and `LICENSE` until encriox's own build has a brief |
 
 ## Hard constraints
 

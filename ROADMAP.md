@@ -49,19 +49,27 @@ sources are there, and are not repeated here:
    2026-11-15~~ **stage 2's go on `/home/coder/extra_space/encri-extraspace`, 387 GB free on 2026-11-17** (W7).
    **Lockstore is in the GeckoView Mozilla published** (W5, read in its `libxul`), so its first questions are asked
    of stage 1's build with prefs alone; ~~only a key-encryption key from the vault needs a Gecko build~~ a
-   key-encryption key from the vault may not need one either (`open-questions.md`, read in the source 2026-11-17).
-   Unmeasured. Its rounds, on the G6, the S9 and the A20:
-   - **What the prefs cover**, with Lockstore's own local key: `security.storage.encryption.sqlite.enabled`,
+   key-encryption key from the vault may not need one either (`open-questions.md`, read in the source 2026-11-17;
+   unmeasured). Its rounds, on the G6, the S9 and the A20:
+   - ~~**What the prefs cover**, with Lockstore's own local key: `security.storage.encryption.sqlite.enabled`,
      `browser.cache.disk.encryption.enabled` and `dom.quotaManager.encryption.enabled` on, all off by default at 160,
      on a fresh profile, and `check-plaintext <phone> normal`. Which stores still hold the marker, and does the
-     profile open a second time? The SQLite switch says it corrupts a profile it is turned on over, so a fresh one only.
+     profile open a second time?~~ **Done 2026-11-18 (W12)**, `scripts/spike/stage-2/check-lockstore`. The HTTP
+     cache's switch works with a pref alone. Site storage's encrypts, but on the S9 and the G6 it recorded the origin
+     as plaintext, so the next start could not read local storage, IndexedDB or the Cache API, every site's by
+     Gecko's log. A missing flag in Gecko's QuotaManager is the cause, at 160 and on `main`, and nothing was wiped.
+     SQLite's switch is locked off in `all.js`, so a pref cannot turn it on. **The user's call: a Gecko build** on the
+     extra drive, carrying the one-line QuotaManager fix and SQLite's switch unlocked, before the next two rounds, or
+     waiting for Mozilla (item 5).
    - **A key-encryption key from the vault**: the profile's keys moved under a password key whose secret comes from
      `.encriox.key`, and locked at the vault's lock. Does the profile open a second time, and what does each store do
      when that key is locked at start or mid-session? Razing is the failure to look for.
    - **What `obfsvfs` costs** against plain SQLite.
 5. **Ask Mozilla before carrying a patch**: an embedder-supplied KEK in GeckoView, beside the OS-keystore KEK of bug
    2055641. Who asks, and where, is open. Theirs to know too: Android Components' logins and autofill stores wait on
-   themselves for good once their key is lost, which the spike carries a fix for (W6, patch 0018).
+   themselves for good once their key is lost, which the spike carries a fix for (W6, patch 0018); and QuotaManager's
+   `GetOrCreateTemporaryOriginDirectory` records an encrypted origin as plaintext, so that with
+   `dom.quotaManager.encryption.enabled` on, the next start cannot read site storage (W12).
 
 ## Before the first release
 

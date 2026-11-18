@@ -78,7 +78,13 @@ The first four were the study's *Open questions*, moved here when W1 was recorde
   encriox's could move the profile's data keys under a `password` key whose secret comes from `.encriox.key`, unlock
   it after each unlock of the vault, and lock it at a lock, as `ProfileKek.cpp` moves them for a primary password.
   What a store opened at start does while that key is still locked is stage 2's question (read in the source,
-  2026-11-17; unmeasured). If it holds, W1's item 4 asks Mozilla for less.
+  2026-11-17; unmeasured). If it holds, W1's item 4 asks Mozilla for less. At 160 it would protect the HTTP cache
+  alone, the one switch that works with a pref (W12). On the S9 the profile's key store held the cache's key and
+  each origin's, under two `local` keys, one QuotaManager's and one named `profile`.
+- **Lockstore's two other switches** (W12). SQLite's is locked off in `all.js`, and site storage's records an
+  encrypted origin as plaintext, so the next start cannot read it. Build Gecko with both changed, or wait for
+  Mozilla? The fix to the second is one line, in QuotaManager's `GetOrCreateTemporaryOriginDirectory`.
 - **Who asks Mozilla, and where** (W1, item 4). Bug 2055641 on Bugzilla is where the OS-keystore KEK is filed. Theirs
   to know too: Android Components' logins and autofill stores wait on themselves for good once their key is lost, or
-  is new over an existing logins database, which the spike fixed in patch 0018 (W6).
+  is new over an existing logins database, which the spike fixed in patch 0018 (W6); and QuotaManager records an
+  encrypted origin as plaintext, at 160 and on `main` (W12).

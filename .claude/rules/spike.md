@@ -4,12 +4,14 @@ paths:
   - "LICENSE"
 ---
 
-# The stage 1 spike — component brief
+# The spikes — component brief
 
 `scripts/spike/stage-1/`: Fenix at a Firefox release, built with Gradle against the GeckoView Mozilla published, with
 the patches in `patches/` on top, and the scripts that fetch, build and measure it on the phones (W1, W4). It is a
-throwaway, and nothing it builds ships. Its `README.md` says how to build it and run it. `LICENSE` is here too until a
-build of encriox itself has a brief. This brief is level 1; full records are in `docs/decisions/`.
+throwaway, and nothing it builds ships. Its `README.md` says how to build it and run it. `scripts/spike/stage-2/` runs
+stage 1's build with Lockstore's switches on, and checks what they cover and whether a profile opens again (W12).
+`LICENSE` is here too until a build of encriox itself has a brief. This brief is level 1; full records are in
+`docs/decisions/`.
 
 ## Rules that hold here
 
@@ -31,6 +33,10 @@ build of encriox itself has a brief. This brief is level 1; full records are in 
   are refused. A store of keys that cannot be read yet waits in `awaitReady()` or throws, never answers that nothing
   is stored: a key manager told its key is gone makes a new one, and what the old one sealed is wiped. Only a value
   the vault's key cannot open is answered as gone, as Fenix answers one Keystore cannot (W6, flag 2).
+- **A profile's SQLite switch is set when the profile is made**, so stage 2 starts each run from `fresh-profile`, and
+  going back to stage 1 does too. `check-plaintext` refuses a config whose SQLite switch disagrees with the profile.
+- **A profile is checked by starting it again**, not by the marker search alone: site storage held no marker and still
+  could not be read at the next start (W12). `check-lockstore` always reads back in a second process.
 - **Measure from the phone's own loopback**, never over Wi-Fi: the A20's link ran at 0.4 MB/s (W4, *Rejected*).
 - **A script fails loudly.** A step that did not happen stops the run with a message; it never leaves a line out of
   the results or carries on under the wrong label.
@@ -62,6 +68,16 @@ build of encriox itself has a brief. This brief is level 1; full records are in 
 - **Never lock a vault you cannot open again.** The G6's, locked to measure patch 0010, refused the passphrase on file
   though the keys typed were the file's; it waits for its owner. The A20's is passphrase-only (W5).
 - LG's framework logs every key event on the G6, so a passphrase typed there over adb is in its log until `logcat -c`.
+- **Lockstore's SQLite switch is locked off** at 160 (`all.js`), and a default pref from the config cannot change it.
+  Nothing says so: the switch is simply off (W12).
+- Gecko refuses a profile whose SQLite encryption disagrees with the switch, and on Android only logs "Profile
+  encryption state does not match launching build." and stops: the page never draws.
+- QuotaManager can record an encrypted origin as plaintext, flags `0x7` in its `.metadata-v2` where `0x10` is the
+  encrypted bit, and then cannot read its site storage at the next start, nor any site's (W12). `check-lockstore`
+  prints each origin's flags.
+- Copying the whole profile off the A20 over Wi-Fi took more than ten minutes, so `check-lockstore` reads each file's
+  first 24 bytes on the phone. The G6's toybox `dd` refuses `conv=notrunc`, so a byte is changed by writing the whole
+  file through `run-as … sh -c 'cat > …'`.
 
 ## Measured, not assumed
 
@@ -83,7 +99,11 @@ build of encriox itself has a brief. This brief is level 1; full records are in 
   debuggability only to pick the default under `/data/local/tmp` (read in `GeckoRuntime.java` at Firefox 160,
   2026-11-15). Not measured in a release build.
 - **Lockstore is in the published GeckoView 160**: its three prefs, `LockstoreStorageKeyProvider` and the obfuscating
-  VFS are in the arm64 `libxul` (W5). Whether the prefs work there is unmeasured.
+  VFS are in the arm64 `libxul` (W5). With the switches on, a normal session's marker was in 4 or 5 files, not 9 to
+  11: Fenix's saved tabs and history, the cookies' WAL and `serviceworker.txt` (W12). The HTTP cache's switch held,
+  and its entries came back after a restart, on all three. Site storage's encrypted, and on the S9 and the G6 its
+  origin was recorded as plaintext, flags `0x7`, so the next start could not read it; the A20's was recorded `0x13`
+  and read back. The G6's flags set to `0x17` by hand read back all six stores. SQLite's switch took no effect.
 
 ## Decisions
 
@@ -94,6 +114,7 @@ build of encriox itself has a brief. This brief is level 1; full records are in 
 | W4 | What the spike measured on the G6, and what stage 1 has to do that it found |
 | W5 | A stopped download into the vault, and what the A20 and the S9 measured |
 | W6 | The browser's own key in the vault, sealing the logins' and the cards' keys; private thumbnails in memory |
+| W12 | Stage 2's first round: what Lockstore's switches do at 160, and a fresh profile for each run (flag 1) |
 | encri-api L11, L12 | `write` saves only a finished writer; a writer's failure is told encri's reason |
 | encri D120, D145 | A grant is keyed on the package for good |
 
@@ -106,6 +127,8 @@ build of encriox itself has a brief. This brief is level 1; full records are in 
   memory at a lock.
 - Patch 0010's locked path, on the G6 once its owner has unlocked it (`ROADMAP.md`).
 - A stopped download into the vault shows as failed, a cancelled one too (W5, flag 2).
+- Stage 2's next two rounds, a key from the vault and what `obfsvfs` costs, wait on a Gecko build or on Mozilla (W12):
+  the user's call.
 
 ## Read next
 
