@@ -1,0 +1,18 @@
+# Gecko prefs for the stage 2 spike (W7; ROADMAP.md, item 4): stage 1's, with Lockstore's three switches on, all off
+# by default at Firefox 160. A debuggable GeckoView reads this from /data/local/tmp/<package>-geckoview-config.yaml,
+# and hands the prefs to Gecko as default prefs (MOZ_DEFAULT_PREFS).
+#
+# The first round keeps Lockstore's own `local` key, which it keeps in plaintext in the profile's
+# lockstore.keys.sqlite, so it measures what the switches cover, not what they protect. The SQLite switch corrupts a
+# profile it is turned on over, and Gecko refuses a profile whose databases disagree with it, so it goes on a fresh
+# profile only (`fresh-profile`).
+prefs:
+  browser.privatebrowsing.forceMediaMemoryCache: true
+  # SQLite through obfsvfs, every database under the profile but Lockstore's and NSS's own.
+  security.storage.encryption.sqlite.enabled: true
+  # The HTTP cache's entries.
+  browser.cache.disk.encryption.enabled: true
+  # Site storage, for each origin first seen with it on: IndexedDB, local storage, the Cache API.
+  dom.quotaManager.encryption.enabled: true
+env:
+  MOZ_LOG: SQLiteEncryption:4

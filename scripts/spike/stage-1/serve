@@ -10,7 +10,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-PAGE = (Path(__file__).resolve().parent / "site" / "index.html").read_text()
+SITE = Path(__file__).resolve().parent / "site"
+PAGE = (SITE / "index.html").read_text()
+# Reads back what an earlier session's page wrote, and writes nothing: whether a profile opens a second time (stage 2).
+READ = (SITE / "read.html").read_text()
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -27,6 +30,8 @@ class Handler(BaseHTTPRequestHandler):
         elif url.path == "/":
             # Never cacheable itself: a cached page would carry an earlier run's marker into this one.
             self.answer(200, PAGE.replace("__MARKER__", MARKER).encode(), "text/html; charset=utf-8")
+        elif url.path == "/read":
+            self.answer(200, READ.replace("__MARKER__", MARKER).encode(), "text/html; charset=utf-8")
         else:
             self.answer(404, b"", "text/plain")
 

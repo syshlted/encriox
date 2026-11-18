@@ -1,0 +1,47 @@
+<!doctype html>
+<!-- The spike's read-back page (stage 2): what an earlier session's marker page left in each store, read in a later
+     session and reported to `serve`, which says whether the profile opened a second time with its data. It writes
+     nothing. `serve` puts that session's marker where __MARKER__ is. -->
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width">
+<title>encriox read-back</title>
+<p>Reading back <code id="marker">__MARKER__</code></p>
+<ul id="done"></ul>
+<script>
+  const marker = "__MARKER__";
+  const report = (store, value) => {
+    const li = document.createElement("li");
+    li.textContent = `${store}: ${value}`;
+    document.getElementById("done").append(li);
+    fetch(`/report?store=${store}&value=${encodeURIComponent(value)}`, { cache: "no-store" });
+  };
+  const read = (store, run) => {
+    try {
+      Promise.resolve(run()).then((v) => report(store, v ?? "none"), (e) => report(store, `failed ${e}`));
+    } catch (e) {
+      report(store, `failed ${e}`);
+    }
+  };
+
+  read("cookie", () => (document.cookie.match(/encriox=([^;]*)/) || [])[1]);
+  read("localStorage", () => localStorage.getItem("encriox"));
+  read("indexedDB", () => new Promise((resolve, reject) => {
+    // Version 1, as the marker page made it: an open that has to upgrade found no database.
+    const open = indexedDB.open("encriox", 1);
+    open.onupgradeneeded = () => { open.transaction.abort(); resolve("none"); };
+    open.onerror = () => (open.error && open.error.name === "AbortError" ? resolve("none") : reject(open.error));
+    open.onsuccess = () => {
+      const get = open.result.transaction("s").objectStore("s").get("k");
+      get.onsuccess = () => resolve(get.result && get.result.marker);
+      get.onerror = () => reject(get.error);
+    };
+  }));
+  read("cacheAPI", () => caches.has("encriox").then((has) =>
+    has ? caches.open("encriox").then((c) => c.match("/cached")).then((r) => (r ? r.text() : "none")) : "none"));
+  read("serviceWorker", () => navigator.serviceWorker.getRegistration("/").then((r) => {
+    const worker = r && (r.active || r.waiting || r.installing);
+    return worker ? (new URL(worker.scriptURL).searchParams.get("m") || worker.scriptURL) : "none";
+  }));
+  // The HTTP cache: the marker page's cacheable answer, at its URL. `serve` sees a request only if the cache missed.
+  read("httpCache", () => fetch(`/cacheable?m=${marker}`).then((r) => r.text()).then((t) => t.trim().split(" ").pop()));
+</script>

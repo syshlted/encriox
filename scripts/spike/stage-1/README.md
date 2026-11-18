@@ -63,6 +63,7 @@ passphrase. `adb logcat -s encriox-spike` says `gate open scope=…` once it hol
 
 - `check-plaintext <serial> normal`, then `check-plaintext <serial> private`: a page writes a fresh marker into every
   store a page can reach, and the app's data is searched for it. The normal run is the control and must find it.
+  `CONFIG` names another Gecko config to push, as stage 2's does (`../stage-2/`).
 - `measure <serial> <MiB> <rounds>`: downloads into the vault against Fenix's own writer, from memory and through
   Gecko from the spike's own server on the phone's loopback.
 - `check-stopped <serial> pause|cancel sized|unsized [retry]`: a download into the vault stopped part way, as its

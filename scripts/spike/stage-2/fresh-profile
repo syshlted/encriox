@@ -1,0 +1,19 @@
+#!/bin/sh
+# Gives the spike a fresh Gecko profile: stops it and deletes its profile and the profile's cache, which a test phone's
+# spike holds nothing of worth in but earlier runs' markers. Lockstore's SQLite switch may only be turned on, or off,
+# over a fresh profile (geckoview-config.yaml). Fenix's own data, the vault's grant and `encriox.key` are not
+# Gecko's profile, and are left as they are.
+#
+#   scripts/spike/stage-2/fresh-profile <adb serial>
+set -eu
+
+serial=${1:?usage: fresh-profile <adb serial>}
+package=com.systemhalted.encri.browser.spike
+adb="${ADB:-$HOME/Android/Sdk/platform-tools/adb} -s $serial"
+
+$adb shell am force-stop $package
+# The profile's local directory, its HTTP cache among it, is the profile's name under cache/.
+$adb shell "run-as $package sh -c 'for p in files/mozilla/*.default; do [ -d \"\$p\" ] && rm -rf \"cache/\${p##*/}\"; done; rm -rf files/mozilla'"
+left=$($adb shell "run-as $package sh -c 'ls -d files/mozilla cache/*.default 2>/dev/null'" | tr -d '\r')
+[ -z "$left" ] || { echo "fresh-profile: still there: $left" >&2; exit 1; }
+echo "fresh-profile: $serial has no Gecko profile; the next start makes one"

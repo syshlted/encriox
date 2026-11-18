@@ -1,0 +1,110 @@
+#!/bin/sh
+# Stage 2's first round (W7; ROADMAP.md, item 4): what Lockstore's three switches cover, with its own local key.
+#
+#   scripts/spike/stage-2/check-lockstore <adb serial>
+#
+# On a fresh profile (`fresh-profile`), with this directory's config, stage 1's `check-plaintext <serial> normal`
+# writes a fresh marker into every store a page can reach and searches the app's data for it. Then every SQLite file
+# under the profile is read for obfsvfs's header, 8192-byte pages with 32 reserved bytes, which is how Gecko itself
+# tells an encrypted database. Last, the app is started again and a page reads back what the first session wrote,
+# store by store, writing nothing: whether the profile opens a second time, with its data.
+set -eu
+
+here=$(cd "$(dirname "$0")" && pwd)
+stage1=$(cd "$here/../stage-1" && pwd)
+serial=${1:?usage: check-lockstore <adb serial>}
+package=com.systemhalted.encri.browser.spike
+port=8643
+adb="${ADB:-$HOME/Android/Sdk/platform-tools/adb} -s $serial"
+work=$(mktemp -d)
+server=
+# The server is empty until `serve` starts, and set -u would stop the trap at it before the rest ran.
+trap '[ -z "$server" ] || kill "$server" 2>/dev/null || true; $adb reverse --remove tcp:$port 2>/dev/null || true; rm -rf "$work"' EXIT
+
+refused() {
+    $adb logcat -d | grep 'Profile encryption state does not match launching build' | head -1 || true
+}
+
+"$here/fresh-profile" "$serial"
+
+# The first session, from the gate's start, which makes the profile, to the marker page's.
+ok=yes
+CONFIG="$here/geckoview-config.yaml" "$stage1/check-plaintext" "$serial" normal > "$work/plaintext" 2>&1 || ok=
+cat "$work/plaintext"
+[ -n "$ok" ] || { echo "check-lockstore: the first session did not run; Gecko said: $(refused)" >&2; exit 1; }
+marker=$(sed -n 's/^== .*, normal, marker \(ENCRIOX[0-9a-f]*\)$/\1/p' "$work/plaintext")
+[ -n "$marker" ] || { echo "check-lockstore: check-plaintext named no marker" >&2; exit 1; }
+
+$adb shell am force-stop $package
+echo "== the profile, after the first session"
+marked=$($adb shell "run-as $package sh -c 'cat files/mozilla/*/compatibility.ini'" | tr -d '\r' |
+    grep '^EncryptedDatabases=' || true)
+echo "  compatibility.ini: ${marked:-no EncryptedDatabases marker}"
+# Only the first 24 bytes of each file are read, on the phone: the whole profile took more than ten minutes over the
+# A20's Wi-Fi (2026-11-18).
+cat > "$work/heads" <<'HEADS'
+find files/mozilla cache -type f | while IFS= read -r f; do
+    h=$(od -An -tx1 -N24 "$f" | tr -d ' \n')
+    echo "$(stat -c %s "$f") ${h:--} $f"
+done
+HEADS
+$adb push "$work/heads" /data/local/tmp/encriox-heads.sh >/dev/null
+$adb shell "run-as $package sh /data/local/tmp/encriox-heads.sh" | tr -d '\r' > "$work/heads.out"
+$adb shell rm /data/local/tmp/encriox-heads.sh
+python3 -I - "$work/heads.out" <<'HEADERS'
+import sys
+rows = []
+for line in open(sys.argv[1]):
+    size, hexed, path = line.rstrip("\n").split(" ", 2)
+    head = b"" if hexed == "-" else bytes.fromhex(hexed)
+    if path.endswith("/.metadata-v2") and len(head) >= 13:
+        # QuotaManager's record of the origin: its flags, a big-endian uint32 after the access time and the
+        # persisted byte, say whether it is encrypted (DirectoryMetadataFlags::Encrypted, 1 << 4). An origin whose
+        # data is encrypted and whose flags say not is read at the next start without its key.
+        flags = int.from_bytes(head[9:13], "big")
+        state = "encrypted" if flags & 0x10 else "plaintext"
+        print(f"  origin    {path.rsplit('/', 1)[0]}: flags 0x{flags:x}, recorded {state}")
+        continue
+    if not head.startswith(b"SQLite format 3\0") or len(head) < 21:
+        continue
+    page = int.from_bytes(head[16:18], "big")
+    page = 65536 if page == 1 else page
+    reserved = head[20]
+    state = "encrypted" if (page, reserved) == (8192, 32) else "plaintext"
+    rows.append((path, state, page, reserved, int(size)))
+if not rows:
+    sys.exit("check-lockstore: no SQLite file under the profile")
+for path, state, page, reserved, size in sorted(rows, key=lambda r: (r[1], r[0])):
+    print(f"  {state:9} {path} (page {page}, reserved {reserved}, {size} bytes)")
+HEADERS
+
+# The second session: a fresh process on the same profile, and a page that reads back the first session's marker.
+"$stage1/serve" $port "$marker" > "$work/served" 2>&1 &
+server=$!
+$adb reverse tcp:$port tcp:$port >/dev/null
+sleep 1
+$adb logcat -c
+timeout 120 $adb shell am start -W -a android.intent.action.VIEW -d "http://127.0.0.1:$port/read?m=$marker" \
+    -n $package/org.mozilla.fenix.IntentReceiverActivity >/dev/null || true
+reads="cookie localStorage indexedDB cacheAPI serviceWorker httpCache"
+reported=0
+for _ in $(seq 60); do
+    reported=$(grep -c '^report' "$work/served" || true)
+    [ "$reported" -ge 6 ] && break
+    sleep 1
+done
+echo "== the second session, reading back $marker"
+said=$(refused)
+[ -z "$said" ] || echo "  Gecko refused the profile: $said"
+[ "$reported" -ge 6 ] || { echo "check-lockstore: the read-back page reported $reported of its 6 stores" >&2; exit 1; }
+for store in $reads; do
+    value=$(sed -n "s/^report store=$store value=\(.*\)$/\1/p" "$work/served" | head -1)
+    if [ "$value" = "$marker" ]; then verdict="read back"; else verdict="lost: ${value:-no report}"; fi
+    echo "  $store: $verdict"
+done
+# The read-back page fetches the first session's cacheable URL: a request for it here is the HTTP cache missing.
+if grep -q "^request GET /cacheable?m=$marker" "$work/served"; then
+    echo "  httpCache: the request reached the server, so the cache did not answer it"
+else
+    echo "  httpCache: answered from the cache"
+fi

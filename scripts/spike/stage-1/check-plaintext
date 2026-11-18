@@ -8,11 +8,14 @@
 # store a page can reach. Then the app is sent home, so that it saves what it saves, and its whole data directory and
 # its external one are copied here and searched for the marker, as ASCII and as UTF-16. A private tab's thumbnails on
 # disk, and files that appeared or changed during the session, are listed.
+#
+# CONFIG names the Gecko config to push, this directory's by default; stage 2's turns Lockstore on (../stage-2/).
 set -eu
 
 here=$(cd "$(dirname "$0")" && pwd)
 serial=${1:?usage: check-plaintext <adb serial> private|normal}
 mode=${2:?usage: check-plaintext <adb serial> private|normal}
+config=${CONFIG:-$here/geckoview-config.yaml}
 package=com.systemhalted.encri.browser.spike
 port=8643
 adb="${ADB:-$HOME/Android/Sdk/platform-tools/adb} -s $serial"
@@ -32,7 +35,26 @@ files() {
     $adb shell "run-as $package sh -c 'find . -type f -exec ls -l {} \;'" | awk '{ print $NF, $5 }' | sort
 }
 
-$adb push "$here/geckoview-config.yaml" /data/local/tmp/$package-geckoview-config.yaml >/dev/null
+refused() {
+    $adb logcat -d | grep -q 'Profile encryption state does not match launching build' &&
+        echo "check-plaintext: Gecko refused the profile, whose databases' encryption is not the config's" >&2
+    return 0
+}
+
+# Gecko refuses a profile whose databases' encryption disagrees with security.storage.encryption.sqlite.enabled, and
+# on Android it only logs it and stops (nsAppRunner.cpp, CheckEncryptionCompatibility), so a run would see no page.
+[ -z "$($adb shell "run-as $package sh -c 'test -f files/mozilla/profiles.ini && echo yes'")" ] || {
+    wants=$(grep -c '^ *security\.storage\.encryption\.sqlite\.enabled: *true' "$config" || true)
+    has=$($adb shell "run-as $package sh -c 'cat files/mozilla/*/compatibility.ini'" 2>/dev/null |
+        grep -c '^EncryptedDatabases=1' || true)
+    [ "$wants" = "$has" ] || {
+        echo "check-plaintext: the profile's databases are $([ "$has" = 0 ] && echo plaintext || echo encrypted)," \
+            "and $config $([ "$wants" = 0 ] && echo "does not encrypt" || echo encrypts) them:" \
+            "make a fresh profile first (../stage-2/fresh-profile)" >&2
+        exit 1
+    }
+}
+$adb push "$config" /data/local/tmp/$package-geckoview-config.yaml >/dev/null
 $adb shell am force-stop $package
 # Not `am start -W`: the gate finishes without drawing, and -W would wait for it forever.
 $adb logcat -c
@@ -61,7 +83,8 @@ sleep 1
 # (2026-11-16).
 timeout 120 $adb shell am start -W -a android.intent.action.VIEW -d "http://127.0.0.1:$port/?run=$marker" \
     -n $package/org.mozilla.fenix.IntentReceiverActivity >/dev/null ||
-    { echo "check-plaintext: the page did not open in 2 minutes; is the phone's screen off or locked?" >&2; exit 1; }
+    { echo "check-plaintext: the page did not open in 2 minutes; is the phone's screen off or locked?" >&2
+      refused; exit 1; }
 
 stores="cookie localStorage sessionStorage indexedDB cacheAPI serviceWorker httpCache readback"
 reported=0
@@ -71,7 +94,7 @@ for _ in $(seq 60); do
     sleep 1
 done
 # A store the page did not reach holds no marker, and a private run would find nothing for want of anything written.
-[ "$reported" -ge 8 ] || { echo "check-plaintext: the page reported $reported of its 8 stores" >&2; exit 1; }
+[ "$reported" -ge 8 ] || { echo "check-plaintext: the page reported $reported of its 8 stores" >&2; refused; exit 1; }
 $adb shell input keyevent KEYCODE_HOME
 # Gecko writes cookies, local storage and IndexedDB to disk some while after a page does: 10 seconds after the app went
 # home, a normal session's were not yet there (the G6, 2026-11-14).
