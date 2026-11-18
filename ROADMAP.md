@@ -58,18 +58,25 @@ sources are there, and are not repeated here:
      cache's switch works with a pref alone. Site storage's encrypts, but on the S9 and the G6 it recorded the origin
      as plaintext, so the next start could not read local storage, IndexedDB or the Cache API, every site's by
      Gecko's log. A missing flag in Gecko's QuotaManager is the cause, at 160 and on `main`, and nothing was wiped.
-     SQLite's switch is locked off in `all.js`, so a pref cannot turn it on. **The user's call: a Gecko build** on the
+     SQLite's switch is locked off in `all.js`, so a pref cannot turn it on. ~~**The user's call: a Gecko build** on the
      extra drive, carrying the one-line QuotaManager fix and SQLite's switch unlocked, before the next two rounds, or
-     waiting for Mozilla (item 5).
+     waiting for Mozilla (item 5).~~ **A Gecko build, done 2026-11-18 (W13)**, `scripts/spike/stage-2/build`, on the
+     extra drive: QuotaManager's fix, and SQLite's switch unlocked and on by default, because Gecko's launch guard
+     reads the build's default and nothing else. On the G6, the S9 and the A20 all three switches work: every Gecko
+     database encrypted but NSS's and Lockstore's own, the origin recorded encrypted, everything read back at the next
+     start, and the marker only in Fenix's saved tabs and history and in `serviceworker.txt`. The next two rounds
+     build on it.
    - **A key-encryption key from the vault**: the profile's keys moved under a password key whose secret comes from
      `.encriox.key`, and locked at the vault's lock. Does the profile open a second time, and what does each store do
      when that key is locked at start or mid-session? Razing is the failure to look for.
    - **What `obfsvfs` costs** against plain SQLite.
 5. **Ask Mozilla before carrying a patch**: an embedder-supplied KEK in GeckoView, beside the OS-keystore KEK of bug
    2055641. Who asks, and where, is open. Theirs to know too: Android Components' logins and autofill stores wait on
-   themselves for good once their key is lost, which the spike carries a fix for (W6, patch 0018); and QuotaManager's
+   themselves for good once their key is lost, which the spike carries a fix for (W6, patch 0018); QuotaManager's
    `GetOrCreateTemporaryOriginDirectory` records an encrypted origin as plaintext, so that with
-   `dom.quotaManager.encryption.enabled` on, the next start cannot read site storage (W12).
+   `dom.quotaManager.encryption.enabled` on, the next start cannot read site storage (W12), which stage 2's patch 0001
+   fixes (W13); and Gecko's launch guard reads the SQLite switch before any pref is loaded, so that a profile a pref
+   encrypted is refused at its next start (W13).
 
 ## Before the first release
 

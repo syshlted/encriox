@@ -9,7 +9,8 @@ paths:
 `scripts/spike/stage-1/`: Fenix at a Firefox release, built with Gradle against the GeckoView Mozilla published, with
 the patches in `patches/` on top, and the scripts that fetch, build and measure it on the phones (W1, W4). It is a
 throwaway, and nothing it builds ships. Its `README.md` says how to build it and run it. `scripts/spike/stage-2/` runs
-stage 1's build with Lockstore's switches on, and checks what they cover and whether a profile opens again (W12).
+stage 1's app with Lockstore's switches on, and checks what they cover and whether a profile opens again (W12). It
+builds its own Gecko, from stage 1's checkout with `patches/` of its own on top, on the drive for large builds (W13).
 `LICENSE` is here too until a build of encriox itself has a brief. This brief is level 1; full records are in
 `docs/decisions/`.
 
@@ -17,12 +18,15 @@ stage 1's build with Lockstore's switches on, and checks what they cover and whe
 
 - **The package is `com.systemhalted.encri.browser.spike`, on test phones alone, never published** (W1, flag 1). The
   phones are the ones holding encri's test vaults; the S24 only with its owner's word (`AGENTS.md`, *Hazards*).
-- **The patches are the source.** Change them by committing on the checkout's `encriox-spike-stage-1` branch and
-  writing them out again with `git format-patch` (`README.md`). Never edit a `.patch` by hand. A fix is a patch of its
-  own on top, so that what each measurement ran is a prefix of the series.
+- **The patches are the source.** Change them by committing on the checkout's `encriox-spike-stage-1` branch, or
+  stage 2's on `encriox-spike-stage-2` over it, and writing them out again with `git format-patch` (each stage's
+  `README.md`). Never edit a `.patch` by hand. A fix is a patch of its own on top, so that what each measurement ran is
+  a prefix of the series.
 - **Mozilla's toolchain, not the suite's.** Gradle runs on Mozilla's JDK 17 and its SDK under `~/.mozbuild`
-  (`README.md`), so the suite's JDK 21 and SDK, which are encri's toolchain, are left as they are. The build includes
-  `../encri-api` from source, so it is still one Gradle invocation at a time in the whole suite.
+  (`README.md`), so the suite's JDK 21 and SDK, which are encri's toolchain, are left as they are. Stage 2's mach state,
+  with the clang, NDK and JDK it bootstraps and Mozilla's CI Rust, is beside its checkout on the drive for large builds
+  (W13, flag 2). Both builds include `../encri-api` from source, so it is still one Gradle invocation at a time in the
+  whole suite.
 - **A new source file begins with Exhibit A's notice** (W2, flag 1), as Mozilla's own do.
 - **A download into the vault is whole or not there.** encri saves what a writer finishes (encri-api L11), and `write`
   replaces a document whole, so the writer abandons any copy that stopped short: one that ended before the length
@@ -37,6 +41,9 @@ stage 1's build with Lockstore's switches on, and checks what they cover and whe
   going back to stage 1 does too. `check-plaintext` refuses a config whose SQLite switch disagrees with the profile.
 - **A profile is checked by starting it again**, not by the marker search alone: site storage held no marker and still
   could not be read at the next start (W12). `check-lockstore` always reads back in a second process.
+- **Stage 2's build encrypts every profile unless its config says otherwise** (W13, flag 1), and stage 1's scripts run
+  with stage 1's config. After a round of stage 2, each phone gets a fresh profile, stage 1's APK and stage 1's config
+  again (W13, flag 3).
 - **Measure from the phone's own loopback**, never over Wi-Fi: the A20's link ran at 0.4 MB/s (W4, *Rejected*).
 - **A script fails loudly.** A step that did not happen stops the run with a message; it never leaves a line out of
   the results or carries on under the wrong label.
@@ -74,7 +81,20 @@ stage 1's build with Lockstore's switches on, and checks what they cover and whe
   encryption state does not match launching build." and stops: the page never draws.
 - QuotaManager can record an encrypted origin as plaintext, flags `0x7` in its `.metadata-v2` where `0x10` is the
   encrypted bit, and then cannot read its site storage at the next start, nor any site's (W12). `check-lockstore`
-  prints each origin's flags.
+  prints each origin's flags. Stage 2's patch 0001 fixes it (W13). A persistent origin, such as `chrome`, is always
+  recorded plaintext: QuotaManager encrypts best-effort origins only.
+- **Gecko's launch guard reads the SQLite switch before any pref is loaded**, in `XRE_mainStartup`, before XPCOM: it
+  sees the build's default and nothing else. With the switch unlocked and turned on by the config, the gate's start
+  encrypted the S9's profile and the marker page's start was refused (W13). Stage 2's patch 0004 turns it on by
+  default.
+- Fenix's own Gradle build never takes a local GeckoView: `:geckoview` is a project only of the checkout's root build,
+  so stage 2 builds `fenix:assembleDebug` there (W13, patch 0003).
+- Configure bootstraps Rust only in Mozilla's automation, and the machine has none: "Rust compiler not found". Stage
+  2's `build` fetches Mozilla's `linux64-rust-android` (W13). Configure also bootstraps its own JDK into mach's state
+  and uses it, whatever `JAVA_HOME` says.
+- mach keeps the build ID across incremental builds, so `compatibility.ini`'s `LastVersion` tells stage 2's Gecko from
+  the published one, not one of stage 2's builds from another. An incremental package grew the APK from 170 MB to
+  239 MB, with the same `libxul.so`.
 - Copying the whole profile off the A20 over Wi-Fi took more than ten minutes, so `check-lockstore` reads each file's
   first 24 bytes on the phone. The G6's toybox `dd` refuses `conv=notrunc`, so a byte is changed by writing the whole
   file through `run-as … sh -c 'cat > …'`.
@@ -104,6 +124,13 @@ stage 1's build with Lockstore's switches on, and checks what they cover and whe
   and its entries came back after a restart, on all three. Site storage's encrypted, and on the S9 and the G6 its
   origin was recorded as plaintext, flags `0x7`, so the next start could not read it; the A20's was recorded `0x13`
   and read back. The G6's flags set to `0x17` by hand read back all six stores. SQLite's switch took no effect.
+- **With stage 2's Gecko all three switches work** on the G6, the S9 and the A20 (W13): every database in Gecko's
+  profile encrypted but NSS's `cert9.db` and `key4.db` and Lockstore's `lockstore.keys.sqlite`; the test origin
+  recorded `0x17`, `0x17` and `0x13`; all six stores read back at the next start; and the marker in 4 files, Fenix's
+  saved tabs, its history and the history's WAL, and `serviceworker.txt`.
+- **Stage 2's first Gecko build took 76 minutes**, 69 of them `mach build` at 86% of 8 cores, and a change to one pref
+  8½. Its objdir holds 11 GB and its mach state 6.6 GB, on the drive for large builds; the checkout's clone took 14
+  minutes, for 5.9 GB (W13).
 
 ## Decisions
 
@@ -115,6 +142,7 @@ stage 1's build with Lockstore's switches on, and checks what they cover and whe
 | W5 | A stopped download into the vault, and what the A20 and the S9 measured |
 | W6 | The browser's own key in the vault, sealing the logins' and the cards' keys; private thumbnails in memory |
 | W12 | Stage 2's first round: what Lockstore's switches do at 160, and a fresh profile for each run (flag 1) |
+| W13 | Stage 2's own Gecko: QuotaManager fixed, SQLite on by default, its toolchain, and the phones back on stage 1 |
 | encri-api L11, L12 | `write` saves only a finished writer; a writer's failure is told encri's reason |
 | encri D120, D145 | A grant is keyed on the package for good |
 
@@ -127,8 +155,8 @@ stage 1's build with Lockstore's switches on, and checks what they cover and whe
   memory at a lock.
 - Patch 0010's locked path, on the G6 once its owner has unlocked it (`ROADMAP.md`).
 - A stopped download into the vault shows as failed, a cancelled one too (W5, flag 2).
-- Stage 2's next two rounds, a key from the vault and what `obfsvfs` costs, wait on a Gecko build or on Mozilla (W12):
-  the user's call.
+- Stage 2's next two rounds, a key from the vault and what `obfsvfs` costs, on stage 2's Gecko (W13), and W13's three
+  flags.
 
 ## Read next
 

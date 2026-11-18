@@ -4,6 +4,24 @@ What happened, newest first. Why is in `docs/decisions/`, and what is next is in
 
 ## Unreleased
 
+### Stage 2 builds its own Gecko (2026-11-18)
+
+At the user's word, stage 2 compiles Gecko from stage 1's checkout, on the drive for large builds, with four patches of
+its own (`scripts/spike/stage-2/`, W13). The first build took 76 minutes. **QuotaManager records an origin's
+encryption** when it makes the origin's directory, which W12 found it could record as plaintext. **SQLite's switch is
+unlocked and on by default.** Gecko's launch guard reads it before any pref is loaded, so on the S9 a profile that the
+config had encrypted was refused at its very next start. The root Gradle build includes encri-api, so that Fenix is
+built against this GeckoView.
+
+On the G6, the S9 and the A20, **all three of Lockstore's switches now work**. Every database in Gecko's profile was
+encrypted but NSS's two and Lockstore's own key store, and the test origin was recorded as encrypted. At the next start
+all six stores read back, on the two phones that had lost site storage in W12 too. A normal session left its marker in
+4 files: Fenix's saved tabs, its history and the history's WAL, and the service worker's registration. Each phone was
+then given a fresh profile, stage 1's APK and stage 1's config again. Three points are flagged for veto.
+
+`check-plaintext` no longer blames the config when Gecko refuses a profile, and `check-lockstore` names the Gecko that
+made the profile.
+
 ### Stage 2's first round: what Lockstore's switches do at 160 (2026-11-18)
 
 On the G6, the S9 and the A20, stage 1's build ran with Lockstore's three switches on, on a fresh profile
