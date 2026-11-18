@@ -1,0 +1,390 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jeremy Melanson <1080872+zish@users.noreply.github.com>
+Date: Wed, 18 Nov 2026 21:21:15 +0000
+Subject: [PATCH] fix: keep each store's key under the profile's KEK, and never
+ raze it
+
+Moved under a password KEK by an embedder's secret, the profile's keys
+were asked for by the KEK each store had made them under, by name, and
+were not found. On the S9 (encri-firefox, stage 2's second round), with
+the secret given, every SQLite open failed at the next start: the
+cookie store moved cookies.sqlite aside as corrupt, and site storage
+could not start. The HTTP cache deleted its moved key and made a new
+one, back under a LocalKey, losing every entry.
+
+Each store now reads its key under whichever KEK wraps it, and a new
+key goes under the profile's password KEK once there is one: SQLite's,
+the HTTP cache's and QuotaManager's anchor. A key that is there and
+locked is kept, never replaced. A database whose key is locked fails to
+open with NS_ERROR_FILE_ACCESS_DENIED, as obfsvfs fails an open it
+cannot key, which no consumer takes for corruption; NS_ERROR_FAILURE is
+one the cookie store answers by moving its database aside. A session
+whose keys were locked from startup does not use the disk cache, since
+reading an entry without its key truncates it and the index's rebuild
+deletes what it cannot read.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+---
+ dom/quota/LockstoreStorageKeyProvider.cpp | 20 ++++--
+ netwerk/cache2/CacheCrypto.cpp            | 70 +++++++++++++++------
+ netwerk/cache2/CacheFileIOManager.cpp     | 15 +++++
+ security/lockstore/ProfileKek.cpp         | 10 +++
+ security/lockstore/ProfileKek.h           |  8 +++
+ storage/SQLiteEncryption.cpp              | 74 ++++++++++++++++++-----
+ 6 files changed, 162 insertions(+), 35 deletions(-)
+
+diff --git a/dom/quota/LockstoreStorageKeyProvider.cpp b/dom/quota/LockstoreStorageKeyProvider.cpp
+index 933ddf9522..83a78e3119 100644
+--- a/dom/quota/LockstoreStorageKeyProvider.cpp
++++ b/dom/quota/LockstoreStorageKeyProvider.cpp
+@@ -10,6 +10,7 @@
+ 
+ #include "mozilla/dom/quota/DekNameCodec.h"
+ #include "mozilla/dom/quota/QuotaCommon.h"
++#include "mozilla/security/lockstore/ProfileKek.h"
+ #include "nsThreadUtils.h"
+ #include "nsXULAppAPI.h"
+ 
+@@ -59,11 +60,22 @@ nsresult LockstoreStorageKeyProvider::EnsureKek() {
+     return NS_OK;
+   }
+ 
+-  auto kekResult = mLockstore->DoCreateKek("local"_ns, ""_ns, ""_ns, 0);
+-  if (kekResult.isErr()) {
+-    return kekResult.unwrapErr();
++  // A new anchor goes under the profile's password KEK once an embedder's
++  // secret keeps the profile's keys (security/lockstore/ProfileKek.cpp,
++  // encriox's spike), so that every origin's key needs it. Otherwise it goes
++  // under a LocalKey of QuotaManager's own.
++  QM_TRY_INSPECT(const bool& profileKek,
++                 mLockstore->DoKekExists(
++                     mozilla::security::lockstore::kProfilePasswordKek));
++  if (profileKek) {
++    mKekRef = mozilla::security::lockstore::kProfilePasswordKek;
++  } else {
++    auto kekResult = mLockstore->DoCreateKek("local"_ns, ""_ns, ""_ns, 0);
++    if (kekResult.isErr()) {
++      return kekResult.unwrapErr();
++    }
++    mKekRef = kekResult.unwrap();
+   }
+-  mKekRef = kekResult.unwrap();
+ 
+   nsresult rv =
+       mLockstore->DoCreateDek(kAnchorDek, mKekRef, /* extractable */ false,
+diff --git a/netwerk/cache2/CacheCrypto.cpp b/netwerk/cache2/CacheCrypto.cpp
+index 4b9b0f3e44..6598ad38b2 100644
+--- a/netwerk/cache2/CacheCrypto.cpp
++++ b/netwerk/cache2/CacheCrypto.cpp
+@@ -14,6 +14,7 @@
+ #include "mozilla/StaticMutex.h"
+ #include "mozilla/StaticPrefs_browser.h"
+ #include "mozilla/StaticPtr.h"
++#include "mozilla/security/lockstore/ProfileKek.h"
+ #include "nsTArray.h"
+ #include "nsThreadUtils.h"
+ #include "pk11pub.h"
+@@ -201,32 +202,67 @@ already_AddRefed<CacheCrypto> CacheCrypto::LoadFromKeystore(
+     LockstoreService* aLockstore) {
+   MOZ_ASSERT(!NS_IsMainThread());
+ 
+-  // A non-empty identifier makes this a deterministic get-or-create, so the
+-  // kekRef does not have to be persisted anywhere.
+-  auto kekRef = aLockstore->DoCreateKek("local"_ns, kKekIdentifier, ""_ns, 0);
+-  if (kekRef.isErr()) {
++  // The DEK is read under whichever KEK wraps it. Once an embedder's secret
++  // keeps the profile's keys (security/lockstore/ProfileKek.cpp, encriox's
++  // spike), that is the profile's password KEK, which moved it there. Asked
++  // for under this code's LocalKey by name, it was not found, and was deleted
++  // and replaced: every entry was lost, and the new key was back under a
++  // LocalKey.
++  auto exists = aLockstore->DoDekExists(kDekName);
++  if (exists.isErr()) {
+     LOG(
+-        ("CacheCrypto::LoadFromKeystore() - could not obtain the KEK "
++        ("CacheCrypto::LoadFromKeystore() - could not ask for the DEK "
+          "[rv=%" PRIx32 "]",
+-         static_cast<uint32_t>(kekRef.unwrapErr())));
++         static_cast<uint32_t>(exists.unwrapErr())));
+     return nullptr;
+   }
+-
+-  auto dek = aLockstore->DoGetDek(kDekName, kekRef.inspect());
++  Result<nsTArray<uint8_t>, nsresult> dek(Err(NS_ERROR_NOT_AVAILABLE));
++  if (exists.inspect()) {
++    dek = aLockstore->DoGetDekAutomatic(kDekName);
++    if (dek.isErr() && dek.inspectErr() == NS_ERROR_NOT_AVAILABLE) {
++      // Every KEK that wraps it is locked. It is kept: replacing it would lose
++      // every entry for a key that waits only for its secret. With no cipher,
++      // the disk cache is not used this session (CacheFileIOManager).
++      MOZ_LOG(gCache2Log, LogLevel::Info,
++              ("CacheCrypto::LoadFromKeystore() - the DEK is locked; it is "
++               "kept, and there is no cipher this session"));
++      return nullptr;
++    }
++  }
+   if (dek.isErr()) {
+-    // No DEK yet, or one we cannot read -- a DEK wrapped under a KEK this code
+-    // no longer asks for is out of reach for good, since the kek_ref is what
+-    // the keystore looks it up by. Replace it rather than leave the pref on
+-    // with no cipher, which fails every new entry closed; entries written
+-    // under the old key reinitialize themselves once their metadata fails to
+-    // decrypt. The delete is needed because a DEK cannot be created over an
+-    // existing one.
++    // No DEK yet, or one we cannot read for another reason. Replace it rather
++    // than leave the pref on with no cipher, which fails every new entry
++    // closed; entries written under the old key reinitialize themselves once
++    // their metadata fails to decrypt. The delete is needed because a DEK
++    // cannot be created over an existing one.
+     (void)aLockstore->DoDeleteDek(kDekName);
+ 
++    // A new DEK goes under the profile's password KEK once there is one, and
++    // otherwise under this code's LocalKey. A non-empty identifier makes that
++    // a deterministic get-or-create, so the kekRef does not have to be
++    // persisted anywhere.
++    nsCString kekRef;
++    auto profileKek = aLockstore->DoKekExists(
++        mozilla::security::lockstore::kProfilePasswordKek);
++    if (profileKek.isOk() && profileKek.inspect()) {
++      kekRef = mozilla::security::lockstore::kProfilePasswordKek;
++    } else {
++      auto local =
++          aLockstore->DoCreateKek("local"_ns, kKekIdentifier, ""_ns, 0);
++      if (local.isErr()) {
++        LOG(
++            ("CacheCrypto::LoadFromKeystore() - could not obtain the KEK "
++             "[rv=%" PRIx32 "]",
++             static_cast<uint32_t>(local.unwrapErr())));
++        return nullptr;
++      }
++      kekRef = local.unwrap();
++    }
++
+     // Extractable: the cache does its own AES-GCM per block, binding the block
+     // number as AAD, which the keystore's blob-oriented encrypt() cannot
+     // express.
+-    nsresult rv = aLockstore->DoCreateDek(kDekName, kekRef.inspect(),
++    nsresult rv = aLockstore->DoCreateDek(kDekName, kekRef,
+                                           /* aExtractable */ true, kKeyLength);
+     if (NS_FAILED(rv)) {
+       LOG(
+@@ -236,7 +272,7 @@ already_AddRefed<CacheCrypto> CacheCrypto::LoadFromKeystore(
+       return nullptr;
+     }
+ 
+-    dek = aLockstore->DoGetDek(kDekName, kekRef.inspect());
++    dek = aLockstore->DoGetDekAutomatic(kDekName);
+   }
+ 
+   if (dek.isErr()) {
+diff --git a/netwerk/cache2/CacheFileIOManager.cpp b/netwerk/cache2/CacheFileIOManager.cpp
+index 35450f2c4e..7292573544 100644
+--- a/netwerk/cache2/CacheFileIOManager.cpp
++++ b/netwerk/cache2/CacheFileIOManager.cpp
+@@ -6,6 +6,7 @@
+ 
+ #include <limits>
+ 
++#include "CacheCrypto.h"
+ #include "CacheFile.h"
+ #include "CacheFileContextEvictor.h"
+ #include "CacheFileUtils.h"
+@@ -26,6 +27,7 @@
+ #include "mozilla/glean/NetwerkCache2Metrics.h"
+ #include "mozilla/glean/NetwerkMetrics.h"
+ #include "mozilla/net/MozURL.h"
++#include "mozilla/security/lockstore/ProfileKek.h"
+ #include "nsAppDirectoryServiceDefs.h"
+ #include "nsDirectoryServiceUtils.h"
+ #include "nsEffectiveTLDService.h"
+@@ -1403,6 +1405,19 @@ nsresult CacheFileIOManager::OnProfile() {
+     NS_ENSURE_SUCCESS(rv, rv);
+   }
+ 
++  // encriox's spike: while the profile's keys are locked from startup, every
++  // entry on disk is under a key this session cannot read. Reading an entry
++  // without it truncates the entry, and the index's rebuild deletes what it
++  // cannot read, so the disk cache is not used until the next start: entries
++  // are kept in memory alone, as they are without a cache directory.
++  if (directory && CacheCrypto::IsEnabled() &&
++      mozilla::security::lockstore::ProfileKekLockedAtStartup()) {
++    MOZ_LOG(gCache2Log, LogLevel::Info,
++            ("CacheFileIOManager::OnProfile() - the profile's keys are "
++             "locked; no disk cache this session"));
++    directory = nullptr;
++  }
++
+   // All functions return a clone.
+   ioMan->mCacheDirectory.swap(directory);
+ 
+diff --git a/security/lockstore/ProfileKek.cpp b/security/lockstore/ProfileKek.cpp
+index c776868601..8483e50c20 100644
+--- a/security/lockstore/ProfileKek.cpp
++++ b/security/lockstore/ProfileKek.cpp
+@@ -351,6 +351,14 @@ static nsresult MoveLocalDeksToProfileKek(LockstoreService* aLockstore,
+   return NS_OK;
+ }
+ 
++// Set once, by SyncProfileKekWithEmbedder, on the main thread.
++static bool sLockedAtStartup = false;
++
++bool ProfileKekLockedAtStartup() {
++  MOZ_ASSERT(NS_IsMainThread());
++  return sLockedAtStartup;
++}
++
+ // Keeps the profile KEK under the embedder's secret: unlocks it, or makes it
+ // the first time and moves every DEK under it. Without a secret, a profile KEK
+ // that exists stays locked, and startup carries on: what each store does then
+@@ -398,6 +406,8 @@ static void SyncProfileKekWithEmbedder() {
+       }));
+   memset(secret.BeginWriting(), 0, secret.Length());
+   const double ms = (TimeStamp::Now() - started).ToMilliseconds();
++  sLockedAtStartup = existed && (answer == EmbedderSecret::Withheld ||
++                                 NS_FAILED(rv) || NS_FAILED(dispatchRv));
+ 
+   if (NS_FAILED(dispatchRv)) {
+     MOZ_LOG(sProfileKekLog, LogLevel::Error,
+diff --git a/security/lockstore/ProfileKek.h b/security/lockstore/ProfileKek.h
+index ac9a88a14c..9548190314 100644
+--- a/security/lockstore/ProfileKek.h
++++ b/security/lockstore/ProfileKek.h
+@@ -58,6 +58,14 @@ bool SyncIsSkippable(PrimaryPasswordSync aSync);
+  */
+ bool SyncProfileKekAtStartup();
+ 
++/**
++ * Whether startup left the profile's password KEK locked: it exists, and the
++ * embedder's secret was withheld or did not open it (encriox's spike). No key
++ * under it can be read until it is unlocked. Main-thread only, after
++ * SyncProfileKekAtStartup.
++ */
++bool ProfileKekLockedAtStartup();
++
+ }  // namespace mozilla::security::lockstore
+ 
+ #endif  // mozilla_security_lockstore_ProfileKek_h
+diff --git a/storage/SQLiteEncryption.cpp b/storage/SQLiteEncryption.cpp
+index 7c2c3b11f5..00dbdbb0d4 100644
+--- a/storage/SQLiteEncryption.cpp
++++ b/storage/SQLiteEncryption.cpp
+@@ -13,6 +13,7 @@
+ #include "mozilla/StaticPrefs_security.h"
+ #include "mozilla/SyncRunnable.h"
+ #include "mozilla/dom/quota/IPCStreamCipherStrategy.h"
++#include "mozilla/security/lockstore/ProfileKek.h"
+ #include "mozilla/security/lockstore/lockstore_ffi_generated.h"
+ #include "ScopedNSSTypes.h"
+ #include "nsAppDirectoryServiceDefs.h"
+@@ -40,7 +41,9 @@ namespace {
+ using mozilla::security::lockstore::keystore_close;
+ using mozilla::security::lockstore::keystore_create_dek;
+ using mozilla::security::lockstore::keystore_create_kek;
+-using mozilla::security::lockstore::keystore_get_dek;
++using mozilla::security::lockstore::keystore_dek_exists;
++using mozilla::security::lockstore::keystore_get_dek_automatic;
++using mozilla::security::lockstore::keystore_kek_exists;
+ using mozilla::security::lockstore::keystore_open;
+ using mozilla::security::lockstore::KeystoreHandle;
+ 
+@@ -433,16 +436,26 @@ nsresult GetEncryptionKey(const nsACString& aDatabasePath, OpenIntent aIntent,
+       MOZ_LOG(GetSQLiteEncryptionLog(), LogLevel::Info, ("Lockstore opened"));
+     }
+ 
+-    // Every SQLite DEK is wrapped under one well-known, deterministic
+-    // LocalKey. create_kek with a fixed identifier is get-or-create: it
+-    // mints lockstore::kek::local:sqlite on first run and recovers it on
+-    // every later run, so we needn't persist the ref ourselves.
++    // The KEK a new database's DEK is minted under. Once an embedder's secret
++    // keeps the profile's keys (security/lockstore/ProfileKek.cpp, encriox's
++    // spike), it is that password KEK, which the startup sync made before any
++    // database here opened. Otherwise every SQLite DEK is wrapped under one
++    // well-known, deterministic LocalKey: create_kek with a fixed identifier
++    // is get-or-create, minting lockstore::kek::local:sqlite on first run and
++    // recovering it on every later run, so we needn't persist the ref.
+     if (sKekRef.IsEmpty()) {
+-      const nsCString kekType("local"_ns);
+-      const nsCString kekId("sqlite"_ns);
+-      const nsCString empty;
+-      rv = keystore_create_kek(sHandle, &kekType, &kekId, &empty,
+-                               /* cache_timeout_ms */ 0, &sKekRef);
++      bool profileKek = false;
++      const nsCString profileKekRef(security::lockstore::kProfilePasswordKek);
++      rv = keystore_kek_exists(sHandle, &profileKekRef, &profileKek);
++      if (NS_SUCCEEDED(rv) && profileKek) {
++        sKekRef = profileKekRef;
++      } else {
++        const nsCString kekType("local"_ns);
++        const nsCString kekId("sqlite"_ns);
++        const nsCString empty;
++        rv = keystore_create_kek(sHandle, &kekType, &kekId, &empty,
++                                 /* cache_timeout_ms */ 0, &sKekRef);
++      }
+       if (NS_FAILED(rv)) {
+         sKekRef.Truncate();
+         MOZ_LOG(GetSQLiteEncryptionLog(), LogLevel::Error,
+@@ -452,8 +465,33 @@ nsresult GetEncryptionKey(const nsACString& aDatabasePath, OpenIntent aIntent,
+       }
+     }
+ 
+-    rv = keystore_get_dek(sHandle, &collection, &sKekRef, &dek);
+-    if (rv == NS_ERROR_NOT_AVAILABLE && aIntent == OpenIntent::CreateIfNew) {
++    // An existing DEK is read under whichever KEK wraps it, not only the one a
++    // new DEK would be minted under: a profile's DEKs move under its password
++    // KEK when an embedder's secret first keeps them. Asked by name, as
++    // before, they could no longer be found, and the cookie store moved its
++    // database aside as corrupt (encriox's spike).
++    bool exists = false;
++    rv = keystore_dek_exists(sHandle, &collection, &exists);
++    if (NS_FAILED(rv)) {
++      MOZ_LOG(GetSQLiteEncryptionLog(), LogLevel::Error,
++              ("dek_exists failed: 0x%" PRIx32, static_cast<uint32_t>(rv)));
++      return rv;
++    }
++    rv = exists ? keystore_get_dek_automatic(sHandle, &collection, &dek)
++                : NS_ERROR_NOT_AVAILABLE;
++    if (exists && rv == NS_ERROR_NOT_AVAILABLE) {
++      // The DEK is there, and every KEK that wraps it is locked: the profile's
++      // secret was not given this session, or was taken back. The database is
++      // kept, and the open fails as obfsvfs fails one it cannot key, with a
++      // code no consumer takes for corruption. NS_ERROR_FAILURE is one the
++      // cookie store answers by moving its database aside.
++      MOZ_LOG(GetSQLiteEncryptionLog(), LogLevel::Warning,
++              ("%s: its key is locked; the open fails and the database is "
++               "kept",
++               collection.get()));
++      return NS_ERROR_FILE_ACCESS_DENIED;
++    }
++    if (!exists && aIntent == OpenIntent::CreateIfNew) {
+       if (sMarkerWriteFailed) {
+         // The EncryptedDatabases marker could not be written, so the launch
+         // guard cannot protect newly-encrypted data; fail closed rather than
+@@ -465,7 +503,7 @@ nsresult GetEncryptionKey(const nsACString& aDatabasePath, OpenIntent aIntent,
+         return NS_ERROR_FAILURE;
+       }
+       // First time we see this new (in-profile) database: mint an extractable
+-      // DEK under the shared KEK. A racing thread may have created it first,
++      // DEK under sKekRef. A racing thread may have created it first,
+       // in which case create_dek reports the duplicate as NS_ERROR_FAILURE --
+       // benign; the get_dek below is the arbiter. LoadExisting never mints a
+       // key: a missing DEK for an existing database is a hard error (handled
+@@ -478,7 +516,15 @@ nsresult GetEncryptionKey(const nsACString& aDatabasePath, OpenIntent aIntent,
+                 ("create_dek returned 0x%" PRIx32 "; re-reading",
+                  static_cast<uint32_t>(crv)));
+       }
+-      rv = keystore_get_dek(sHandle, &collection, &sKekRef, &dek);
++      rv = keystore_get_dek_automatic(sHandle, &collection, &dek);
++      if (crv == NS_ERROR_NOT_AVAILABLE && rv == NS_ERROR_NOT_AVAILABLE) {
++        // The KEK a new DEK goes under is locked, so none could be minted.
++        MOZ_LOG(GetSQLiteEncryptionLog(), LogLevel::Warning,
++                ("%s: the KEK a new database's key goes under is locked; "
++                 "the open fails",
++                 collection.get()));
++        return NS_ERROR_FILE_ACCESS_DENIED;
++      }
+     }
+     if (NS_FAILED(rv)) {
+       // For an existing in-profile database NS_ERROR_NOT_AVAILABLE is the exact
+-- 
+2.47.3
+
