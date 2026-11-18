@@ -1,0 +1,65 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jeremy Melanson <1080872+zish@users.noreply.github.com>
+Date: Wed, 18 Nov 2026 05:14:57 +0000
+Subject: [PATCH] feat: let a default pref turn SQLite encryption on, for
+ encriox's spike
+
+all.js locked security.storage.encryption.sqlite.enabled off, so the
+default prefs a GeckoView embedder gives, MOZ_DEFAULT_PREFS, could not
+turn it on (encri-firefox W12). Unlocked, the value is the YAML's,
+false, until an embedder's default replaces it when Preferences
+starts. As the YAML says, it goes on over a fresh profile only.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+---
+ modules/libpref/init/StaticPrefList.yaml | 2 ++
+ modules/libpref/init/all.js              | 7 -------
+ tools/lint/libpref/__init__.py           | 1 -
+ 3 files changed, 2 insertions(+), 8 deletions(-)
+
+diff --git a/modules/libpref/init/StaticPrefList.yaml b/modules/libpref/init/StaticPrefList.yaml
+index 17f9237d1f..4b561a66c1 100644
+--- a/modules/libpref/init/StaticPrefList.yaml
++++ b/modules/libpref/init/StaticPrefList.yaml
+@@ -19783,6 +19783,8 @@
+ # via obfsvfs; enabling without the rest of the key-management stack will
+ # corrupt profiles by reopening existing unencrypted databases expecting
+ # ciphertext. Read at Connection::initialize, not hot-reloadable.
++# Not locked in encriox's spike (encri-firefox W13), so that the default prefs
++# a GeckoView embedder gives can turn it on, over a fresh profile only.
+ - name: security.storage.encryption.sqlite.enabled
+   type: RelaxedAtomicBool
+   value: false
+diff --git a/modules/libpref/init/all.js b/modules/libpref/init/all.js
+index fe38d0281a..7910c42e94 100644
+--- a/modules/libpref/init/all.js
++++ b/modules/libpref/init/all.js
+@@ -4006,13 +4006,6 @@ pref("dom.postMessage.sharedArrayBuffer.bypassCOOP_COEP.insecure.enabled", false
+ pref("dom.postMessage.sharedArrayBuffer.bypassCOOP_COEP.insecure.enabled", false, locked);
+ #endif
+ 
+-// Locked so end users cannot toggle SQLite encryption from about:config or
+-// user.js. Enterprise policies (Preferences allowlist) and our keystore
+-// auto-recovery use the unlock/setDefault/relock dance to override.
+-// Defined in StaticPrefList.yaml; locked here because the YAML has no
+-// "locked" attribute.
+-pref("security.storage.encryption.sqlite.enabled", false, locked);
+-
+ // Preferences for the form autofill toolkit component.
+ // The truthy values of "extensions.formautofill.addresses.available"
+ // is "on" and "detect",
+diff --git a/tools/lint/libpref/__init__.py b/tools/lint/libpref/__init__.py
+index b8d255a795..138f77ddc9 100644
+--- a/tools/lint/libpref/__init__.py
++++ b/tools/lint/libpref/__init__.py
+@@ -22,7 +22,6 @@ IGNORE_PREFS = {
+     "dom.postMessage.sharedArrayBuffer.bypassCOOP_COEP.insecure.enabled",  # NOQA: E501; Uses the 'locked' attribute.
+     "extensions.backgroundServiceWorker.enabled",  # NOQA: E501; Uses the 'locked' attribute.
+     "general.smoothScroll",  # Uses the 'sticky` attribute.
+-    "security.storage.encryption.sqlite.enabled",  # NOQA: E501; Uses the 'locked' attribute.
+ }
+ 
+ # A regular expression to match preference names and values from js preference
+-- 
+2.47.3
+

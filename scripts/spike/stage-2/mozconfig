@@ -1,0 +1,17 @@
+# The stage 2 spike's mach configuration (W13): Gecko compiled from this checkout, with stage 2's patches, and Fenix
+# built against that GeckoView rather than the one Mozilla published.
+ac_add_options --enable-project=mobile/android
+ac_add_options --target=aarch64-linux-android
+# Fenix alone of the Android projects, so that Gradle configures nothing else.
+ac_add_options --enable-android-subproject=fenix
+# mach's own SDK, holding what stage 1's README.md lists, so that the suite's SDK, which is encri's toolchain, is left
+# as it is.
+ac_add_options --with-android-sdk=$HOME/.mozbuild/android-sdk-linux
+# Release, as Mozilla's GeckoView for 160 is.
+ac_add_options --enable-update-channel=release
+# A release checkout bootstraps its toolchains, clang, Rust, the NDK and the rest, only when asked. Not android-sdk:
+# the SDK is given above.
+ac_add_options --enable-bootstrap=-android-sdk
+# Without debug information libxul is a fraction of the size, and so is the APK that the A20 takes over Wi-Fi.
+ac_add_options --disable-debug-symbols
+mk_add_options MOZ_OBJDIR=@TOPSRCDIR@/obj-encriox-stage-2

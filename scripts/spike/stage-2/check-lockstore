@@ -37,8 +37,12 @@ marker=$(sed -n 's/^== .*, normal, marker \(ENCRIOX[0-9a-f]*\)$/\1/p' "$work/pla
 
 $adb shell am force-stop $package
 echo "== the profile, after the first session"
-marked=$($adb shell "run-as $package sh -c 'cat files/mozilla/*/compatibility.ini'" | tr -d '\r' |
-    grep '^EncryptedDatabases=' || true)
+$adb shell "run-as $package sh -c 'cat files/mozilla/*/compatibility.ini'" | tr -d '\r' > "$work/compatibility"
+# The Gecko that made the profile, by its build id: the published GeckoView's is in ../stage-1/versions.
+built=$(sed -n 's/^LastVersion=//p' "$work/compatibility")
+[ -n "$built" ] || { echo "check-lockstore: compatibility.ini names no LastVersion" >&2; exit 1; }
+echo "  Gecko: $built"
+marked=$(grep '^EncryptedDatabases=' "$work/compatibility" || true)
 echo "  compatibility.ini: ${marked:-no EncryptedDatabases marker}"
 # Only the first 24 bytes of each file are read, on the phone: the whole profile took more than ten minutes over the
 # A20's Wi-Fi (2026-11-18).

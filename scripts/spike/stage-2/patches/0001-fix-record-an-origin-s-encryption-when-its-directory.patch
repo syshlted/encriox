@@ -1,0 +1,62 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jeremy Melanson <1080872+zish@users.noreply.github.com>
+Date: Wed, 18 Nov 2026 05:14:23 +0000
+Subject: [PATCH] fix: record an origin's encryption when its directory is made
+
+QuotaManager can initialize a temporary origin without its directory,
+and makes the directory when a client first asks for it. It then wrote
+the origin's .metadata-v2 and its cached record from the client's
+OriginMetadata, which need not carry the origin's encryption, though
+the OriginInfo did. With dom.quotaManager.encryption.enabled on, an
+origin whose data was encrypted was recorded as plaintext, and the
+next session opened its databases without their key: on two of three
+phones, the next start could not read the site's local storage,
+IndexedDB or Cache API (encri-firefox W12). The encrypted state is now
+taken from the OriginInfo with the rest of the origin's state.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+---
+ dom/quota/ActorsParent.cpp | 14 +++++++++++---
+ 1 file changed, 11 insertions(+), 3 deletions(-)
+
+diff --git a/dom/quota/ActorsParent.cpp b/dom/quota/ActorsParent.cpp
+index 71bdcaaa09..c53a115c25 100644
+--- a/dom/quota/ActorsParent.cpp
++++ b/dom/quota/ActorsParent.cpp
+@@ -3789,22 +3789,30 @@ QuotaManager::GetOrCreateTemporaryOriginDirectory(
+     // respective origin directory. So OriginInfo already exists and it needs
+     // to be updated because the origin directory has been just created.
+ 
+-    auto [timestamp, maintenanceDate, accessed, persisted, dirty] =
++    auto [timestamp, maintenanceDate, accessed, persisted, dirty, encrypted] =
+         WithOriginInfo(aOriginMetadata, [](const auto& originInfo) {
+           const int64_t timestamp = originInfo->LockedAccessTime();
+           const int32_t maintenanceDate = originInfo->LockedMaintenanceDate();
+           const bool accessed = originInfo->LockedAccessed();
+           const bool persisted = originInfo->LockedPersisted();
+           const bool dirty = originInfo->LockedDirty();
++          const bool encrypted = originInfo->IsEncrypted();
+ 
+           originInfo->LockedDirectoryCreated();
+ 
+           return std::make_tuple(timestamp, maintenanceDate, accessed,
+-                                 persisted, dirty);
++                                 persisted, dirty, encrypted);
+         });
+ 
++    // The origin's encryption was settled when its OriginInfo was made, and
++    // the caller's metadata need not carry it. Without it, the origin is
++    // recorded as plaintext over encrypted data, and the next session opens
++    // its databases without their key.
++    OriginMetadata originMetadataWithEncryption = aOriginMetadata;
++    originMetadataWithEncryption.mIsEncrypted = encrypted;
++
+     FullOriginMetadata fullOriginMetadata{
+-        aOriginMetadata,
++        originMetadataWithEncryption,
+         OriginStateMetadata{timestamp, maintenanceDate, accessed, persisted,
+                             dirty},
+         ClientUsageArray(), /* aUsage */ 0, kCurrentQuotaVersion};
+-- 
+2.47.3
+
