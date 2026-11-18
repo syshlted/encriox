@@ -12,7 +12,8 @@ its own, after encriox's spikes (W3, W11). `docs/feasibility-study.md` (2026-11-
 and against encri's own code inside Chromium, and its *Scenario 1* is the design W1 adopted. **Nothing of encriox is
 built yet.** The stage 1 spike, a throwaway, is built and measured on three phones (`scripts/spike/stage-1/`, W4 to W6);
 the stage 2 spike's first round ran on its build, with prefs alone (`scripts/spike/stage-2/`, W12), and stage 2 now
-builds its own Gecko, on which all three of Lockstore's switches work (W13; `ROADMAP.md`).
+builds its own Gecko, on which all three of Lockstore's switches work (W13) and the profile's keys are kept under a
+secret from the vault's key (W14; `ROADMAP.md`).
 
 ## Relationship to the other repositories
 

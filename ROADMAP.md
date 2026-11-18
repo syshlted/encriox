@@ -66,9 +66,15 @@ sources are there, and are not repeated here:
      database encrypted but NSS's and Lockstore's own, the origin recorded encrypted, everything read back at the next
      start, and the marker only in Fenix's saved tabs and history and in `serviceworker.txt`. The next two rounds
      build on it.
-   - **A key-encryption key from the vault**: the profile's keys moved under a password key whose secret comes from
+   - ~~**A key-encryption key from the vault**: the profile's keys moved under a password key whose secret comes from
      `.encriox.key`, and locked at the vault's lock. Does the profile open a second time, and what does each store do
-     when that key is locked at start or mid-session? Razing is the failure to look for.
+     when that key is locked at start or mid-session? Razing is the failure to look for.~~ **Done 2026-11-18 (W14)**,
+     `scripts/spike/stage-2/check-kek`, with five more patches. Gecko asks the app at startup for a secret, an HMAC of
+     the spike's key in the vault, keeps every key of the profile under it, and each store follows its key there and
+     keeps a locked one. On the S9 and the A20 the profile opened again with all six stores and no key in the clear; a
+     start without the secret razed nothing; a lock mid-session stopped only what needed a new key. Without the
+     stores' patch, the move razed the cookie store and the HTTP cache; and Lockstore's write-ahead log kept the moved
+     keys' old LocalKeys, `kek_bytes` and all, until patch 9.
    - **What `obfsvfs` costs** against plain SQLite.
 5. **Ask Mozilla before carrying a patch**: an embedder-supplied KEK in GeckoView, beside the OS-keystore KEK of bug
    2055641. Who asks, and where, is open. Theirs to know too: Android Components' logins and autofill stores wait on
@@ -76,7 +82,13 @@ sources are there, and are not repeated here:
    `GetOrCreateTemporaryOriginDirectory` records an encrypted origin as plaintext, so that with
    `dom.quotaManager.encryption.enabled` on, the next start cannot read site storage (W12), which stage 2's patch 0001
    fixes (W13); and Gecko's launch guard reads the SQLite switch before any pref is loaded, so that a profile a pref
-   encrypted is refused at its next start (W13).
+   encrypted is refused at its next start (W13). From W14, all measured but the last two, read in the source:
+   Lockstore's stores ask for their keys under the KEK they made them under, by name, so that keys moved under a
+   password KEK cannot be found, and the cookie store moves its database aside and the HTTP cache replaces its key
+   (stage 2's patch 0007); Lockstore answers a locked key and a missing one with the same error; `secure_delete` leaves
+   a deleted key in Lockstore's write-ahead log (patch 0009); Mozilla's own adoption of a primary password moves the
+   HTTP cache's key the same way, and its prompt cannot work on GeckoView, whose `promptPassword` calls a method that
+   does not exist.
 
 ## Before the first release
 

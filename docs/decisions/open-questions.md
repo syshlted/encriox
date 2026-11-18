@@ -39,7 +39,16 @@ The first four were the study's *Open questions*, moved here when W1 was recorde
 - **Lock behaviour.** On `STATE_LOCKED`, does the browser close outright, or keep running tabs in memory with
   persistence paused? Closing is the conservative answer. The logins' and the cards' stores keep the keys they were
   given until the process ends, so a browser that keeps running after a lock keeps those keys in memory too; the
-  spike wipes only its own key at a lock (W6).
+  spike wipes only its own key at a lock (W6). Gecko's do the same: with the profile's KEK locked mid-session, the
+  cookie store's database and the HTTP cache's key, held since the start, went on writing, and only what needed a new
+  key failed (W14). Locking the KEK is not locking what Gecko has open.
+- **Starting Gecko with the vault locked** (W14, flag 2). The spike starts Gecko with the profile's keys locked when
+  the vault is locked or does not answer in 10 seconds: cookies and permissions are kept in memory alone, sites'
+  storage cannot be used, and nothing is razed. Should encriox start Gecko at all then, or wait for the vault, or ask
+  for it first? A profile made before the vault first opens is in the clear until it is given the secret (W14).
+- **A secret that does not open the profile's KEK**, as a replaced `encriox.key` would give: every key of the profile
+  is out of reach for good. Gecko logs it and starts locked, keeping everything (read in the source; unmeasured).
+  Whether encriox then starts a new profile, and what it tells the user, is open.
 - ~~**The name and the package** (W1). The name cannot contain "Firefox" (`AGENTS.md`, hard constraint 3).~~ The name
   is encriox (W3), and the package `com.systemhalted.encriox` (W8), permanent from the first build a user installs.
 - ~~**The branch for stage 2**, release or ESR (W1). It is picked before stage 2 starts.~~ Release (W7). Lockstore and
@@ -71,7 +80,10 @@ The first four were the study's *Open questions*, moved here when W1 was recorde
   Gecko's normal HTTP cache, the tiles in `moz_ads.sqlite` too, and the normal cookie jar's WAL changed, none of it
   holding the page's marker (W6).
 - **For encri: a vault with no folders can only be allowed whole** (W4), and encri cannot make a folder itself.
-- **A key-encryption key from the vault without a Gecko build.** At 160 GeckoView has no Java API for Lockstore, and
+- ~~**A key-encryption key from the vault without a Gecko build.**~~ No (W14): an extension runs only once Gecko is up,
+  after the profile's databases have opened, and at 160 SQLite and the HTTP cache ask for their keys under their own
+  LocalKeys by name, so keys moved under a password KEK cannot be found. Stage 2's Gecko takes the secret at startup
+  instead. The question as it was: at 160 GeckoView has no Java API for Lockstore, and
   Lockstore's key-encryption keys are `local`, kept in the profile, `pkcs11`, or `password`. But `nsILockstore` is
   scriptable (`@mozilla.org/security/lockstore;1`), and GeckoView counts a built-in extension as privileged, which
   lets it declare `experiment_apis`, privileged script (`Extension.getIsPrivileged`). So a built-in extension of

@@ -10,7 +10,9 @@ paths:
 the patches in `patches/` on top, and the scripts that fetch, build and measure it on the phones (W1, W4). It is a
 throwaway, and nothing it builds ships. Its `README.md` says how to build it and run it. `scripts/spike/stage-2/` runs
 stage 1's app with Lockstore's switches on, and checks what they cover and whether a profile opens again (W12). It
-builds its own Gecko, from stage 1's checkout with `patches/` of its own on top, on the drive for large builds (W13).
+builds its own Gecko, from stage 1's checkout with `patches/` of its own on top, on the drive for large builds (W13),
+in which the profile's keys are kept under a secret from the vault's key, and checks what each store does when that
+key is locked (W14).
 `LICENSE` is here too until a build of encriox itself has a brief. This brief is level 1; full records are in
 `docs/decisions/`.
 
@@ -44,6 +46,16 @@ builds its own Gecko, from stage 1's checkout with `patches/` of its own on top,
 - **Stage 2's build encrypts every profile unless its config says otherwise** (W13, flag 1), and stage 1's scripts run
   with stage 1's config. After a round of stage 2, each phone gets a fresh profile, stage 1's APK and stage 1's config
   again (W13, flag 3).
+- **A key that is there and locked is kept, never replaced** (W14). A store reads its key under whichever KEK wraps
+  it; one it cannot unwrap because the KEK is locked fails its open as access denied, which no consumer takes for
+  corruption. Lockstore reports a locked key and a missing one alike, so a store tells them apart by asking whether
+  the key exists. Deleting a key truncates Lockstore's write-ahead log, or the key is still on disk.
+- **Stage 2's Gecko waits at startup for the app's answer**, on Gecko's own thread: the secret, an HMAC of the vault's
+  key, or nothing (W14, flag 2). The app's main thread is never held, because encri-client's binding answers there.
+  The gate's `kek` setting is read by the next start, and the gate's own start may already have read the old one: set
+  it, then stop the app, before a fresh profile or a measured start.
+- **Never lock a test vault to measure a lock.** The gate's `--ez drop true` drops the vault's key from memory as a
+  lock does (W14, flag 5).
 - **Measure from the phone's own loopback**, never over Wi-Fi: the A20's link ran at 0.4 MB/s (W4, *Rejected*).
 - **A script fails loudly.** A step that did not happen stops the run with a message; it never leaves a line out of
   the results or carries on under the wrong label.
@@ -98,6 +110,21 @@ builds its own Gecko, from stage 1's checkout with `patches/` of its own on top,
 - Copying the whole profile off the A20 over Wi-Fi took more than ten minutes, so `check-lockstore` reads each file's
   first 24 bytes on the phone. The G6's toybox `dd` refuses `conv=notrunc`, so a byte is changed by writing the whole
   file through `run-as … sh -c 'cat > …'`.
+- **Lockstore's stores asked for their keys under the KEK they made them under, by name** (W14). Moved under the
+  profile's password KEK, they could not be found: every SQLite open failed, the cookie store moved `cookies.sqlite`
+  aside as corrupt, and the HTTP cache deleted its key and made one again under a LocalKey. Stage 2's patch 0007.
+- **The cookie store moves its database aside for any open failure** but `NS_ERROR_FILE_ACCESS_DENIED` and a full
+  disk, and Lockstore's `NS_ERROR_NOT_AVAILABLE` reaches it as `NS_ERROR_FAILURE`. The HTTP cache, with no key, would
+  truncate an entry it reads and its index rebuild deletes one: a locked session leaves the disk cache alone (W14).
+- **A deleted LocalKey stayed in `lockstore.keys.sqlite-wal`**, `kek_bytes` and all, 83 copies on the S9, though the
+  database held none: SQLite's log keeps each page as it was written (W14, patch 0009). `check-kek` scans both files.
+- **A start of the gate starts Gecko**, which asks for the secret before the gate has set `kek`. On the A20 it also met
+  the profile stage 1's build had left, which Gecko's launch guard refused, and Fenix died of the shut-down runtime: a
+  fresh profile comes before the first start (W14).
+- A GeckoResult answers on the thread that asked, and a thread with no Looper cannot ask: the app follows the vault's
+  key on the main thread (patch 0006).
+- After an install of the 239 MB APK, the A20 answered slowly for some minutes: the vault in 9.7 s, near the app's 10 s
+  limit, and a page did not open in two minutes, where the run before had taken 1.8 s and opened every page (W14).
 
 ## Measured, not assumed
 
@@ -128,6 +155,14 @@ builds its own Gecko, from stage 1's checkout with `patches/` of its own on top,
   profile encrypted but NSS's `cert9.db` and `key4.db` and Lockstore's `lockstore.keys.sqlite`; the test origin
   recorded `0x17`, `0x17` and `0x13`; all six stores read back at the next start; and the marker in 4 files, Fenix's
   saved tabs, its history and the history's WAL, and `serviceworker.txt`.
+- **The vault's key keeps the profile's keys** with stage 2's patches 5 to 9 (W14), on the S9 and the A20: the profile
+  opened again with all six stores and no key under a LocalKey; started without the secret, it read only the service
+  worker, kept every file and key, and read all six back at the next start with it; locked mid-session, a new origin's
+  cookie and HTTP cache entry were written and kept, and its site storage failed; the vault's key dropped and read again
+  locked and unlocked Gecko's keys through the app. A profile made without the secret was moved under it at the next
+  start, in 326–396 ms on the S9 and 757 ms on the A20, leaving no LocalKey in Lockstore's database or its log. Gecko
+  waited for the vault's answer 0.64–0.71 s on the S9 and 1.7–1.8 s on the A20, and the PBKDF2 unlock took 250–270 ms
+  and 530–630 ms. On the G6, its vault locked, the app knew so after 1.9 s and the profile was made in the clear.
 - **Stage 2's first Gecko build took 76 minutes**, 69 of them `mach build` at 86% of 8 cores, and a change to one pref
   8½. Its objdir holds 11 GB and its mach state 6.6 GB, on the drive for large builds; the checkout's clone took 14
   minutes, for 5.9 GB (W13).
@@ -143,6 +178,7 @@ builds its own Gecko, from stage 1's checkout with `patches/` of its own on top,
 | W6 | The browser's own key in the vault, sealing the logins' and the cards' keys; private thumbnails in memory |
 | W12 | Stage 2's first round: what Lockstore's switches do at 160, and a fresh profile for each run (flag 1) |
 | W13 | Stage 2's own Gecko: QuotaManager fixed, SQLite on by default, its toolchain, and the phones back on stage 1 |
+| W14 | Stage 2's second round: the profile's keys under the vault's key, the stores following it, and what a lock does |
 | encri-api L11, L12 | `write` saves only a finished writer; a writer's failure is told encri's reason |
 | encri D120, D145 | A grant is keyed on the package for good |
 
@@ -155,8 +191,8 @@ builds its own Gecko, from stage 1's checkout with `patches/` of its own on top,
   memory at a lock.
 - Patch 0010's locked path, on the G6 once its owner has unlocked it (`ROADMAP.md`).
 - A stopped download into the vault shows as failed, a cancelled one too (W5, flag 2).
-- Stage 2's next two rounds, a key from the vault and what `obfsvfs` costs, on stage 2's Gecko (W13), and W13's three
-  flags.
+- Stage 2's third round, what `obfsvfs` costs, on stage 2's Gecko (W13); W13's three flags and W14's five.
+- A lock of the vault itself reaching Gecko's keys, which the gate's `drop` stands in for (W14, flag 5).
 
 ## Read next
 

@@ -4,6 +4,32 @@ What happened, newest first. Why is in `docs/decisions/`, and what is next is in
 
 ## Unreleased
 
+### Stage 2's second round: the vault's key keeps the profile's keys (2026-11-18)
+
+At the user's word, stage 2 keeps every key of Gecko's profile under a password KEK whose secret is an HMAC of the
+spike's key in the vault (`scripts/spike/stage-2/`, W14). At 160 nothing lets an app give Gecko such a secret before
+the profile opens, so stage 2's Gecko asks the app for it at startup, on Gecko's own thread, and the app opens the
+vault to answer, or answers with nothing when the vault is locked. **Moving the keys under the secret razed two
+stores** at the next start, measured on the S9: each of Lockstore's stores asked for its key by the name of the
+LocalKey it had made it under, so the cookie store moved its database aside as corrupt and the HTTP cache replaced its
+key. A patch has each store follow its key, and keep a locked one rather than replace it.
+
+With it, on the S9 and the A20, **the profile opens again with all six stores, and no key is kept in the clear. A
+start without the secret razes nothing**: cookies and permissions run in memory, sites' storage and the disk cache are
+not used, and every store reads back at the next start with it. **A lock mid-session stops only what needs a new
+key**: the cookie store and the HTTP cache, which hold theirs, went on writing. The app locks and unlocks Gecko's keys
+as the vault's key is dropped and read again. On the G6, whose vault stays locked, the profile was made in the clear,
+so Gecko must not make a profile before the vault first opens.
+
+**Found and fixed: a moved key stayed on disk.** A profile made without the secret had its keys moved under it at the
+next start, and their LocalKeys deleted. The S9's Lockstore log still held 83 copies of those LocalKeys, raw keys and
+all, which read every database. Lockstore now truncates its write-ahead log when it deletes a key, and none was left.
+Gecko waits 0.7 s for the vault on the S9 and 1.7–1.8 s on the A20, and spends 250–270 ms and 530–630 ms unlocking
+the KEK, at every start. Mozilla should know four things more (`ROADMAP.md`, item 5). Five points are flagged for veto.
+
+`check-kek` makes a fresh profile and wakes the phone before its first start, and sets the gate's `kek` before a
+fresh profile: the gate's own start had met stage 1's profile on the A20, and taken the old setting on the S9.
+
 ### Stage 2 builds its own Gecko (2026-11-18)
 
 At the user's word, stage 2 compiles Gecko from stage 1's checkout, on the drive for large builds, with four patches of
