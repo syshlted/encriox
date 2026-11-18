@@ -153,8 +153,11 @@ KEYS
 
 
 echo "== $serial: 1. the secret given at both starts"
+# Before the gate, whose start starts Gecko: on a profile stage 1's build made, the launch guard stops it (W13).
+"$here/fresh-profile" "$serial"
 gate "kek withheld=false" 30 --es kek give
 ok=yes
+wake
 "$here/check-lockstore" "$serial" > "$work/lockstore" 2>&1 || ok=
 cat "$work/lockstore"
 [ -n "$ok" ] || { echo "check-kek: check-lockstore failed" >&2; exit 1; }
