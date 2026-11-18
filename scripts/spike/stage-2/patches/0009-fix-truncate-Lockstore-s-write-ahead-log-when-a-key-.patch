@@ -1,0 +1,103 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jeremy Melanson <1080872+zish@users.noreply.github.com>
+Date: Wed, 18 Nov 2026 22:12:00 +0000
+Subject: [PATCH] fix: truncate Lockstore's write-ahead log when a key is
+ deleted
+
+secure_delete zeroed a record and deleted it in the database, and its
+comment allowed that the bytes "may persist on disk until the relevant
+WAL pages are checkpointed and overwritten". They did: after a profile
+made under LocalKeys had its keys moved under the profile's password
+KEK, and the LocalKeys deleted (encri-firefox, stage 2's second round),
+the S9's lockstore.keys.sqlite-wal held 83 copies of their records,
+kek_bytes and all, beside the DEKs they wrapped. Moving a profile under
+a secret left it readable without one.
+
+secure_delete now checkpoints the log into the database and truncates
+it, through a maintenance task on skv's writer connection, and fails if
+a reader kept the log from being reset. skv's secure_delete pragma
+already zeroes the database's freed cells.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+---
+ security/lockstore/lockstore_rs/Cargo.toml    |  2 +
+ security/lockstore/lockstore_rs/src/crypto.rs | 40 ++++++++++++++++++-
+ 2 files changed, 40 insertions(+), 2 deletions(-)
+
+diff --git a/security/lockstore/lockstore_rs/Cargo.toml b/security/lockstore/lockstore_rs/Cargo.toml
+index e0efb3246f..2d017f0422 100644
+--- a/security/lockstore/lockstore_rs/Cargo.toml
++++ b/security/lockstore/lockstore_rs/Cargo.toml
+@@ -8,6 +8,8 @@ rust-version.workspace = true
+ base64 = "0.21"
+ kvstore = { path = "../../../toolkit/components/kvstore" }
+ nss-rs = { git = "https://github.com/mozilla/nss-rs", version = "0.16", default-features = false }
++# skv's own, for a maintenance task on its connection (crypto::truncate_wal).
++rusqlite = "0.31"
+ serde = "1"
+ serde_json = { version = "1", features = ["float_roundtrip"] }
+ thiserror = "1"
+diff --git a/security/lockstore/lockstore_rs/src/crypto.rs b/security/lockstore/lockstore_rs/src/crypto.rs
+index f2d5fe07b0..854f072e35 100644
+--- a/security/lockstore/lockstore_rs/src/crypto.rs
++++ b/security/lockstore/lockstore_rs/src/crypto.rs
+@@ -3,6 +3,7 @@
+  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+ 
+ use crate::LockstoreError;
++use kvstore::skv::connection::ConnectionMaintenanceTask;
+ use kvstore::{Database, GetOptions, Key, Store};
+ use nss_rs::aead::{Aead, AeadAlgorithms, Mode};
+ use nss_rs::p11;
+@@ -258,11 +259,46 @@ pub fn zeroize_on_disk(store: &Store, db_name: &str, key_name: &str) -> Result<(
+     Ok(())
+ }
+ 
+-/// Overwrites a stored value with zeros, then deletes the entry.
++/// Overwrites a stored value with zeros, then deletes the entry, then
++/// checkpoints and truncates the write-ahead log, which still holds the
++/// value as it was written (`truncate_wal`).
+ pub fn secure_delete(store: &Store, db_name: &str, key_name: &str) -> Result<(), LockstoreError> {
+     zeroize_on_disk(store, db_name, key_name)?;
+     let db = Database::new(store, db_name);
+     let key = Key::from(key_name);
+     db.delete(&key)?;
+-    Ok(())
++    truncate_wal(store)
++}
++
++/// Checkpoints the store's write-ahead log into the database, and truncates
++/// the log. The log keeps each page as it was written until SQLite writes
++/// over it, so a value zeroed and deleted in the database is still on disk
++/// there: in encriox's spike (encri-firefox, stage 2), after a profile's
++/// LocalKeys were moved under its password KEK and deleted, the S9's
++/// `lockstore.keys.sqlite-wal` held 83 copies of their records, `kek_bytes`
++/// and all. The database's own freed cells are zeroed by skv's
++/// `secure_delete` pragma.
++pub fn truncate_wal(store: &Store) -> Result<(), LockstoreError> {
++    store.writer()?.maintenance(TruncateWal)
++}
++
++struct TruncateWal;
++
++impl ConnectionMaintenanceTask for TruncateWal {
++    type Error = LockstoreError;
++
++    fn run(self, conn: &mut rusqlite::Connection) -> Result<(), Self::Error> {
++        // A row of (busy, frames in the log, frames checkpointed). Busy means
++        // a reader kept the log from being reset, and it still holds what was
++        // deleted.
++        let busy: i64 = conn
++            .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| row.get(0))
++            .map_err(|e| LockstoreError::LockingFailure(format!("WAL checkpoint failed: {e}")))?;
++        if busy != 0 {
++            return Err(LockstoreError::LockingFailure(
++                "a reader kept the WAL from being truncated; it still holds what was deleted".into(),
++            ));
++        }
++        Ok(())
++    }
+ }
+-- 
+2.47.3
+

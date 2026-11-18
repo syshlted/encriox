@@ -17,6 +17,9 @@
 #    Gecko's keys, and a third origin's site storage fails; then the gate reads the key again, the app must unlock
 #    them, and a fourth origin's site storage is written, and read back at the next start. The third and the fourth
 #    are 127.0.0.1 on other ports: site storage is the origin's, port and all, but a cookie is the host's.
+# 6. A profile made while the secret is withheld, its keys under LocalKeys, then given it: the next start must move
+#    every key under the secret, read all six stores back, and leave no LocalKey's record on disk, in the database or
+#    in its write-ahead log.
 #
 # The phone's vault must be open to the spike, which `check-plaintext` does not ask. The gate is left giving the
 # secret.
@@ -167,6 +170,20 @@ for kek, names in sorted(by_kek.items()):
           + (" ..." if len(names) > 4 else ""))
 local = sorted(n for n, (w, _) in deks.items() if any(k.startswith("lockstore::kek::local:") for k in w))
 print(f"  keys under a LocalKey, readable without the secret: {len(local)}")
+# A LocalKey's record, as skv keeps it: JSONB of a base64 string of {"kek_bytes": ...}. SQLite's write-ahead log keeps
+# a page as it was written until it writes over it, so a record deleted in the database can still be in the log.
+import os, re
+for part in (path, path + "-wal"):
+    if not os.path.exists(part):
+        continue
+    body, records = open(part, "rb").read(), 0
+    for m in re.finditer(rb"[A-Za-z0-9+/]{40,}={0,2}", body):
+        try:
+            rec = json.loads(base64.b64decode(m.group()))
+        except Exception:
+            continue
+        records += isinstance(rec, dict) and "kek_bytes" in rec
+    print(f"  LocalKey records in {os.path.basename(part)}, {len(body)} bytes: {records}")
 KEYS
 }
 
@@ -254,3 +271,24 @@ page /read "$m4" 127.0.0.1 6 8645
 $adb shell am force-stop $package
 echo "== the key store at the end"
 keystore "$work/keys-5"
+
+echo "== 6. a profile made while the secret is withheld, then given it"
+m5="ENCRIOX$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')"
+# Set before the fresh profile: the gate's own start asks for the secret before the gate has set `kek`, and on the S9
+# it was given, and made the new profile under it.
+gate "kek withheld=true" 30 --es kek withhold
+"$here/fresh-profile" "$serial"
+page / "$m5" 127.0.0.1 8
+$adb shell input keyevent KEYCODE_HOME
+sleep "${SETTLE:-60}"
+$adb shell am force-stop $package
+echo "  the key store, made without the secret:"
+keystore "$work/keys-6a"
+gate "kek withheld=false" 30 --es kek give
+$adb shell am force-stop $package
+page /read "$m5" 127.0.0.1 6
+applog | grep -E 'profile ' | sed 's/^/    /' || true
+geckolog 4
+$adb shell am force-stop $package
+echo "  the key store, given the secret:"
+keystore "$work/keys-6b"
