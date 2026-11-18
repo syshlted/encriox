@@ -13,12 +13,11 @@ set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 firefox=$(cd "${1:?usage: build <firefox checkout> [<encri-api checkout>]}" && pwd)
 encri_api=$(cd "${2:-$here/../../../../encri-api}" && pwd)
-. "$here/../stage-1/versions"
 
 export MOZCONFIG="$here/mozconfig"
 export MOZBUILD_STATE_PATH="${MOZBUILD_STATE_PATH:-$(dirname "$firefox")/mozbuild}"
-# Stage 1's JDK, SDK and bundletool, under ~/.mozbuild (../stage-1/README.md).
-export JAVA_HOME="$HOME/.mozbuild/jdk/$MOZ_JDK"
+# Stage 1's SDK and bundletool, under ~/.mozbuild (../stage-1/README.md). The JDK is not stage 1's: configure
+# bootstraps its own into mach's state, the same release, and uses that whatever JAVA_HOME says.
 export ANDROID_HOME="$HOME/.mozbuild/android-sdk-linux"
 export ANDROID_BUNDLETOOL_PATH="$HOME/.mozbuild/bundletool.jar"
 

@@ -9,12 +9,15 @@ of stage 1's:
 
 - QuotaManager records an origin's encryption when it makes the origin's directory, which at 160 it can record as
   plaintext, so that the next start cannot read the site's storage (W12);
-- the SQLite switch is no longer locked off, so the config can turn it on.
+- the SQLite switch is no longer locked off, and is on by default: Gecko's launch guard reads it before any pref is
+  loaded, so a profile the config encrypted was refused at its next start (W13).
 
 ## Building
 
-On the drive for large builds (W7). The checkout's objdir and mach's state, with the toolchains it bootstraps, go
-beside it there; the JDK, SDK and bundletool are stage 1's, under `~/.mozbuild` (`../stage-1/README.md`).
+On the drive for large builds (W7). The checkout's objdir and mach's state go beside it there, with the toolchains
+mach bootstraps: clang, the NDK, a sysroot and a JDK, the same release as stage 1's. Rust, which mach bootstraps only
+in Mozilla's automation, is the toolchain Mozilla's CI builds Android with, `linux64-rust-android`, which `build`
+fetches into the same state. The SDK and bundletool are stage 1's, under `~/.mozbuild` (`../stage-1/README.md`).
 
 ```sh
 scripts/spike/stage-2/fetch /home/coder/extra_space/encri-extraspace/firefox
@@ -43,3 +46,6 @@ only with its owner's word. `ADB` works as it does there. No vault needs to be o
   wrote.
 - `fresh-profile <serial>`: deletes the spike's Gecko profile and its cache, and nothing else. A profile's SQLite
   switch is set when it is made, so run it before going back to stage 1's config too.
+
+Stage 2's build encrypts a profile's databases unless a config turns the switch off, and stage 1's config does not
+name it. So stage 1's scripts run against stage 1's build: install its APK again, over a fresh profile, after a round.

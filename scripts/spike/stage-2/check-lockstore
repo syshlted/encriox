@@ -67,6 +67,10 @@ for line in open(sys.argv[1]):
         # data is encrypted and whose flags say not is read at the next start without its key.
         flags = int.from_bytes(head[9:13], "big")
         state = "encrypted" if flags & 0x10 else "plaintext"
+        if "/storage/permanent/" in path:
+            # QuotaManager encrypts best-effort origins only (QuotaManager::IsOriginEncrypted); a persistent one's
+            # databases are the SQLite switch's to encrypt.
+            state += ", as every persistent origin is"
         print(f"  origin    {path.rsplit('/', 1)[0]}: flags 0x{flags:x}, recorded {state}")
         continue
     if not head.startswith(b"SQLite format 3\0") or len(head) < 21:

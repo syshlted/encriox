@@ -37,7 +37,8 @@ files() {
 
 refused() {
     $adb logcat -d | grep -q 'Profile encryption state does not match launching build' &&
-        echo "check-plaintext: Gecko refused the profile, whose databases' encryption is not the config's" >&2
+        echo "check-plaintext: Gecko refused the profile, whose databases' encryption is not the SQLite switch's as" \
+            "its launch guard reads it, the build's default (stage-2/README.md)" >&2
     return 0
 }
 
