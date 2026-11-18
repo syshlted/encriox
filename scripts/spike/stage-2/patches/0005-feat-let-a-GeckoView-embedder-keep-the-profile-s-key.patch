@@ -1,0 +1,461 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jeremy Melanson <1080872+zish@users.noreply.github.com>
+Date: Wed, 18 Nov 2026 20:58:05 +0000
+Subject: [PATCH] feat: let a GeckoView embedder keep the profile's keys under
+ its secret
+
+encriox's spike keeps Lockstore's keys under a key from its vault, in
+place of a primary password (encri-firefox, stage 2's second round).
+GeckoRuntimeSettings takes a ProfileSecretDelegate, which Gecko asks at
+startup, ahead of profile-do-change, on its own thread: a JNI call from
+SyncProfileKekAtStartup, so the app's main thread is never held. The
+secret unlocks the profile's password KEK, or makes it the first time,
+and every DEK still under a LocalKey is moved under it and the LocalKey
+dropped. Without a secret, a KEK that exists stays locked and startup
+carries on, so that what each store then does can be measured. Nothing
+here refuses startup or deletes a key.
+
+The secret does not go through the environment or the extras, which
+GeckoView copies into every child process, and Gecko wipes the Java
+copy once it has its own. GeckoRuntime.lockProfile and unlockProfile
+lock and unlock the KEK mid-session, through privileged JS.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+---
+ .../org/mozilla/geckoview/GeckoRuntime.java   |  77 +++++++++
+ .../geckoview/GeckoRuntimeSettings.java       |  27 +++
+ .../geckoview/GeckoViewStartup.sys.mjs        |   5 +
+ .../geckoview/GeckoViewLockstore.sys.mjs      |  42 +++++
+ mobile/shared/modules/geckoview/moz.build     |   1 +
+ security/lockstore/ProfileKek.cpp             | 156 ++++++++++++++++++
+ 6 files changed, 308 insertions(+)
+ create mode 100644 mobile/shared/modules/geckoview/GeckoViewLockstore.sys.mjs
+
+diff --git a/mobile/android/geckoview/src/main/java/org/mozilla/geckoview/GeckoRuntime.java b/mobile/android/geckoview/src/main/java/org/mozilla/geckoview/GeckoRuntime.java
+index 0db7b0efdd..56f605a979 100644
+--- a/mobile/android/geckoview/src/main/java/org/mozilla/geckoview/GeckoRuntime.java
++++ b/mobile/android/geckoview/src/main/java/org/mozilla/geckoview/GeckoRuntime.java
+@@ -38,6 +38,7 @@ import java.io.FileNotFoundException;
+ import java.lang.annotation.Retention;
+ import java.lang.annotation.RetentionPolicy;
+ import java.util.ArrayList;
++import java.util.Arrays;
+ import java.util.List;
+ import java.util.Map;
+ import org.mozilla.gecko.Clipboard;
+@@ -296,6 +297,82 @@ public final class GeckoRuntime implements Parcelable {
+     return sRuntime;
+   }
+ 
++  /**
++   * Where Gecko asks for the secret the profile's Lockstore keys are kept under, in place of a
++   * primary password: encriox's spike keeps them under a key from its vault (encri-firefox, stage
++   * 2). Set with {@link GeckoRuntimeSettings.Builder#profileSecretDelegate}.
++   */
++  public interface ProfileSecretDelegate {
++    /**
++     * Called once, at startup, on Gecko's own thread and before the profile's databases open.
++     * Gecko waits for the answer, so this may block until the secret is held; the app's main
++     * thread is not held meanwhile.
++     *
++     * @return The secret, which Gecko wipes once it has a copy; or null to start with the
++     *     profile's keys locked, if they are already kept under a secret.
++     */
++    @AnyThread
++    @Nullable
++    byte[] onProfileSecret();
++  }
++
++  /**
++   * Asks the embedder for the profile's secret: null if it keeps no profile under one, empty if it
++   * has none to give this session.
++   */
++  @WrapForJNI(calledFrom = "gecko")
++  private static @Nullable byte[] takeProfileSecret() {
++    final GeckoRuntime runtime = sRuntime;
++    final ProfileSecretDelegate delegate =
++        runtime == null || runtime.mSettings == null
++            ? null
++            : runtime.mSettings.getProfileSecretDelegate();
++    if (delegate == null) {
++      return null;
++    }
++    try {
++      final byte[] secret = delegate.onProfileSecret();
++      return secret != null ? secret : new byte[0];
++    } catch (final RuntimeException e) {
++      Log.w(LOGTAG, "The profile secret's delegate failed", e);
++      return new byte[0];
++    }
++  }
++
++  @WrapForJNI(calledFrom = "gecko")
++  private static void wipeProfileSecret(final @NonNull byte[] secret) {
++    Arrays.fill(secret, (byte) 0);
++  }
++
++  /**
++   * Locks the profile's Lockstore keys, as encriox's spike does when its vault locks. What Gecko
++   * has already opened keeps its keys; what opens next waits for {@link #unlockProfile}.
++   *
++   * @return A {@link GeckoResult} with whether the profile's keys are still unlocked.
++   */
++  @AnyThread
++  public @NonNull GeckoResult<Boolean> lockProfile() {
++    return EventDispatcher.getInstance().queryBoolean("GeckoView:Lockstore:Lock");
++  }
++
++  /**
++   * Unlocks the profile's Lockstore keys with the secret {@link ProfileSecretDelegate} gives, as
++   * encriox's spike does when its vault opens after Gecko started without it.
++   *
++   * @param secret The secret, which the caller may wipe once this returns.
++   * @return A {@link GeckoResult} with whether the profile's keys are unlocked.
++   */
++  @AnyThread
++  public @NonNull GeckoResult<Boolean> unlockProfile(final @NonNull byte[] secret) {
++    final StringBuilder hex = new StringBuilder(secret.length * 2);
++    for (final byte b : secret) {
++      hex.append(Character.forDigit((b >> 4) & 0xf, 16)).append(Character.forDigit(b & 0xf, 16));
++    }
++    final GeckoBundle bundle = new GeckoBundle(1);
++    bundle.putString("secret", hex.toString());
++    return EventDispatcher.getInstance().queryBoolean("GeckoView:Lockstore:Unlock", bundle);
++  }
++
+   /**
+    * Called by mozilla::dom::ClientOpenWindow to retrieve the window id to use for a
+    * ServiceWorkerClients.openWindow() request.
+diff --git a/mobile/android/geckoview/src/main/java/org/mozilla/geckoview/GeckoRuntimeSettings.java b/mobile/android/geckoview/src/main/java/org/mozilla/geckoview/GeckoRuntimeSettings.java
+index 2c0746bc67..a29f807e13 100644
+--- a/mobile/android/geckoview/src/main/java/org/mozilla/geckoview/GeckoRuntimeSettings.java
++++ b/mobile/android/geckoview/src/main/java/org/mozilla/geckoview/GeckoRuntimeSettings.java
+@@ -495,6 +495,21 @@ public final class GeckoRuntimeSettings extends RuntimeSettings {
+       return this;
+     }
+ 
++    /**
++     * Set where Gecko asks, once at startup, for the secret the profile's Lockstore keys are kept
++     * under (encriox's spike, encri-firefox stage 2). With none, the profile keeps no keys under a
++     * secret of the embedder's.
++     *
++     * @param delegate The {@link GeckoRuntime.ProfileSecretDelegate}, or null for none.
++     * @return The builder instance.
++     */
++    @AnyThread
++    public @NonNull Builder profileSecretDelegate(
++        final @Nullable GeckoRuntime.ProfileSecretDelegate delegate) {
++      getSettings().mProfileSecretDelegate = delegate;
++      return this;
++    }
++
+     /**
+      * Enables GeckoView and Gecko Logging. Logging is on by default. Does not control all logging
+      * in Gecko. Logging done in Java code must be stripped out at build time.
+@@ -859,6 +874,7 @@ public final class GeckoRuntimeSettings extends RuntimeSettings {
+   /* package */ Class<? extends Service> mCrashHandler;
+   /* package */ String[] mRequestedLocales;
+   /* package */ ExperimentDelegate mExperimentDelegate;
++  /* package */ GeckoRuntime.ProfileSecretDelegate mProfileSecretDelegate;
+ 
+   /**
+    * Attach and commit the settings to the given runtime.
+@@ -913,6 +929,7 @@ public final class GeckoRuntimeSettings extends RuntimeSettings {
+     mRequestedLocales = settings.mRequestedLocales;
+     mConfigFilePath = settings.mConfigFilePath;
+     mExperimentDelegate = settings.mExperimentDelegate;
++    mProfileSecretDelegate = settings.mProfileSecretDelegate;
+   }
+ 
+   /* package */ void commit() {
+@@ -1867,6 +1884,16 @@ public final class GeckoRuntimeSettings extends RuntimeSettings {
+     return mExperimentDelegate;
+   }
+ 
++  /**
++   * Get where Gecko asks for the secret the profile's Lockstore keys are kept under, if anywhere.
++   *
++   * @return The {@link GeckoRuntime.ProfileSecretDelegate} set on this runtime.
++   */
++  @AnyThread
++  public @Nullable GeckoRuntime.ProfileSecretDelegate getProfileSecretDelegate() {
++    return mProfileSecretDelegate;
++  }
++
+   /**
+    * Gets whether about:config is enabled or not.
+    *
+diff --git a/mobile/shared/components/geckoview/GeckoViewStartup.sys.mjs b/mobile/shared/components/geckoview/GeckoViewStartup.sys.mjs
+index fb883b8efb..43180aed03 100644
+--- a/mobile/shared/components/geckoview/GeckoViewStartup.sys.mjs
++++ b/mobile/shared/components/geckoview/GeckoViewStartup.sys.mjs
+@@ -181,6 +181,11 @@ export class GeckoViewStartup {
+           ],
+         });
+ 
++        GeckoViewUtils.addLazyGetter(this, "GeckoViewLockstore", {
++          module: "resource://gre/modules/GeckoViewLockstore.sys.mjs",
++          ged: ["GeckoView:Lockstore:Lock", "GeckoView:Lockstore:Unlock"],
++        });
++
+         GeckoViewUtils.addLazyGetter(this, "GeckoViewTrackingDB", {
+           module: "resource://gre/modules/GeckoViewTrackingDB.sys.mjs",
+           ged: [
+diff --git a/mobile/shared/modules/geckoview/GeckoViewLockstore.sys.mjs b/mobile/shared/modules/geckoview/GeckoViewLockstore.sys.mjs
+new file mode 100644
+index 0000000000..57a818794b
+--- /dev/null
++++ b/mobile/shared/modules/geckoview/GeckoViewLockstore.sys.mjs
+@@ -0,0 +1,42 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this file,
++ * You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++import { GeckoViewUtils } from "resource://gre/modules/GeckoViewUtils.sys.mjs";
++
++const { debug } = GeckoViewUtils.initLogging("GeckoViewLockstore");
++
++// The profile KEK an embedder's secret keeps the profile's keys under, made at
++// startup (security/lockstore/ProfileKek.cpp); the primary password's name.
++const PROFILE_KEK = "lockstore::kek::password:profile";
++// Unlocked for the rest of the session; lockstore takes a u64.
++const FOR_THE_SESSION_MS = Number.MAX_SAFE_INTEGER;
++
++// encriox's spike (encri-firefox, stage 2): the embedder locks the profile KEK
++// when its vault locks, and unlocks it when the vault opens again. What Gecko
++// has already opened keeps its keys; only what opens next needs the KEK.
++export const GeckoViewLockstore = {
++  async onEvent(aEvent, aData, aCallback) {
++    debug`onEvent ${aEvent}`;
++    const lockstore = Cc["@mozilla.org/security/lockstore;1"].getService(
++      Ci.nsILockstore
++    );
++    try {
++      switch (aEvent) {
++        case "GeckoView:Lockstore:Lock":
++          await lockstore.lockKek(PROFILE_KEK);
++          break;
++        case "GeckoView:Lockstore:Unlock":
++          await lockstore.unlockKek(
++            PROFILE_KEK,
++            aData.secret,
++            FOR_THE_SESSION_MS
++          );
++          break;
++      }
++      aCallback.onSuccess(lockstore.isKekUnlocked(PROFILE_KEK));
++    } catch (e) {
++      aCallback.onError(`${e}`);
++    }
++  },
++};
+diff --git a/mobile/shared/modules/geckoview/moz.build b/mobile/shared/modules/geckoview/moz.build
+index 296b1c5a4f..e428f3d175 100644
+--- a/mobile/shared/modules/geckoview/moz.build
++++ b/mobile/shared/modules/geckoview/moz.build
+@@ -18,6 +18,7 @@ EXTRA_JS_MODULES += [
+     "GeckoViewContentBlocking.sys.mjs",
+     "GeckoViewIdentityCredential.sys.mjs",
+     "GeckoViewIPProtection.sys.mjs",
++    "GeckoViewLockstore.sys.mjs",
+     "GeckoViewMediaControl.sys.mjs",
+     "GeckoViewModule.sys.mjs",
+     "GeckoViewNavigation.sys.mjs",
+diff --git a/security/lockstore/ProfileKek.cpp b/security/lockstore/ProfileKek.cpp
+index 05162390a1..c776868601 100644
+--- a/security/lockstore/ProfileKek.cpp
++++ b/security/lockstore/ProfileKek.cpp
+@@ -6,9 +6,12 @@
+ 
+ #include "LockstoreService.h"
+ #include "mozilla/Components.h"
++#include "mozilla/Hex.h"
++#include "mozilla/Logging.h"
+ #include "mozilla/Preferences.h"
+ #include "mozilla/RefPtr.h"
+ #include "mozilla/StaticPrefs_security.h"
++#include "mozilla/TimeStamp.h"
+ #include "nsCOMPtr.h"
+ #include "nsComponentManagerUtils.h"
+ #include "nsEmbedCID.h"
+@@ -16,6 +19,7 @@
+ #include "nsIPromptService.h"
+ #include "nsISecretDecoderRing.h"
+ #include "nsIStringBundle.h"
++#include "nsReadableUtils.h"
+ #include "nsServiceManagerUtils.h"
+ #include "nsString.h"
+ #include "nsTArray.h"
+@@ -25,8 +29,14 @@
+ #  include "MacApplicationDelegate.h"
+ #endif
+ 
++#ifdef MOZ_WIDGET_ANDROID
++#  include "mozilla/java/GeckoRuntimeWrappers.h"
++#endif
++
+ namespace mozilla::security::lockstore {
+ 
++static LazyLogModule sProfileKekLog("ProfileKek");
++
+ Maybe<PrimaryPasswordSync> ChoosePrimaryPasswordSync(
+     bool aKekExists, bool aKekUnlocked, FunctionRef<bool()> aTokenHasPassword) {
+   if (aKekExists) {
+@@ -266,8 +276,154 @@ static bool SyncLockstoreWithPrimaryPassword() {
+   }
+ }
+ 
++// What a GeckoView embedder answered when asked for the secret it keeps the
++// profile KEK under.
++enum class EmbedderSecret {
++  // It keeps no profile under a secret of its own.
++  None,
++  // It does, and has none to give this session: for encriox, its vault is
++  // locked, or it was told to withhold it.
++  Withheld,
++  Given,
++};
++
++// encriox's spike (encri-firefox, stage 2): a GeckoView embedder may keep the
++// profile KEK under a secret of its own, as encriox keeps it under a key from
++// its vault, in place of the primary password. GeckoView asks the embedder on
++// this thread, Gecko's, which waits for the answer, so the app's own main
++// thread is never held. The Java copy is wiped once it is copied here as hex,
++// the form lockstore takes a password in.
++static EmbedderSecret TakeEmbedderSecret(nsACString& aHexSecret) {
++#ifdef MOZ_WIDGET_ANDROID
++  auto secret = java::GeckoRuntime::TakeProfileSecret();
++  if (!secret) {
++    return EmbedderSecret::None;
++  }
++  nsTArray<int8_t> bytes = secret->GetElements();
++  java::GeckoRuntime::WipeProfileSecret(secret);
++  if (bytes.IsEmpty()) {
++    return EmbedderSecret::Withheld;
++  }
++  HexEncode(Span(reinterpret_cast<const uint8_t*>(bytes.Elements()),
++                 bytes.Length()),
++            aHexSecret);
++  memset(bytes.Elements(), 0, bytes.Length());
++  return EmbedderSecret::Given;
++#else
++  return EmbedderSecret::None;
++#endif
++}
++
++// Moves every DEK still wrapped under a LocalKey under the profile's password
++// KEK, and drops each LocalKey: a LocalKey's record keeps its key in the clear,
++// beside the DEKs it wraps, so a DEK left under one is readable without the
++// secret. Requires the password KEK unlocked. aMoved counts the wrappings
++// moved.
++static nsresult MoveLocalDeksToProfileKek(LockstoreService* aLockstore,
++                                          uint32_t& aMoved) {
++  aMoved = 0;
++  auto deks = aLockstore->DoListDeks();
++  if (deks.isErr()) {
++    return deks.unwrapErr();
++  }
++  nsTArray<nsCString> locals;
++  for (const auto& dek : deks.inspect()) {
++    auto keks = aLockstore->DoListKeks(dek);
++    if (keks.isErr()) {
++      return keks.unwrapErr();
++    }
++    for (const auto& kek : keks.inspect()) {
++      if (StringBeginsWith(kek, "lockstore::kek::local:"_ns)) {
++        ++aMoved;
++        if (!locals.Contains(kek)) {
++          locals.AppendElement(kek);
++        }
++      }
++    }
++  }
++  for (const auto& local : locals) {
++    nsresult rv = aLockstore->DoMigrateDeks(local, kProfilePasswordKek);
++    NS_ENSURE_SUCCESS(rv, rv);
++    // It wraps nothing now; a record left behind is harmless, so this does not
++    // fail the move.
++    (void)aLockstore->DoDeleteKek(local);
++  }
++  return NS_OK;
++}
++
++// Keeps the profile KEK under the embedder's secret: unlocks it, or makes it
++// the first time and moves every DEK under it. Without a secret, a profile KEK
++// that exists stays locked, and startup carries on: what each store does then
++// is what encriox's spike measures. It never refuses startup, and never deletes
++// a key.
++static void SyncProfileKekWithEmbedder() {
++  nsAutoCString secret;
++  const EmbedderSecret answer = TakeEmbedderSecret(secret);
++  if (answer == EmbedderSecret::None) {
++    return;
++  }
++
++  RefPtr<LockstoreService> lockstore = LockstoreService::GetSingleton();
++  nsCOMPtr<nsISerialEventTarget> queue;
++  if (!lockstore || NS_FAILED(NS_CreateBackgroundTaskQueue(
++                        "LockstoreEmbedder", getter_AddRefs(queue)))) {
++    MOZ_LOG(sProfileKekLog, LogLevel::Error,
++            ("embedder: no lockstore, so the profile KEK is not synced"));
++    memset(secret.BeginWriting(), 0, secret.Length());
++    return;
++  }
++
++  bool existed = false;
++  nsresult rv = NS_OK;
++  uint32_t moved = 0;
++  const TimeStamp started = TimeStamp::Now();
++  nsresult dispatchRv = NS_DispatchAndSpinEventLoopUntilComplete(
++      "LockstoreEmbedder"_ns, queue,
++      NS_NewRunnableFunction("LockstoreEmbedder", [&] {
++        existed = KekExists(lockstore, kProfilePasswordKek);
++        if (answer == EmbedderSecret::Withheld) {
++          return;
++        }
++        if (existed) {
++          rv = lockstore->DoUnlockKek(kProfilePasswordKek, secret,
++                                      kCacheForSession);
++        } else {
++          auto created = lockstore->DoCreateKek("password"_ns, kProfileKekId,
++                                                secret, kCacheForSession);
++          rv = created.isErr() ? created.unwrapErr() : NS_OK;
++        }
++        if (NS_SUCCEEDED(rv)) {
++          rv = MoveLocalDeksToProfileKek(lockstore, moved);
++        }
++      }));
++  memset(secret.BeginWriting(), 0, secret.Length());
++  const double ms = (TimeStamp::Now() - started).ToMilliseconds();
++
++  if (NS_FAILED(dispatchRv)) {
++    MOZ_LOG(sProfileKekLog, LogLevel::Error,
++            ("embedder: the keystore was not asked (0x%" PRIx32 ")",
++             static_cast<uint32_t>(dispatchRv)));
++  } else if (answer == EmbedderSecret::Withheld) {
++    MOZ_LOG(sProfileKekLog, LogLevel::Info,
++            ("embedder: secret withheld; the profile KEK %s",
++             existed ? "stays locked" : "does not exist yet"));
++  } else if (NS_FAILED(rv)) {
++    // NS_ERROR_ABORT is a secret that does not open the KEK: the profile's
++    // keys are out of reach until the right one is given, and kept.
++    MOZ_LOG(sProfileKekLog, LogLevel::Error,
++            ("embedder: the profile KEK was not %s (0x%" PRIx32 ") in %.0f ms",
++             existed ? "unlocked" : "made", static_cast<uint32_t>(rv), ms));
++  } else {
++    MOZ_LOG(sProfileKekLog, LogLevel::Info,
++            ("embedder: the profile KEK was %s in %.0f ms; %u DEK wrappings "
++             "moved from LocalKeys",
++             existed ? "unlocked" : "made", ms, moved));
++  }
++}
++
+ bool SyncProfileKekAtStartup() {
+   MOZ_ASSERT(NS_IsMainThread());
++  SyncProfileKekWithEmbedder();
+   const bool canContinue = SyncLockstoreWithPrimaryPassword();
+   Preferences::RegisterCallback(&OnLockstoreUnlockPrefChanged,
+                                 "security.lockstore.unlock.enabled"_ns);
+-- 
+2.47.3
+

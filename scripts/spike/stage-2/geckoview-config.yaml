@@ -2,10 +2,11 @@
 # by default at Firefox 160. A debuggable GeckoView reads this from /data/local/tmp/<package>-geckoview-config.yaml,
 # and hands the prefs to Gecko as default prefs (MOZ_DEFAULT_PREFS).
 #
-# The first round keeps Lockstore's own `local` key, which it keeps in plaintext in the profile's
-# lockstore.keys.sqlite, so it measures what the switches cover, not what they protect. The SQLite switch corrupts a
-# profile it is turned on over, and Gecko refuses a profile whose databases disagree with it, so it goes on a fresh
-# profile only (`fresh-profile`).
+# The first round kept Lockstore's own `local` key, which it keeps in plaintext in the profile's
+# lockstore.keys.sqlite, so it measured what the switches cover, not what they protect; from the second, the app gives
+# Gecko a secret from the vault's key, which the profile's keys are moved under (`check-kek`). The SQLite switch
+# corrupts a profile it is turned on over, and Gecko refuses a profile whose databases disagree with it, so it goes on
+# a fresh profile only (`fresh-profile`).
 prefs:
   browser.privatebrowsing.forceMediaMemoryCache: true
   # SQLite through obfsvfs, every database under the profile but Lockstore's and NSS's own.
@@ -15,4 +16,6 @@ prefs:
   # Site storage, for each origin first seen with it on: IndexedDB, local storage, the Cache API.
   dom.quotaManager.encryption.enabled: true
 env:
-  MOZ_LOG: SQLiteEncryption:4
+  # The databases' keys; the profile KEK the embedder's secret keeps (ProfileKek.cpp); the cookie store's open; and the
+  # HTTP cache's key and directory.
+  MOZ_LOG: SQLiteEncryption:4,ProfileKek:4,cookie:2,cache2:3

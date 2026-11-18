@@ -1,0 +1,216 @@
+#!/bin/sh
+# Stage 2's second round (ROADMAP.md, item 4): the profile's keys under a password KEK whose secret comes from the
+# vault's key, and what each store does when that KEK is locked, at start or mid-session. Razing is the failure it
+# looks for.
+#
+#   scripts/spike/stage-2/check-kek <adb serial>
+#
+# 1. Given: `check-lockstore`, with the secret given at both starts. Then Lockstore's key store, which is plaintext by
+#    design, says which KEK wraps each of the profile's keys.
+# 2. Locked at start: the gate withholds the secret, as a locked vault does, and the read-back page runs in a session
+#    whose keys stay locked. What each store answers, and what changed on disk.
+# 3. Given again: the read-back page must find all that the first session wrote. A store that lost it was razed in 2.
+# 4. Locked mid-session: a session with the secret, whose keys the gate then locks; then the marker page on a second
+#    origin, whose site storage needs keys that cannot be made while they are locked. A start with the secret then
+#    reads both origins back.
+#
+# The phone's vault must be open to the spike, which `check-plaintext` does not ask. The gate is left giving the
+# secret.
+set -eu
+# `join` and `sort` agree on the order only in one collation.
+export LC_ALL=C
+
+here=$(cd "$(dirname "$0")" && pwd)
+stage1=$(cd "$here/../stage-1" && pwd)
+serial=${1:?usage: check-kek <adb serial>}
+package=com.systemhalted.encri.browser.spike
+port=8643
+adb="${ADB:-$HOME/Android/Sdk/platform-tools/adb} -s $serial"
+work=$(mktemp -d)
+server=
+# The server is empty until `serve` starts, and set -u would stop the trap at it before the rest ran.
+trap '[ -z "$server" ] || kill "$server" 2>/dev/null || true; $adb reverse --remove tcp:$port 2>/dev/null || true; rm -rf "$work"' EXIT
+
+applog() { $adb logcat -d -s encriox-spike:I | sed 's/^.*encriox-spike: //'; }
+# What Gecko said of the profile KEK, and of stores that could not be opened.
+geckolog() {
+    $adb logcat -d | grep -E 'embedder: |SQLiteEncryption|disk cache|TryInitDB|locked' | grep -v encriox-spike |
+        sed 's/^.*\]: /    /' | cut -c1-200 | head -"${1:-20}" || true
+}
+
+# Starts the gate with the extras after the first two arguments, and waits up to $2 seconds for a line matching $1.
+# The gate's own start starts Gecko, which asks for the secret before the gate has set `kek`, so a `kek` gate is
+# followed by a stop: the setting holds from the next start.
+gate() {
+    want=$1
+    wait=$2
+    shift 2
+    $adb logcat -c
+    # Not `am start -W`: the gate finishes without drawing, and -W would wait for it forever.
+    $adb shell am start -n $package/org.mozilla.fenix.encri.EncriGateActivity "$@" >/dev/null
+    for _ in $(seq "$wait"); do
+        applog | grep -qE "$want" && return 0
+        sleep 1
+    done
+    echo "check-kek: the gate did not log /$want/ within ${wait}s" >&2
+    applog >&2
+    exit 1
+}
+
+# The phone awake and its keyguard down: `am start -W` waits for good for a page the screen does not draw (W6).
+wake() {
+    $adb shell input keyevent KEYCODE_WAKEUP
+    $adb shell wm dismiss-keyguard
+}
+
+# Serves $2 and opens $1's page with it, on host $3: `/` writes the marker into every store, `/read` reads it back.
+# Waits for $4 reports, and prints the stores' lines.
+page() {
+    path=$1
+    marker=$2
+    host=$3
+    want=$4
+    [ -z "$server" ] || kill "$server" 2>/dev/null || true
+    "$stage1/serve" $port "$marker" > "$work/served" 2>&1 &
+    server=$!
+    $adb reverse tcp:$port tcp:$port >/dev/null
+    sleep 1
+    wake
+    $adb logcat -c
+    case $path in
+        /) url="http://$host:$port/?run=$marker" ;;
+        *) url="http://$host:$port/read?m=$marker" ;;
+    esac
+    timeout 120 $adb shell am start -W -a android.intent.action.VIEW -d "$url" \
+        -n $package/org.mozilla.fenix.IntentReceiverActivity >/dev/null ||
+        { echo "check-kek: $url did not open in 2 minutes" >&2; exit 1; }
+    reported=0
+    for _ in $(seq 60); do
+        reported=$(grep -c '^report' "$work/served" || true)
+        [ "$reported" -ge "$want" ] && break
+        sleep 1
+    done
+    echo "  $url: $reported of $want stores reported"
+    grep '^report' "$work/served" | sed 's/^report /    /'
+    if [ "$path" = /read ]; then
+        # The read-back page fetches the first session's cacheable URL: a request for it is the HTTP cache missing.
+        if grep -q "^request GET /cacheable?m=$marker" "$work/served"; then
+            echo "    httpCache: the request reached the server, so the cache did not answer it"
+        else
+            echo "    httpCache: answered from the cache"
+        fi
+    fi
+}
+
+# The profile's and its cache's files, with their sizes.
+files() {
+    $adb shell "run-as $package sh -c 'find files/mozilla cache -type f -exec ls -l {} \;'" | tr -d '\r' |
+        awk '{ print $NF, $5 }' | sort
+}
+
+# Lockstore's key store, read off the phone: every key, by name, with the KEKs that wrap it and a digest of its
+# record, so that a key replaced shows as changed; then the KEK records by type.
+keystore() {
+    rm -f "$work"/lockstore.keys.sqlite*
+    for f in lockstore.keys.sqlite lockstore.keys.sqlite-wal; do
+        $adb exec-out run-as $package sh -c "cat files/mozilla/*.default/$f 2>/dev/null" > "$work/$f" || true
+    done
+    [ -s "$work/lockstore.keys.sqlite-wal" ] || rm -f "$work/lockstore.keys.sqlite-wal"
+    python3 -I - "$work/lockstore.keys.sqlite" "$1" <<'KEYS'
+import base64, hashlib, json, sqlite3, sys
+path, out = sys.argv[1], sys.argv[2]
+db = sqlite3.connect(f"file:{path}", uri=True)
+# skv keeps each value as SQLite's JSONB, which json() reads back as text, as skv does.
+rows = db.execute("SELECT data.key, json(data.value) FROM data JOIN dbs ON data.db_id = dbs.id WHERE dbs.name = ?",
+                  ("lockstore.keys",)).fetchall()
+def record(value):
+    # utils::bytes_to_value: the record's JSON, base64'd, as a JSON string.
+    return json.loads(base64.b64decode(json.loads(value)))
+deks, keks = {}, {}
+for key, value in rows:
+    if key.startswith("lockstore::dek::"):
+        meta = record(value)
+        deks[key[len("lockstore::dek::"):]] = (
+            sorted(w["kek_ref"] for w in meta["wrapped_deks"]),
+            hashlib.sha256(value.encode()).hexdigest()[:12])
+    elif key.startswith("lockstore::kek::"):
+        keks[key] = key.split("::")[2].split(":")[0]
+with open(out, "w") as f:
+    for name, (wrapping, digest) in sorted(deks.items()):
+        f.write(f"{digest} {name} <- {', '.join(wrapping)}\n")
+by_kek = {}
+for name, (wrapping, _) in deks.items():
+    for kek in wrapping:
+        by_kek.setdefault(kek, []).append(name)
+print(f"  {len(deks)} keys; KEK records: " + (", ".join(sorted(keks)) or "none"))
+for kek, names in sorted(by_kek.items()):
+    print(f"    {kek} wraps {len(names)}: " + ", ".join(sorted(n if len(n) < 48 else n[:45] + "..." for n in names)[:4])
+          + (" ..." if len(names) > 4 else ""))
+local = sorted(n for n, (w, _) in deks.items() if any(k.startswith("lockstore::kek::local:") for k in w))
+print(f"  keys under a LocalKey, readable without the secret: {len(local)}")
+KEYS
+}
+
+
+echo "== $serial: 1. the secret given at both starts"
+gate "kek withheld=false" 30 --es kek give
+ok=yes
+"$here/check-lockstore" "$serial" > "$work/lockstore" 2>&1 || ok=
+cat "$work/lockstore"
+[ -n "$ok" ] || { echo "check-kek: check-lockstore failed" >&2; exit 1; }
+m1=$(sed -n 's/^== .*, normal, marker \(ENCRIOX[0-9a-f]*\)$/\1/p' "$work/lockstore")
+[ -n "$m1" ] || { echo "check-kek: check-lockstore named no marker" >&2; exit 1; }
+echo "  what the app and Gecko said at the second start:"
+applog | grep -E 'profile ' | sed 's/^/    /' || true
+geckolog 6
+$adb shell am force-stop $package
+echo "== the key store after step 1"
+keystore "$work/keys-1"
+
+echo "== 2. locked at start: the secret withheld, reading back $m1"
+files > "$work/files-1"
+gate "kek withheld=true" 30 --es kek withhold
+$adb shell am force-stop $package
+page /read "$m1" 127.0.0.1 6
+echo "  what the app and Gecko said:"
+applog | grep -E 'profile ' | sed 's/^/    /' || true
+geckolog 30
+$adb shell input keyevent KEYCODE_HOME
+sleep "${SETTLE:-30}"
+$adb shell am force-stop $package
+files > "$work/files-2"
+echo "  files gone, or changed in size, while locked:"
+join -a1 "$work/files-1" "$work/files-2" | awk 'NF == 2 { print "    gone: " $1 } NF == 3 && $2 != $3 { print "    " $1 ": " $2 " -> " $3 }'
+echo "  files new while locked:"
+join -v2 "$work/files-1" "$work/files-2" | awk '{ print "    " $1 " " $2 }'
+keystore "$work/keys-2" > /dev/null
+echo "  keys changed while locked:"
+diff "$work/keys-1" "$work/keys-2" | sed -n 's/^[<>] /    /p' || true
+
+echo "== 3. the secret given again, reading back $m1"
+gate "kek withheld=false" 30 --es kek give
+$adb shell am force-stop $package
+page /read "$m1" 127.0.0.1 6
+applog | grep -E 'profile ' | sed 's/^/    /' || true
+geckolog 6
+
+echo "== 4. locked mid-session, then a second origin"
+m2="ENCRIOX$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')"
+gate "profile lock (unlocked|failed)" 30 --es profile lock
+applog | grep -E 'profile ' | sed 's/^/    /'
+page / "$m2" localhost 8
+geckolog 30
+$adb shell input keyevent KEYCODE_HOME
+# Gecko writes cookies, local storage and IndexedDB to disk some while after a page does (check-plaintext).
+sleep "${SETTLE:-60}"
+$adb shell am force-stop $package
+keystore "$work/keys-4" > /dev/null
+echo "  keys made or changed since step 2 (steps 3 and 4):"
+diff "$work/keys-2" "$work/keys-4" | sed -n 's/^[<>] /    /p' || true
+echo "== a start with the secret, reading back $m2 on localhost, then $m1"
+page /read "$m2" localhost 6
+applog | grep -E 'profile ' | sed 's/^/    /' || true
+page /read "$m1" 127.0.0.1 6
+$adb shell am force-stop $package
+echo "== the key store at the end"
+keystore "$work/keys-5"
