@@ -28,6 +28,9 @@ The browser does not start without the vault (W15): with the vault locked, or no
 the app brings up encri's own screens while Gecko waits, and if the vault is still shut once they are done, it ends
 before Gecko has opened anything of the profile (0010).
 
+Its third round asks what obfsvfs costs against plain SQLite (W16): a module of Gecko's times the same work in Gecko's
+own SQLite on plain databases and through obfsvfs, outside the profile, and the gate asks for it (0011).
+
 ## Building
 
 On the drive for large builds (W7). The checkout's objdir and mach's state go beside it there, with the toolchains
@@ -44,6 +47,11 @@ scripts/spike/stage-2/build /home/coder/extra_space/encri-extraspace/firefox
 a project of the build, not an artifact. Run no other Gradle build in the suite at the same time. The APKs are under
 `<firefox>/obj-encriox-stage-2/gradle/build/mobile/android/fenix/app/outputs/apk/debug/`, and install over stage 1's:
 the package and the debug key are the same, so the vault's grant and `encriox.key` stay.
+
+`check-obfsvfs` needs a second APK for its plain side: copy stage 2's aside, set
+`security.storage.encryption.sqlite.enabled`'s `value` to `false` in the checkout's
+`modules/libpref/init/StaticPrefList.yaml`, run `build`, copy that APK aside too, and restore the file with `git
+checkout`. The next `build` rebuilds the default, about 8 minutes.
 
 To change the patches, commit on the checkout's `encriox-spike-stage-2` branch and write them out again:
 
@@ -70,6 +78,11 @@ starts Gecko with the profile's keys locked, or makes a profile in the clear.
   then encri's unlock from the gate; a start with the vault locked, unlocked; one where the unlock is refused, which
   must stop the app and leave the profile as it was; and the vault left open. It types the passphrase on file into
   encri's screen, never printing it, so it is for a test vault whose passphrase is on file; the G6's would not open.
+- `check-obfsvfs <serial>`: the third round (W16), in two parts (its header). Gecko's SQLite, plain and through
+  obfsvfs, timed by the gate's `--ei sqlbench <rows> --ei rounds <n>`; then IndexedDB, as a site uses it, on a page
+  from `../stage-1/serve`'s `/idb`, on fresh profiles of stage 2's build, `APK`, and of `PLAIN_APK`, a build of the
+  same tree with the SQLite switch off by default. The SQLite switch alone puts every database under the profile
+  through obfsvfs, so only such a build has a plain one. With `KEK=withhold` it runs where the vault does not open.
 - The gate's controls (`EncriGateActivity`): `--es kek give|withhold` for the next start's secret, `--es profile
   lock|unlock` for the running Gecko's keys, and `--ez drop true` to drop the vault's key as a lock does.
 - `fresh-profile <serial>`: deletes the spike's Gecko profile and its cache, and nothing else. A profile's SQLite

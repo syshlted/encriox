@@ -1,0 +1,88 @@
+<!doctype html>
+<!-- The spike's IndexedDB bench (stage 2's third round): the same work timed on this origin's IndexedDB, which
+     QuotaManager keeps through obfsvfs when the profile's config turns its encryption on, and in plain SQLite when it
+     does not. Each round is reported to `serve` as a line of timings in milliseconds; `serve` puts the run's marker
+     where __MARKER__ is, and the query names the rounds and the records. -->
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width">
+<title>encriox IndexedDB bench</title>
+<p>Bench <code>__MARKER__</code></p>
+<ul id="done"></ul>
+<script>
+  const marker = "__MARKER__";
+  const query = new URLSearchParams(location.search);
+  const records = Number(query.get("n") || 5000);
+  const commits = Number(query.get("commits") || 200);
+  const rounds = Number(query.get("rounds") || 3);
+  const report = (store, value) => {
+    const li = document.createElement("li");
+    li.textContent = `${store}: ${value}`;
+    document.getElementById("done").append(li);
+    return fetch(`/report?store=${store}&value=${encodeURIComponent(value)}`, { cache: "no-store" });
+  };
+  const done = (request) => new Promise((resolve, reject) => {
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+  const finished = (tx) => new Promise((resolve, reject) => {
+    tx.oncomplete = resolve;
+    tx.onerror = tx.onabort = () => reject(tx.error);
+  });
+  // A record of about 200 bytes, as a page's saved state or a mail's header might be.
+  const record = (i) => ({ id: i, url: `https://site${i % 997}.example/${marker}/${i}`, title: `${marker} ${i} `.repeat(4) });
+  const timed = async (work) => {
+    const start = performance.now();
+    await work();
+    return Math.round((performance.now() - start) * 10) / 10;
+  };
+
+  async function round(n) {
+    await done(indexedDB.deleteDatabase("encriox-bench"));
+    const open = indexedDB.open("encriox-bench", 1);
+    open.onupgradeneeded = () => open.result.createObjectStore("t", { keyPath: "id" });
+    const db = await done(open);
+    const ms = {};
+    // One transaction of many records.
+    ms.insert = await timed(async () => {
+      const tx = db.transaction("t", "readwrite");
+      const store = tx.objectStore("t");
+      for (let i = 0; i < records; i++) store.put(record(i));
+      await finished(tx);
+    });
+    // Many transactions of a record each, one after the other.
+    ms.commits = await timed(async () => {
+      for (let i = 0; i < commits; i++) {
+        const tx = db.transaction("t", "readwrite");
+        tx.objectStore("t").put(record(records + i));
+        await finished(tx);
+      }
+    });
+    // Records read by their key, scattered over the store, in one transaction.
+    ms.gets = await timed(async () => {
+      const tx = db.transaction("t");
+      const store = tx.objectStore("t");
+      for (let i = 0; i < records; i++) store.get((i * 7919) % records);
+      await finished(tx);
+    });
+    ms.getAll = await timed(async () => {
+      const got = await done(db.transaction("t").objectStore("t").getAll());
+      if (got.length != records + commits) throw new Error(`getAll found ${got.length}`);
+    });
+    db.close();
+    return ms;
+  }
+
+  (async () => {
+    for (let n = 0; n < rounds; n++) {
+      try {
+        const ms = await round(n);
+        await report("bench", `round=${n} records=${records} commits=${commits} ` +
+          Object.entries(ms).map(([k, v]) => `${k}=${v}`).join(" "));
+      } catch (e) {
+        await report("bench", `round=${n} failed ${e}`);
+      }
+    }
+    await done(indexedDB.deleteDatabase("encriox-bench"));
+    await report("bench", "done");
+  })();
+</script>

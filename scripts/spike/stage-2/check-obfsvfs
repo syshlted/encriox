@@ -1,0 +1,185 @@
+#!/bin/sh
+# Stage 2's third round (ROADMAP.md, item 4): what obfsvfs costs against plain SQLite, on the phone, in stage 2's own
+# Gecko.
+#
+#   scripts/spike/stage-2/check-obfsvfs <adb serial>
+#
+# 1. In Gecko's SQLite: the gate has Gecko time the same work on three kinds of database, made afresh outside the
+#    profile, in turn and in a different order each round (patch 0011): plain with mozStorage's 32 KiB pages, plain
+#    with obfsvfs's 8 KiB pages, and through obfsvfs. ROWS rows, ROUNDS rounds.
+# 2. In IndexedDB, as a site uses it: the same page on a fresh profile of stage 2's build, APK, with stage 2's config,
+#    whose site storage goes through obfsvfs, and on one of PLAIN_APK, the same build with SQLite's switch off by
+#    default, with every switch off: the SQLite switch alone puts every database under the profile through obfsvfs,
+#    so only a build whose default is off makes a plain one (W13, W16). PROFILES times each, in turns, each after an
+#    install of its APK and SETTLE_INSTALL seconds, 180 by default: the A20 answered slowly for minutes after one.
+#
+# PARTS names the parts to run, "1 2" by default. KEK is the gate's `kek` setting for every start, `give` by default:
+# `withhold` where the vault cannot be opened, as on the G6, since neither measure needs the profile's keys. Each phone
+# is left with APK, a fresh profile and stage 2's config.
+set -eu
+export LC_ALL=C
+
+here=$(cd "$(dirname "$0")" && pwd)
+stage1=$(cd "$here/../stage-1" && pwd)
+serial=${1:?usage: check-obfsvfs <adb serial>}
+package=com.systemhalted.encri.browser.spike
+port=8646
+adb="${ADB:-$HOME/Android/Sdk/platform-tools/adb} -s $serial"
+config=/data/local/tmp/$package-geckoview-config.yaml
+kek=${KEK:-give}
+parts=${PARTS:-1 2}
+case " $parts " in *" 2 "*)
+    [ -f "${APK:-}" ] && [ -f "${PLAIN_APK:-}" ] || { echo "check-obfsvfs: part 2 needs APK and PLAIN_APK" >&2; exit 1; } ;;
+esac
+work=$(mktemp -d)
+server=
+trap '[ -z "$server" ] || kill "$server" 2>/dev/null || true; $adb reverse --remove tcp:$port 2>/dev/null || true; rm -rf "$work"' EXIT
+
+fail() {
+    echo "check-obfsvfs: $*" >&2
+    exit 1
+}
+
+applog() { $adb logcat -d -s encriox-spike:I | sed 's/^.*encriox-spike: //'; }
+
+awaitlog() {
+    for _ in $(seq "$2"); do
+        applog | grep -qE "$1" && return 0
+        sleep 1
+    done
+    applog | tail -20 >&2
+    fail "the app did not log /$1/ within $2s"
+}
+
+wake() {
+    for _ in $(seq 10); do
+        $adb shell input keyevent KEYCODE_WAKEUP
+        $adb shell wm dismiss-keyguard
+        sleep 1
+        $adb shell dumpsys window | grep -m1 mCurrentFocus | grep -qE 'NotificationShade|Keyguard|StatusBar' || return 0
+    done
+    fail "the keyguard would not go"
+}
+
+# The gate's `kek` setting, then a stop: the gate's own start has already asked for the secret.
+setkek() {
+    $adb logcat -c
+    $adb shell am start -n $package/org.mozilla.fenix.encri.EncriGateActivity --es kek "$kek" >/dev/null
+    awaitlog "kek withheld=" 60
+    $adb shell am force-stop $package
+}
+
+case " $parts " in *" 1 "*)
+echo "== $serial: 1. Gecko's SQLite, plain and through obfsvfs"
+setkek
+wake
+$adb logcat -c
+$adb shell am start -n $package/org.mozilla.fenix.encri.EncriGateActivity \
+    --ei sqlbench "${ROWS:-50000}" --ei rounds "${ROUNDS:-5}" >/dev/null
+awaitlog "sqlbench (done|failed)" 1800
+applog | grep -q "sqlbench failed" && fail "$(applog | grep 'sqlbench failed')"
+applog | sed -n 's/^sqlbench run //p' > "$work/sqlbench"
+# RAW names a file to keep every run's line of JSON in.
+[ -z "${RAW:-}" ] || cp "$work/sqlbench" "$RAW"
+applog | sed -n 's/^sqlbench asked //p' | sed 's/^/  asked: /'
+python3 -I - "$work/sqlbench" <<'SUMMARY'
+import json, statistics, sys
+runs = [json.loads(line) for line in open(sys.argv[1])]
+if not runs:
+    sys.exit("check-obfsvfs: the bench logged no run")
+kinds = ["plain", "plain-8k", "obfsvfs"]
+ops = list(runs[0]["ms"])
+by = {k: [r for r in runs if r["kind"] == k] for k in kinds}
+first = runs[0]
+print(f"  SQLite {first.get('sqlite', '?')}; {len(by['plain'])} rounds; synchronous "
+      + ", ".join(sorted({str(r['synchronous']) for r in runs})))
+if len({r["total"] for r in runs}) != 1:
+    sys.exit(f"check-obfsvfs: the kinds did not hold the same rows: {sorted({r['total'] for r in runs})}")
+for k in kinds:
+    f = by[k][0]["file"]
+    print(f"  {k:9} file: page {f['pageSize']}, reserved {f['reserved']}, {f['bytes']} bytes, "
+          f"marker {'in the clear' if f['marker'] else 'not found'}")
+print(f"  {'median ms':12}" + "".join(f"{k:>10}" for k in kinds) + f"{'obfs/plain':>12}{'obfs/8k':>9}")
+for op in ops:
+    med = {k: statistics.median(r["ms"][op] for r in by[k]) for k in kinds}
+    ratio = lambda a, b: f"{a / b:.2f}" if b else "-"
+    print(f"  {op:12}" + "".join(f"{med[k]:>10.1f}" for k in kinds)
+          + f"{ratio(med['obfsvfs'], med['plain']):>12}{ratio(med['obfsvfs'], med['plain-8k']):>9}")
+print("  each round, obfsvfs against plain:")
+for op in ops:
+    pairs = [(o["ms"][op], p["ms"][op]) for o, p in zip(by["obfsvfs"], by["plain"])]
+    print(f"    {op:12}" + " ".join(f"{o:.0f}/{p:.0f}" for o, p in pairs))
+SUMMARY
+$adb shell am force-stop $package
+;; esac
+
+case " $parts " in *" 2 "*)
+echo "== 2. IndexedDB, plain and through obfsvfs"
+# Every one of Lockstore's switches off, for the plain build; stage 2's own config for stage 2's build.
+sed -E 's/^(  (security\.storage\.encryption\.sqlite|browser\.cache\.disk\.encryption|dom\.quotaManager\.encryption)\.enabled:) true$/\1 false/' \
+    "$here/geckoview-config.yaml" > "$work/plain.yaml"
+[ "$(grep -c '\.enabled: false$' "$work/plain.yaml")" = 3 ] || fail "could not turn the three switches off"
+cp "$here/geckoview-config.yaml" "$work/obfsvfs.yaml"
+"$stage1/serve" $port "ENCRIOX$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')" > "$work/served" 2>&1 &
+server=$!
+$adb reverse tcp:$port tcp:$port >/dev/null
+for n in $(seq "${PROFILES:-2}"); do
+    order="obfsvfs plain"
+    [ $((n % 2)) = 0 ] && order="plain obfsvfs"
+    for kind in $order; do
+        if [ "$kind" = plain ]; then apk=$PLAIN_APK; else apk=$APK; fi
+        $adb install -r "$apk" >/dev/null || fail "$apk did not install"
+        sleep "${SETTLE_INSTALL:-180}"
+        setkek
+        "$here/fresh-profile" "$serial" > /dev/null
+        $adb push "$work/$kind.yaml" "$config" >/dev/null 2>&1
+        : > "$work/served"
+        wake
+        # Quoted again for the phone's shell, where & would end the command.
+        timeout 120 $adb shell am start -W -a android.intent.action.VIEW \
+            -d "'http://127.0.0.1:$port/idb?n=${RECORDS:-5000}&rounds=${PAGE_ROUNDS:-3}'" \
+            -n $package/org.mozilla.fenix.IntentReceiverActivity >/dev/null || fail "the bench page did not open"
+        for _ in $(seq 600); do
+            grep -q '^report store=bench value=done' "$work/served" && break
+            sleep 1
+        done
+        grep -q '^report store=bench value=done' "$work/served" || fail "the bench page did not finish in 10 minutes"
+        sed -n "s/^report store=bench value=\(round=.*\)/$kind \1/p" "$work/served" | tee -a "$work/idb"
+        $adb shell input keyevent KEYCODE_HOME
+        sleep 5
+        $adb shell am force-stop $package
+        # The profile says whether its databases are encrypted (W13), and the origin's record whether QuotaManager
+        # encrypted it: flags bit 0x10 (check-lockstore).
+        marked=$($adb shell "run-as $package sh -c 'grep -c ^EncryptedDatabases= files/mozilla/*.default/compatibility.ini'" |
+            tr -d '\r' || true)
+        flags=$($adb shell "run-as $package sh -c 'od -An -tx1 -j9 -N4 files/mozilla/*.default/storage/default/http+++127.0.0.1+$port/.metadata-v2'" |
+            tr -d ' \r\n')
+        [ -n "$flags" ] || fail "the bench origin has no .metadata-v2"
+        echo "  $kind: EncryptedDatabases in compatibility.ini ${marked:-0}, the origin's flags 0x$flags"
+        case $kind:${marked:-0}:$(( 0x$flags & 0x10 )) in
+            obfsvfs:1:16 | plain:0:0) ;;
+            *) fail "the $kind profile is not what its build and config should make it" ;;
+        esac
+    done
+done
+python3 -I - "$work/idb" <<'SUMMARY'
+import statistics, sys
+rows = {}
+for line in open(sys.argv[1]):
+    qm, *fields = line.split()
+    values = dict(f.split("=", 1) for f in fields)
+    if "failed" in line:
+        sys.exit(f"check-obfsvfs: a round failed: {line.strip()}")
+    for op in ("insert", "commits", "gets", "getAll"):
+        rows.setdefault(op, {}).setdefault(qm, []).append(float(values[op]))
+print(f"  {'median ms':12}{'plain':>10}{'obfsvfs':>10}{'obfs/plain':>12}")
+for op, by in rows.items():
+    plain, obfs = statistics.median(by["plain"]), statistics.median(by["obfsvfs"])
+    print(f"  {op:12}{plain:>10.1f}{obfs:>10.1f}{obfs / plain:>12.2f}   ({len(by['plain'])} rounds each)")
+SUMMARY
+$adb install -r "$APK" >/dev/null || fail "$APK did not install"
+;; esac
+
+# A fresh profile with stage 2's own config, as the round found the phone.
+"$here/fresh-profile" "$serial" > /dev/null
+$adb push "$here/geckoview-config.yaml" "$config" >/dev/null 2>&1

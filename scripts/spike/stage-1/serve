@@ -14,6 +14,8 @@ SITE = Path(__file__).resolve().parent / "site"
 PAGE = (SITE / "index.html").read_text()
 # Reads back what an earlier session's page wrote, and writes nothing: whether a profile opens a second time (stage 2).
 READ = (SITE / "read.html").read_text()
+# Times the same work on the origin's IndexedDB, which obfsvfs keeps when site storage is encrypted (stage 2).
+IDB = (SITE / "idb.html").read_text()
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -32,6 +34,8 @@ class Handler(BaseHTTPRequestHandler):
             self.answer(200, PAGE.replace("__MARKER__", MARKER).encode(), "text/html; charset=utf-8")
         elif url.path == "/read":
             self.answer(200, READ.replace("__MARKER__", MARKER).encode(), "text/html; charset=utf-8")
+        elif url.path == "/idb":
+            self.answer(200, IDB.replace("__MARKER__", MARKER).encode(), "text/html; charset=utf-8")
         else:
             self.answer(404, b"", "text/plain")
 

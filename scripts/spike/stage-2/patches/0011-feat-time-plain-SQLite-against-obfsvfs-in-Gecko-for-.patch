@@ -1,0 +1,366 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jeremy Melanson <1080872+zish@users.noreply.github.com>
+Date: Thu, 19 Nov 2026 00:45:09 +0000
+Subject: [PATCH] feat: time plain SQLite against obfsvfs in Gecko, for
+ encriox's spike
+
+Stage 2's third round asks what obfsvfs costs against plain SQLite
+(encri-firefox). GeckoViewSQLiteBench answers GeckoView:SQLite:Bench by
+timing the same work in Gecko's own SQLite and mozStorage on three kinds
+of database, made afresh outside the profile so that Lockstore makes no
+key for them: plain with mozStorage's 32 KiB pages, plain with 8 KiB
+pages, and through obfsvfs with a key of its own. The kinds go in a
+different order each round, and each run reports its file's header and
+whether a marker is in the clear, which checks the premise.
+
+The spike's gate asks for it with `--ei sqlbench <rows> --ei rounds <n>`
+before it opens the vault, which the bench does not need, and logs each
+run as a line of JSON.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+---
+ .../mozilla/fenix/encri/EncriGateActivity.kt  |  44 ++++
+ .../geckoview/GeckoViewStartup.sys.mjs        |   5 +
+ .../geckoview/GeckoViewSQLiteBench.sys.mjs    | 222 ++++++++++++++++++
+ mobile/shared/modules/geckoview/moz.build     |   1 +
+ 4 files changed, 272 insertions(+)
+ create mode 100644 mobile/shared/modules/geckoview/GeckoViewSQLiteBench.sys.mjs
+
+diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt
+index d3f5e31e77..6f636ccdd3 100644
+--- a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt
++++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt
+@@ -33,9 +33,12 @@ import mozilla.components.feature.downloads.INTENT_EXTRA_DOWNLOAD_ID
+ import mozilla.components.feature.downloads.filewriter.DefaultDownloadFileWriter
+ import mozilla.components.feature.downloads.manager.FetchDownloadManager
+ import mozilla.components.support.utils.DefaultDownloadFileUtils
++import org.json.JSONObject
+ import org.mozilla.fenix.downloads.DownloadService
+ import org.mozilla.fenix.ext.components
+ import org.mozilla.fenix.settings.downloads.DownloadLocationManager
++import org.mozilla.gecko.EventDispatcher
++import org.mozilla.gecko.util.GeckoBundle
+ 
+ /**
+  * The stage 1 spike's controls, started over adb by `scripts/spike/stage-1/` (encri-firefox W1). It always first opens
+@@ -59,6 +62,9 @@ import org.mozilla.fenix.settings.downloads.DownloadLocationManager
+  *   Every status it passes through is logged, then `fetch settled`;
+  * - `--ez list true` logs what the vault holds of the two;
+  * - `--ez lock true` locks the vault, for every app and for encri;
++ * - `--ei sqlbench <rows> --ei rounds <n>` has Gecko time the same work on plain SQLite and through obfsvfs, in its
++ *   own SQLite, outside the profile, and logs each run as a line of JSON, then `sqlbench done` (stage 2's third
++ *   round). It needs neither the vault nor the profile's keys, and does nothing else;
+  * - `--ez drop true` drops the vault's key from memory, as a lock of the vault does, and leaves the vault open, so that
+  *   [EncriProfileSecret.follow] locks Gecko's keys as at a lock; the next start of the gate reads the key again, which
+  *   unlocks them. It is for a phone whose vault might not open again once locked, as the G6's did not (W5);
+@@ -83,6 +89,11 @@ class EncriGateActivity : ComponentActivity() {
+             done("kek withheld=${components.settings.encrioxKekWithheld}")
+             return
+         }
++        if (intent.hasExtra("sqlbench")) {
++            sqlBench(intent.getIntExtra("sqlbench", 0), intent.getIntExtra("rounds", 0))
++            done("sqlbench asked")
++            return
++        }
+         LoopbackServer.start()
+         if (intent.getBooleanExtra("early", false)) {
+             val context = applicationContext
+@@ -417,6 +428,39 @@ class EncriGateActivity : ComponentActivity() {
+             )
+         }
+ 
++        /**
++         * Has Gecko time the same work on plain SQLite and through obfsvfs (GeckoViewSQLiteBench), and logs its answer,
++         * a run to a line: logcat cuts a line at about 4 KB. On the main thread: a GeckoResult answers on the thread
++         * that asked.
++         */
++        private fun sqlBench(
++            rows: Int,
++            rounds: Int,
++        ) {
++            val asked =
++                GeckoBundle(2).apply {
++                    if (rows > 0) putInt("rows", rows)
++                    if (rounds > 0) putInt("rounds", rounds)
++                }
++            Log.i(TAG, "sqlbench asked rows=$rows rounds=$rounds")
++            EventDispatcher.getInstance().queryString("GeckoView:SQLite:Bench", asked).accept(
++                { answer ->
++                    val result = JSONObject(answer.orEmpty())
++                    val runs = result.getJSONArray("runs")
++                    result.remove("runs")
++                    for (i in 0 until runs.length()) {
++                        val run = runs.getJSONObject(i)
++                        // Every run carries the bench's own facts, the SQLite it ran on among them.
++                        result.keys().forEach { run.put(it, result.get(it)) }
++                        Log.i(TAG, "sqlbench run $run")
++                    }
++                    Log.i(TAG, "sqlbench done")
++                },
++                // Gecko's own error is the query's data, not its message.
++                { Log.i(TAG, "sqlbench failed: ${(it as? EventDispatcher.QueryException)?.data ?: it}") },
++            )
++        }
++
+         /** Locks the vault through the session, as encri's own *Lock* would, and logs encri's answer. */
+         private suspend fun lock(context: Context) {
+             val answer =
+diff --git a/mobile/shared/components/geckoview/GeckoViewStartup.sys.mjs b/mobile/shared/components/geckoview/GeckoViewStartup.sys.mjs
+index 43180aed03..712ae9bdf1 100644
+--- a/mobile/shared/components/geckoview/GeckoViewStartup.sys.mjs
++++ b/mobile/shared/components/geckoview/GeckoViewStartup.sys.mjs
+@@ -186,6 +186,11 @@ export class GeckoViewStartup {
+           ged: ["GeckoView:Lockstore:Lock", "GeckoView:Lockstore:Unlock"],
+         });
+ 
++        GeckoViewUtils.addLazyGetter(this, "GeckoViewSQLiteBench", {
++          module: "resource://gre/modules/GeckoViewSQLiteBench.sys.mjs",
++          ged: ["GeckoView:SQLite:Bench"],
++        });
++
+         GeckoViewUtils.addLazyGetter(this, "GeckoViewTrackingDB", {
+           module: "resource://gre/modules/GeckoViewTrackingDB.sys.mjs",
+           ged: [
+diff --git a/mobile/shared/modules/geckoview/GeckoViewSQLiteBench.sys.mjs b/mobile/shared/modules/geckoview/GeckoViewSQLiteBench.sys.mjs
+new file mode 100644
+index 0000000000..82a96b5484
+--- /dev/null
++++ b/mobile/shared/modules/geckoview/GeckoViewSQLiteBench.sys.mjs
+@@ -0,0 +1,222 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this file,
++ * You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++import { GeckoViewUtils } from "resource://gre/modules/GeckoViewUtils.sys.mjs";
++
++const { debug } = GeckoViewUtils.initLogging("GeckoViewSQLiteBench");
++
++// encriox's spike (encri-firefox, stage 2's third round): what obfsvfs costs
++// against plain SQLite, in this Gecko's own SQLite and mozStorage, on the
++// phone. Each kind of database is made afresh in the same directory, outside
++// the profile so that Lockstore makes no key for it, and the same work is
++// timed on each:
++//
++//   plain     as mozStorage opens a database with encryption off, with its
++//             32 KiB pages;
++//   plain-8k  plain, with obfsvfs's 8 KiB pages, which tells the cost of the
++//             page size from the cost of the cipher;
++//   obfsvfs   through obfsvfs, with a key of its own, as Lockstore keeps the
++//             profile's databases: 8 KiB pages, 32 bytes of each reserved.
++//
++// Each is in WAL mode, with mozStorage's own synchronous setting, which on
++// Android is OFF; the cookie store sets NORMAL, which in WAL mode syncs only at
++// a checkpoint. The kinds go in a different order each round.
++const KINDS = ["plain", "plain-8k", "obfsvfs"];
++const MARKER = "encriox-bench-marker";
++// Prime, and so prime to any table size the gate asks for but its multiples.
++const STRIDE = 7919;
++
++function now() {
++  return ChromeUtils.now();
++}
++
++function hex(bytes) {
++  return Array.from(bytes, b => b.toString(16).padStart(2, "0")).join("");
++}
++
++function open(file, key) {
++  let spec = Services.io.newFileURI(file).spec;
++  if (key) {
++    spec += `?key=${key}`;
++  }
++  const url = Services.io.newURI(spec).QueryInterface(Ci.nsIFileURL);
++  return Services.storage.openDatabaseWithFileURL(url, "encriox-bench");
++}
++
++function value(conn, sql) {
++  const statement = conn.createStatement(sql);
++  try {
++    if (!statement.executeStep()) {
++      throw new Error(`no row: ${sql}`);
++    }
++    return statement.getInt64(0);
++  } finally {
++    statement.finalize();
++  }
++}
++
++function sqliteVersion() {
++  const conn = Services.storage.openSpecialDatabase("memory");
++  try {
++    const statement = conn.createStatement("SELECT sqlite_version()");
++    statement.executeStep();
++    const version = statement.getUTF8String(0);
++    statement.finalize();
++    return version;
++  } finally {
++    conn.close();
++  }
++}
++
++function timed(results, name, work) {
++  const start = now();
++  work();
++  results[name] = Math.round((now() - start) * 10) / 10;
++}
++
++function remove(file) {
++  for (const suffix of ["", "-wal", "-shm", "-journal"]) {
++    const each = file.parent.clone();
++    each.append(file.leafName + suffix);
++    if (each.exists()) {
++      each.remove(false);
++    }
++  }
++}
++
++// What the file holds: its page size and reserved bytes from the header,
++// which obfsvfs keeps in the clear, and whether the marker is in the clear.
++async function examine(file) {
++  const bytes = await IOUtils.read(file.path);
++  const pageSize = (bytes[16] << 8) | bytes[17];
++  const text = new TextDecoder("latin1").decode(bytes);
++  return {
++    bytes: bytes.length,
++    pageSize: pageSize == 1 ? 65536 : pageSize,
++    reserved: bytes[20],
++    marker: text.includes(MARKER),
++  };
++}
++
++async function run(dir, kind, rows, commits, lookups) {
++  const file = dir.clone();
++  file.append(`${kind}.sqlite`);
++  remove(file);
++  const key =
++    kind == "obfsvfs"
++      ? hex(
++          Cc["@mozilla.org/security/random-generator;1"]
++            .getService(Ci.nsIRandomGenerator)
++            .generateRandomBytes(32)
++        )
++      : null;
++  const ms = {};
++  let conn;
++  timed(ms, "create", () => {
++    conn = open(file, key);
++    if (kind == "plain-8k") {
++      conn.executeSimpleSQL("PRAGMA page_size = 8192");
++    }
++    conn.executeSimpleSQL("PRAGMA journal_mode = WAL");
++    conn.executeSimpleSQL(
++      "CREATE TABLE t (id INTEGER PRIMARY KEY, url TEXT, title TEXT, n INTEGER)"
++    );
++  });
++  // One transaction of many rows, as a page's history or an import writes.
++  timed(ms, "insert", () =>
++    conn.executeSimpleSQL(
++      `WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < ${rows})
++       INSERT INTO t (url, title, n) SELECT 'https://site' || (x % 997) || '.example/${MARKER}/' || x, hex(randomblob(48)), x FROM c`
++    )
++  );
++  // Many transactions of a row each, as cookies and permissions are written.
++  timed(ms, "commits", () => {
++    for (let i = 0; i < commits; i++) {
++      conn.executeSimpleSQL(
++        `INSERT INTO t (url, title, n) VALUES ('https://one.example/${MARKER}/${i}', hex(randomblob(48)), ${i})`
++      );
++    }
++  });
++  // Rows read by their key, scattered over the table by a stride prime to its
++  // size, most of them from pages not in mozStorage's 2 MiB cache. The
++  // subquery names c.x, or SQLite would run it once.
++  timed(ms, "lookups", () =>
++    value(
++      conn,
++      `WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < ${lookups})
++       SELECT sum(length((SELECT title FROM t WHERE id = 1 + (c.x * ${STRIDE}) % ${rows}))) FROM c`
++    )
++  );
++  timed(ms, "update", () =>
++    conn.executeSimpleSQL("UPDATE t SET n = n + 1 WHERE id % 5 = 0")
++  );
++  timed(ms, "index", () =>
++    conn.executeSimpleSQL("CREATE INDEX t_url ON t (url)")
++  );
++  timed(ms, "checkpoint", () =>
++    conn.executeSimpleSQL("PRAGMA wal_checkpoint(TRUNCATE)")
++  );
++  const synchronous = value(conn, "PRAGMA synchronous");
++  conn.close();
++  // A new connection, its page cache empty: every page is read through the
++  // VFS, from the system's file cache.
++  timed(ms, "open", () => {
++    conn = open(file, key);
++  });
++  let total;
++  timed(ms, "scan", () => {
++    total = value(
++      conn,
++      "SELECT count(*) + sum(length(title)) + sum(length(url)) + sum(n) FROM t"
++    );
++  });
++  conn.close();
++  const kept = await examine(file);
++  remove(file);
++  return { kind, ms, total, synchronous, file: kept };
++}
++
++export const GeckoViewSQLiteBench = {
++  async onEvent(aEvent, aData, aCallback) {
++    debug`onEvent ${aEvent}`;
++    try {
++      const rows = aData.rows || 50000;
++      const commits = aData.commits || 500;
++      const lookups = aData.lookups || rows;
++      const rounds = aData.rounds || 5;
++      const dir = Services.dirsvc.get("TmpD", Ci.nsIFile);
++      dir.append("encriox-bench");
++      const profile = Services.dirsvc.get("ProfD", Ci.nsIFile);
++      if (profile.contains(dir) || dir.contains(profile)) {
++        throw new Error(`${dir.path} is in the profile, ${profile.path}`);
++      }
++      if (!dir.exists()) {
++        dir.create(Ci.nsIFile.DIRECTORY_TYPE, 0o700);
++      }
++      const runs = [];
++      for (let round = 0; round < rounds; round++) {
++        const order = KINDS.map((_, i) => KINDS[(i + round) % KINDS.length]);
++        for (const kind of order) {
++          const result = await run(dir, kind, rows, commits, lookups);
++          result.round = round;
++          runs.push(result);
++        }
++      }
++      dir.remove(true);
++      aCallback.onSuccess(
++        JSON.stringify({
++          dir: dir.path,
++          sqlite: sqliteVersion(),
++          rows,
++          commits,
++          lookups,
++          rounds,
++          runs,
++        })
++      );
++    } catch (e) {
++      aCallback.onError(`${e} at ${e.stack?.split("\n")[0]}`);
++    }
++  },
++};
+diff --git a/mobile/shared/modules/geckoview/moz.build b/mobile/shared/modules/geckoview/moz.build
+index e428f3d175..9a910dc0c9 100644
+--- a/mobile/shared/modules/geckoview/moz.build
++++ b/mobile/shared/modules/geckoview/moz.build
+@@ -31,6 +31,7 @@ EXTRA_JS_MODULES += [
+     "GeckoViewSelectionAction.sys.mjs",
+     "GeckoViewSessionStore.sys.mjs",
+     "GeckoViewSettings.sys.mjs",
++    "GeckoViewSQLiteBench.sys.mjs",
+     "GeckoViewStorageController.sys.mjs",
+     "GeckoViewTab.sys.mjs",
+     "GeckoViewTelemetry.sys.mjs",
+-- 
+2.47.3
+
