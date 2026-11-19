@@ -49,6 +49,28 @@ The plan's recommendation on each of its seven decisions, whole:
 - **The user makes the key.** The key machine is the user's, and no build of the first usable one is signed before
   the key exists. The registry entry is encri-api's to review.
 
+#### Why encriox's key is not encri's
+
+encri, Encri Files and Encri Images share one app signing key and one code transparency key (encri D115, D140; Encri
+Images I20). Asked on 2026-11-19 whether encriox should share them too, the answer recorded here is no, because it is
+the browser:
+
+- **It is the app most likely to be taken over.** It runs untrusted web code all day, through Gecko's native code.
+  Whatever the shared key grants would reach it: every `signature` permission encri defines (one today, which
+  `androidx.core` adds, D115), encri-api's trust in an encri signed by the same key (`EncriTrust.sameSigner`), and
+  anything granted that way later.
+- **It is signed far more often**: every two weeks, about 26 times a year, where the others are signed a few times.
+  Each signing handles the key, on the key machine.
+- **Sharing gains it nothing.** encri recognizes an app by the certificate its registry entry names, not by encri's
+  own (encri D114, D130), so a key of encriox's own is as official. What D115 gains from one key, that a user moves
+  between Play and GitHub without uninstalling, comes from each app keeping one key everywhere, not from apps sharing
+  one.
+
+**encri needs no update at encriox's two-week releases.** An app's certificate does not change between its updates,
+and a grant carries over an update signed with the certificate the registry names, at or above its floor, unless the
+registry refuses that version (encri D130). encri is updated once, with the registry snapshot that first names
+encriox, and again only if encriox's key is ever rotated.
+
 #### Flagged for veto
 
 1. **The S24's checks are taken as its owner's word** for encriox's first usable build alone, under `AGENTS.md`'s
