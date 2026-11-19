@@ -12,7 +12,7 @@ throwaway, and nothing it builds ships. Its `README.md` says how to build it and
 stage 1's app with Lockstore's switches on, and checks what they cover and whether a profile opens again (W12). It
 builds its own Gecko, from stage 1's checkout with `patches/` of its own on top, on the drive for large builds (W13),
 in which the profile's keys are kept under a secret from the vault's key, and checks what each store does when that
-key is locked (W14).
+key is locked (W14), and which does not start without the vault (W15).
 `LICENSE` is here too until a build of encriox itself has a brief. This brief is level 1; full records are in
 `docs/decisions/`.
 
@@ -51,11 +51,14 @@ key is locked (W14).
   corruption. Lockstore reports a locked key and a missing one alike, so a store tells them apart by asking whether
   the key exists. Deleting a key truncates Lockstore's write-ahead log, or the key is still on disk.
 - **Stage 2's Gecko waits at startup for the app's answer**, on Gecko's own thread: the secret, an HMAC of the vault's
-  key, or nothing (W14, flag 2). The app's main thread is never held, because encri-client's binding answers there.
-  The gate's `kek` setting is read by the next start, and the gate's own start may already have read the old one: set
-  it, then stop the app, before a fresh profile or a measured start.
-- **Never lock a test vault to measure a lock.** The gate's `--ez drop true` drops the vault's key from memory as a
-  lock does (W14, flag 5).
+  key (W14). The app's main thread is never held, because encri-client's binding answers there. With the vault
+  locked, encri's unlock comes up, and if the vault stays shut the app ends before Gecko opens anything of the
+  profile (W15). Only the gate's `kek withhold` starts Gecko locked. The gate's `kek` setting is read by the next
+  start, and the gate's own start may already have read the old one: set it, then stop the app, before a fresh
+  profile or a measured start.
+- **A test vault whose passphrase is on file may be locked**, and wiped if it does not open again (W15, the user's
+  word); `check-unlock` types the passphrase into encri's screen and never prints it. Not the G6's, which does not
+  open and would need its owner's screen lock again, nor the S24's.
 - **Measure from the phone's own loopback**, never over Wi-Fi: the A20's link ran at 0.4 MB/s (W4, *Rejected*).
 - **A script fails loudly.** A step that did not happen stops the run with a message; it never leaves a line out of
   the results or carries on under the wrong label.
@@ -123,6 +126,17 @@ key is locked (W14).
   fresh profile comes before the first start (W14).
 - A GeckoResult answers on the thread that asked, and a thread with no Looper cannot ask: the app follows the vault's
   key on the main thread (patch 0006).
+- encri's screens refuse a screenshot, which comes back empty; `uiautomator dump` reads them. On the G6 a tap meant
+  for encri's passphrase button reached *Unlock with fingerprint or screen lock*, which brought up the owner's
+  pattern: Back out of it (W15).
+- `monkey -p <package>` starts any of the app's launcher entries, and the debug build has two: it started
+  LeakCanary's. `check-unlock` starts `.App`, the browser's own (W15).
+- The A20's keyguard came back between two steps, and a page behind it never opened: `wake` retries until it has gone
+  (W15).
+- A URL with `&` given to `adb shell am start -d` is cut at the `&` by the phone's shell, which runs the rest as a
+  command: quote it again (2026-11-18).
+- **Local storage flushes a page's writes 5 seconds later**, and an origin's first flush makes its database, whose key
+  cannot be made while the profile's KEK is locked: a lock in between lost them (W15, *Bugs* in `ROADMAP.md`).
 - After an install of the 239 MB APK, the A20 answered slowly for some minutes: the vault in 9.7 s, near the app's 10 s
   limit, and a page did not open in two minutes, where the run before had taken 1.8 s and opened every page (W14).
 
@@ -163,6 +177,11 @@ key is locked (W14).
   start, in 326–396 ms on the S9 and 757 ms on the A20, leaving no LocalKey in Lockstore's database or its log. Gecko
   waited for the vault's answer 0.64–0.71 s on the S9 and 1.7–1.8 s on the A20, and the PBKDF2 unlock took 250–270 ms
   and 530–630 ms. On the G6, its vault locked, the app knew so after 1.9 s and the profile was made in the clear.
+- **A start with the vault locked brings up encri's unlock, and a refusal ends the browser** (W15): on the A20, the
+  unlock came up before Gecko opened anything of the profile, and only its startup caches and an empty
+  `.startup-incomplete` changed while it waited; a wrong passphrase left encri's screen up, and Back ended the browser,
+  out of the recent apps, with the profile as it was; on the G6 too. A real lock of the A20's vault locked Gecko's
+  keys as the gate's `drop` had, and the passphrase typed into encri's screen unlocked them.
 - **Stage 2's first Gecko build took 76 minutes**, 69 of them `mach build` at 86% of 8 cores, and a change to one pref
   8½. Its objdir holds 11 GB and its mach state 6.6 GB, on the drive for large builds; the checkout's clone took 14
   minutes, for 5.9 GB (W13).
@@ -179,6 +198,7 @@ key is locked (W14).
 | W12 | Stage 2's first round: what Lockstore's switches do at 160, and a fresh profile for each run (flag 1) |
 | W13 | Stage 2's own Gecko: QuotaManager fixed, SQLite on by default, its toolchain, and the phones back on stage 1 |
 | W14 | Stage 2's second round: the profile's keys under the vault's key, the stores following it, and what a lock does |
+| W15 | No start without the vault: encri's unlock at startup, a refusal ends the browser; a real lock measured |
 | encri-api L11, L12 | `write` saves only a finished writer; a writer's failure is told encri's reason |
 | encri D120, D145 | A grant is keyed on the package for good |
 
@@ -191,8 +211,8 @@ key is locked (W14).
   memory at a lock.
 - Patch 0010's locked path, on the G6 once its owner has unlocked it (`ROADMAP.md`).
 - A stopped download into the vault shows as failed, a cancelled one too (W5, flag 2).
-- Stage 2's third round, what `obfsvfs` costs, on stage 2's Gecko (W13); W13's three flags and W14's five.
-- A lock of the vault itself reaching Gecko's keys, which the gate's `drop` stands in for (W14, flag 5).
+- Stage 2's third round, what `obfsvfs` costs, on stage 2's Gecko (W13); W13's three flags and W15's four.
+- What a lock should do, which the lost local storage bears on (W15).
 
 ## Read next
 

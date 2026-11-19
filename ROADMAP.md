@@ -42,7 +42,9 @@ sources are there, and are not repeated here:
      suite's `CHANGELOG.md`);
    - **patch 0010's locked path, on the G6**, once its owner has unlocked its vault, which the spike locked and the
      passphrase on file does not open (W5): open the gate, lock with `--ez lock true`, and open it again, which must
-     ask to unlock.
+     ask to unlock. Typed quoted, so that its space and its `#` would reach encri, it still did not (W15), and a vault
+     made again there would ask for its owner's screen lock too, so it was not wiped. Stage 2's own lock and unlock
+     ran on the A20 instead (W15).
 4. **Spike stage 2 before writing any of it**: GeckoView with Lockstore's prefs on, on each phone. ~~Pick the branch,
    release or ESR, before it.~~ **Release, picked 2026-11-17 (W7)**, from stage 1's Firefox 160.0. A Gecko build needs
    at least 30 GB of disk by Mozilla's guide, and ~~the machine had 63 GB free on 2026-11-13, and 42 GB on
@@ -75,6 +77,12 @@ sources are there, and are not repeated here:
      start without the secret razed nothing; a lock mid-session stopped only what needed a new key. Without the
      stores' patch, the move razed the cookie store and the HTTP cache; and Lockstore's write-ahead log kept the moved
      keys' old LocalKeys, `kek_bytes` and all, until patch 9.
+   - ~~**The user's answers to W14**~~ **Done 2026-11-18 (W15)**: its flags stand; a test vault may be locked, and
+     wiped; and encriox does not start without the vault. Patch 0010 brings up encri's unlock at startup while Gecko
+     waits, and ends the browser if it is refused, before Gecko has opened anything of the profile
+     (`scripts/spike/stage-2/check-unlock`). On the A20 a real lock of the vault locked Gecko's keys as the gate's
+     `drop` had, the passphrase typed into encri's screen unlocked them, and a refused start left the profile as it
+     was; on the G6 too. A lock seconds after a page wrote lost its local storage, once (*Bugs*).
    - **What `obfsvfs` costs** against plain SQLite.
 5. **Ask Mozilla before carrying a patch**: an embedder-supplied KEK in GeckoView, beside the OS-keystore KEK of bug
    2055641. Who asks, and where, is open. Theirs to know too: Android Components' logins and autofill stores wait on
@@ -116,6 +124,11 @@ sources are there, and are not repeated here:
 
 ## Bugs
 
+- **S1 — A lock in the 5 seconds after a page first writes local storage loses what it wrote** (W15). Gecko flushes
+  local storage 5 seconds after a write, and an origin's first flush makes its database, whose new key cannot be made
+  while the profile's KEK is locked: the writes never reach the disk. Measured once on the A20, and not in a second
+  run. It waits on what a lock should do (`open-questions.md`, *Lock behaviour*): stopping Gecko, and letting it
+  flush, before its keys are locked would not lose them.
 - **S3 — A lock leaves the logins' and the cards' keys in memory** until the process ends: the stores keep the keys
   they were given, and the spike wipes only its own at a lock (W6, flag 3). What a lock should do is
   `open-questions.md`'s *Lock behaviour*.

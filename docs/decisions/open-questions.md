@@ -41,11 +41,16 @@ The first four were the study's *Open questions*, moved here when W1 was recorde
   given until the process ends, so a browser that keeps running after a lock keeps those keys in memory too; the
   spike wipes only its own key at a lock (W6). Gecko's do the same: with the profile's KEK locked mid-session, the
   cookie store's database and the HTTP cache's key, held since the start, went on writing, and only what needed a new
-  key failed (W14). Locking the KEK is not locking what Gecko has open.
-- **Starting Gecko with the vault locked** (W14, flag 2). The spike starts Gecko with the profile's keys locked when
+  key failed (W14), at a real lock of the vault too (W15). Locking the KEK is not locking what Gecko has open. And it
+  can lose what Gecko has not written yet: local storage flushes a page's writes 5 seconds later, and an origin's
+  first flush needs a new key, so a lock in between lost them on the A20 (W15). Stopping Gecko, and letting it flush,
+  before its keys are locked would not.
+- ~~**Starting Gecko with the vault locked** (W14, flag 2). The spike starts Gecko with the profile's keys locked when
   the vault is locked or does not answer in 10 seconds: cookies and permissions are kept in memory alone, sites'
   storage cannot be used, and nothing is razed. Should encriox start Gecko at all then, or wait for the vault, or ask
-  for it first? A profile made before the vault first opens is in the clear until it is given the secret (W14).
+  for it first? A profile made before the vault first opens is in the clear until it is given the secret (W14).~~ It
+  asks for it first, and does not start without it (W15): encri's unlock comes up while Gecko waits, and a refusal
+  ends the browser before Gecko has opened anything of the profile.
 - **A secret that does not open the profile's KEK**, as a replaced `encriox.key` would give: every key of the profile
   is out of reach for good. Gecko logs it and starts locked, keeping everything (read in the source; unmeasured).
   Whether encriox then starts a new profile, and what it tells the user, is open.

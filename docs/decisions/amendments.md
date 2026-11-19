@@ -23,3 +23,9 @@ Each entry corrects a record. Its bold lead names the record possessively ("W1's
 - **W12's ways to turn SQLite's switch on** (2026-11-18, W13): editing the published GeckoView's prefs is not one.
   Gecko's launch guard reads the switch before any pref is loaded, so a profile a pref encrypted is refused at its
   next start, as the S9's was. A build turns it on by its default.
+- **W14's second flag** (2026-11-18, W15): Gecko no longer starts with the profile's keys locked when the vault is
+  locked or does not answer. On the user's word, the app brings up encri's unlock while Gecko waits, and ends before
+  Gecko has opened anything of the profile if the vault stays shut. Only the gate's `kek withhold` starts it locked.
+- **W14's fifth flag** (2026-11-18, W15): a vault was locked, on the user's word. The A20's, locked through the gate as
+  encri's own *Lock* does, had the app lock Gecko's keys as the gate's `drop` had, and opened again with the
+  passphrase on file, typed into encri's screen.

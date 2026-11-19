@@ -4,6 +4,25 @@ What happened, newest first. Why is in `docs/decisions/`, and what is next is in
 
 ## Unreleased
 
+### encriox does not start without the vault (2026-11-18)
+
+At the user's word, W14's flags stand, a test vault may be locked to measure a lock, and **encriox does not start
+without the vault** (W15). With the vault locked at startup, stage 2's spike brings up encri's unlock while Gecko
+waits; if the vault stays shut, the browser ends before Gecko has opened anything of the profile (patch 0010). On the
+A20, `check-unlock` locked the vault for real and unlocked it by typing the passphrase on file into encri's screen.
+**A real lock locked Gecko's keys** as the gate's `drop` had, and the unlock unlocked them. **A start with the vault
+locked** brought up the unlock first, and only Gecko's startup caches changed while it waited. **A refused one ended
+the browser**, out of the recent apps, with the profile as it was; on the G6 too, whose vault stays locked. Four
+points are flagged for veto.
+
+**Found:** a lock seconds after a page wrote lost its local storage, once in two runs on the A20 (`ROADMAP.md`,
+*Bugs*). Gecko flushes local storage 5 seconds after a write, and an origin's first flush needs a key that cannot be
+made while the profile's keys are locked. The G6's vault did not open with the passphrase on file typed quoted either,
+and a vault made again there would need its owner's screen lock, so it was not wiped.
+
+`check-unlock`'s first run stopped behind the A20's keyguard, which had come back; its `wake` now retries until the
+keyguard has gone.
+
 ### Stage 2's second round: the vault's key keeps the profile's keys (2026-11-18)
 
 At the user's word, stage 2 keeps every key of Gecko's profile under a password KEK whose secret is an HMAC of the
