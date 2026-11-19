@@ -1,9 +1,9 @@
 # encriox's first usable build: a plan
 
 *2026-11-18 · a study, drafted at the user's request ("draft the plan for a first usable build"), after stage 2's
-three rounds (W12 to W16). Nothing in it is decided. Each choice it asks for is the user's and becomes a record of its
-own, and its work enters `ROADMAP.md` once the user has chosen. Where it says "recommended", the rest of the plan
-assumes that answer.*
+three rounds (W12 to W16). **Accepted whole on 2026-11-19** (W17: "go with all your recommendations"): every
+"recommended" below is the user's decision, and the work is `ROADMAP.md`'s item 6. W17 is the record; this is the
+reasoning it was chosen from.*
 
 ## What "usable" means here
 

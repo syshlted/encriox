@@ -9,7 +9,9 @@ encrypted with a key only the unlocked vault can give it. It reaches the vault t
 phones ([`scripts/spike/stage-1/`](scripts/spike/stage-1/README.md)). The design is the Firefox fork that
 [`docs/feasibility-study.md`](docs/feasibility-study.md) found the most feasible of three, chosen in
 [W1](docs/decisions/W001-a-firefox-fork-reaching-the-vault-through-encri-api.md). See [`ROADMAP.md`](ROADMAP.md) for
-what comes next.
+what comes next: encriox's first usable build, planned in
+[`docs/first-usable-build.md`](docs/first-usable-build.md) and accepted in
+[W17](docs/decisions/W017-encriox-s-first-usable-build.md).
 
 Its sibling on Chromium is encrimium, a project of its own, still to come.
 

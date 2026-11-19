@@ -210,20 +210,21 @@ key is locked (W14), which does not start without the vault (W15), and what its 
 | W14 | Stage 2's second round: the profile's keys under the vault's key, the stores following it, and what a lock does |
 | W15 | No start without the vault: encri's unlock at startup, a refusal ends the browser; a real lock measured |
 | W16 | Stage 2's third round: what obfsvfs costs against plain SQLite, in Gecko's SQLite and in a site's IndexedDB |
+| W17 | encriox's first usable build: about 20 of the spikes' 30 patches are its own; it closes at a lock |
 | encri-api L11, L12 | `write` saves only a finished writer; a writer's failure is told encri's reason |
 | encri D120, D145 | A grant is keyed on the package for good |
 
 ## Open here
 
-- How a release sets Gecko prefs, how the fork is carried, and what a lock does, which decides whether the stores' keys
-  may stay in memory after one (`docs/decisions/open-questions.md`; W6, flag 3).
+- Which of the spikes' patches become encriox's, in its first usable build (W17; `ROADMAP.md`, item 6), where encriox
+  closes at a lock and its prefs are its own Gecko's defaults.
 - The S24's run waits for its owner's word: `check-plaintext`, `measure`, `check-stopped` and `check-keys`.
 - W6's three flags: the key as a document in the vault, an unopenable key taken as lost, and the stores' keys left in
   memory at a lock.
 - Patch 0010's locked path, on the G6 once its owner has unlocked it (`ROADMAP.md`).
 - A stopped download into the vault shows as failed, a cancelled one too (W5, flag 2).
 - W13's three flags, W15's four and W16's three.
-- What a lock should do, which the lost local storage bears on (W15).
+- W17's three flags.
 
 ## Read next
 

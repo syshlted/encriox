@@ -4,6 +4,16 @@ What happened, newest first. Why is in `docs/decisions/`, and what is next is in
 
 ## Unreleased
 
+### encriox's first usable build, decided (2026-11-19)
+
+The user accepted the plan's seven recommendations whole (W17): encriox closes at a lock, letting Gecko write what it
+holds before its keys are locked; Fenix's own records of pages are sealed with the vault's key or kept in memory, with
+no history and no bookmarks in the first build; Mozilla's services are off but for Remote Settings' lists and Safe
+Browsing; encriox's own key is made on the key machine before its first build, and its registry entry filed once it
+exists; its version is the Firefox release and its own count; a vault's key that does not open the profile stops it;
+and its checks run on the S24. Six open questions are answered, and the work is `ROADMAP.md`'s item 6. Nothing of it
+is built yet. Three points are flagged for veto.
+
 ### A plan for encriox's first usable build (2026-11-18)
 
 At the user's request, `docs/first-usable-build.md` plans encriox itself, built from this repository, signed with its

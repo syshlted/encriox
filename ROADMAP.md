@@ -102,21 +102,45 @@ sources are there, and are not repeated here:
    a deleted key in Lockstore's write-ahead log (patch 0009); Mozilla's own adoption of a primary password moves the
    HTTP cache's key the same way, and its prompt cannot work on GeckoView, whose `promptPassword` calls a method that
    does not exist.
+6. **The first usable build** (W17; `docs/first-usable-build.md`): encriox itself, built from this repository, signed
+   with its own key and used every day on the user's phones, before anything is published. The user accepted the
+   plan's seven recommendations: encriox closes at a lock; Fenix's own records of pages are sealed with the vault's
+   key or kept in memory, with no history and no bookmarks in the first build; Mozilla's services are off but for
+   Remote Settings' lists and Safe Browsing; encriox's key comes first; its version is the Firefox release and its own
+   count; a key that does not open the profile stops it; and its checks run on the S24. In order, sized as the plan
+   sizes them (S, M, L):
+   - **The repository and the build**: `patches/`, `scripts/` and the file naming the Firefox release (W9), S; the
+     series moved onto the newest release tag, the first measure of a rebase's cost, M; a build type of encriox's
+     own, minified, Gecko optimised, without Fenix's `sharedUserId`, with a `.debug` type beside it, M; the branding,
+     every string and icon that names Firefox, M; Gecko's prefs as the build's defaults, S.
+   - **The spikes' patches that are encriox's**, about 20 of 30, rewritten without the gate and with `.encriox.key`,
+     M.
+   - **What the spikes left**: closing at a lock, with what Gecko's shutdown writes measured, M; Fenix's records of
+     pages, L; Mozilla's services off, with a check that a session reaches no other server, M; a key that does not
+     open the profile, S; the About screen's line and the version, S.
+   - **The checks**, from the spikes' `check-plaintext`, `check-lockstore`, `check-unlock` and `check-stopped`, run by
+     the script that follows each Firefox release (W9), M.
+   - **The key and the registry**: the user makes encriox's key on the key machine with encri's kit (encri D141);
+     then its entry in encri-api's registry, `registry/com.systemhalted.encriox.app` with a floor (W8, encri D130).
+   - **The first usable build**, signed, on the S9, the A20 and the S24, the S24's rounds each named to the user
+     first (W17, flag 1), and used for some days. Then a signed build at every Firefox release, every two weeks.
 
 ## Before the first release
 
-- **A plan for the first usable build**, drafted 2026-11-18 in `docs/first-usable-build.md`: encriox itself, used every
-  day on the user's phones before anything is published. It asks the user seven things first, among them what a lock
-  does, what of Fenix's own records of pages is sealed or dropped, and encriox's signing key, and nothing in it starts
-  before the user has chosen.
+- ~~**A plan for the first usable build**, drafted 2026-11-18 in `docs/first-usable-build.md`.~~ **Accepted 2026-11-19
+  (W17)**, as item 6.
 - **Settle what is permanent**: ~~the product's name, which cannot contain "Firefox";~~ **named encriox
   2026-11-14 (W3)**; ~~its package, on which a grant is keyed for good (encri D120, D145);~~ **`com.systemhalted.encriox`
   2026-11-17 (W8)**; and its registry entry in encri-api, `registry/com.systemhalted.encriox.app` with a floor, without
-  which a user consents again at every release (W8, encri D130). Moved after the spikes by W1.
+  which a user consents again at every release (W8, encri D130), filed in item 6 once encriox's key exists (W17).
 - **Following Firefox's releases** (W9): the file naming the release encriox is built on; the script that applies the
   series to the newest release tag, builds and tests, and stops at the first thing it cannot do; the About screen's
-  line; and `README.md` and each release's `CHANGELOG.md` entry naming the release. encriox's own version is open
-  (`open-questions.md`).
+  line; and `README.md` and each release's `CHANGELOG.md` entry naming the release. ~~encriox's own version is
+  open~~ Its version is the Firefox release and its own count (W17). The script and the line come in item 6.
+- **Where it is published**: GitHub releases, as the suite's open-source apps' builds are (encri D143), F-Droid, or
+  Google Play, where encri is (encri D142). The user's to choose.
+- **History and bookmarks in a sealed store**, which the first build goes without (W17): `places.sqlite` has no hook
+  for a key (`open-questions.md`, *application-services*).
 - ~~**A trademark search for encriox**, in the US, EU, international and Japanese registers (W3).~~ **A knock-out
   search, 2026-11-17** (`docs/trademark-search.md`): no ENCRIOX in TMview, which holds those registers' records, or in
   Trademarkia's US data; no use found; and `.com`, `.net`, `.org` and `.app` unregistered. The offices' own searches
@@ -136,11 +160,11 @@ sources are there, and are not repeated here:
 - **S1 — A lock in the 5 seconds after a page first writes local storage loses what it wrote** (W15). Gecko flushes
   local storage 5 seconds after a write, and an origin's first flush makes its database, whose new key cannot be made
   while the profile's KEK is locked: the writes never reach the disk. Measured once on the A20, and not in a second
-  run. It waits on what a lock should do (`open-questions.md`, *Lock behaviour*): stopping Gecko, and letting it
-  flush, before its keys are locked would not lose them.
+  run. encriox closes at a lock, letting Gecko write what it holds before its keys are locked (W17), which ends it
+  once item 6 builds it.
 - **S3 — A lock leaves the logins' and the cards' keys in memory** until the process ends: the stores keep the keys
-  they were given, and the spike wipes only its own at a lock (W6, flag 3). What a lock should do is
-  `open-questions.md`'s *Lock behaviour*.
+  they were given, and the spike wipes only its own at a lock (W6, flag 3). encriox closes at a lock (W17), which ends
+  it once item 6 builds it.
 - **S4 — A download into the vault that stopped shows as failed**, a cancelled one too, where Fenix's own writer shows
   it paused or cancelled (W5, flag 2). *Try again* starts it from the start.
 
