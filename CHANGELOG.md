@@ -4,6 +4,21 @@ What happened, newest first. Why is in `docs/decisions/`, and what is next is in
 
 ## Unreleased
 
+### Stage 2's third round: what obfsvfs costs (2026-11-18)
+
+At the user's word, stage 2's Gecko times the same work on plain SQLite and through obfsvfs, in its own SQLite and
+mozStorage, outside the profile (`scripts/spike/stage-2/`, patch 0011, W16). On the G6 and the A20, **obfsvfs took
+twice plain SQLite's time to scan a table or read rows scattered across it**, wherever a page came from the file
+rather than mozStorage's cache, a third more to write in bulk, and nothing for small commits, whose 8 KiB pages write
+less than plain's 32 KiB. A page took 24 µs to decrypt on the G6 and 58 µs on the A20. **A site's IndexedDB showed no
+cost** above its own variation, on a plain build against stage 2's. Three points are flagged for veto. The S9 was not
+attached.
+
+**Found:** the SQLite switch alone puts every database under the profile through obfsvfs, a site's IndexedDB, local
+storage and Cache API among them, with QuotaManager's switch off; QuotaManager's switch is what encrypts the files
+beside them, as the Cache API's bodies. So a plain IndexedDB needs a build whose SQLite default is off, and the round's
+first design, QuotaManager's switch on against off, compared obfsvfs with obfsvfs.
+
 ### encriox does not start without the vault (2026-11-18)
 
 At the user's word, W14's flags stand, a test vault may be locked to measure a lock, and **encriox does not start

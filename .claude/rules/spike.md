@@ -12,7 +12,7 @@ throwaway, and nothing it builds ships. Its `README.md` says how to build it and
 stage 1's app with Lockstore's switches on, and checks what they cover and whether a profile opens again (W12). It
 builds its own Gecko, from stage 1's checkout with `patches/` of its own on top, on the drive for large builds (W13),
 in which the profile's keys are kept under a secret from the vault's key, and checks what each store does when that
-key is locked (W14), and which does not start without the vault (W15).
+key is locked (W14), which does not start without the vault (W15), and what its encryption of SQLite costs (W16).
 `LICENSE` is here too until a build of encriox itself has a brief. This brief is level 1; full records are in
 `docs/decisions/`.
 
@@ -135,6 +135,11 @@ key is locked (W14), and which does not start without the vault (W15).
   (W15).
 - A URL with `&` given to `adb shell am start -d` is cut at the `&` by the phone's shell, which runs the rest as a
   command: quote it again (2026-11-18).
+- `Cu.now()` is gone at 160: a module of Gecko's times itself with `ChromeUtils.now()` (patch 0011).
+- **The SQLite switch alone puts every database under the profile through obfsvfs**, a site's IndexedDB, local
+  storage and Cache API too, with QuotaManager's switch off and the origin recorded plaintext. Comparing QuotaManager's
+  switch on and off compared obfsvfs with obfsvfs; a plain side needs a build whose SQLite default is off (W16).
+- mozStorage opens every database with `synchronous = OFF` on Android; each store sets its own (W16).
 - **Local storage flushes a page's writes 5 seconds later**, and an origin's first flush makes its database, whose key
   cannot be made while the profile's KEK is locked: a lock in between lost them (W15, *Bugs* in `ROADMAP.md`).
 - After an install of the 239 MB APK, the A20 answered slowly for some minutes: the vault in 9.7 s, near the app's 10 s
@@ -182,6 +187,11 @@ key is locked (W14), and which does not start without the vault (W15).
   `.startup-incomplete` changed while it waited; a wrong passphrase left encri's screen up, and Back ended the browser,
   out of the recent apps, with the profile as it was; on the G6 too. A real lock of the A20's vault locked Gecko's
   keys as the gate's `drop` had, and the passphrase typed into encri's screen unlocked them.
+- **What obfsvfs costs** (W16), against plain SQLite in Gecko's own, 50,000 rows and five rounds: twice plain's time
+  for a scan or reads scattered over a table, which miss mozStorage's 2 MiB cache, on the G6 and the A20; 1.3 to 1.4
+  times for a bulk insert or an index; nothing for small commits. A page took 24 µs to decrypt on the G6 and 58 µs on
+  the A20. A site's IndexedDB, plain against obfsvfs on builds differing in the SQLite default alone, showed no
+  difference above rounds that spread two- to threefold.
 - **Stage 2's first Gecko build took 76 minutes**, 69 of them `mach build` at 86% of 8 cores, and a change to one pref
   8½. Its objdir holds 11 GB and its mach state 6.6 GB, on the drive for large builds; the checkout's clone took 14
   minutes, for 5.9 GB (W13).
@@ -199,6 +209,7 @@ key is locked (W14), and which does not start without the vault (W15).
 | W13 | Stage 2's own Gecko: QuotaManager fixed, SQLite on by default, its toolchain, and the phones back on stage 1 |
 | W14 | Stage 2's second round: the profile's keys under the vault's key, the stores following it, and what a lock does |
 | W15 | No start without the vault: encri's unlock at startup, a refusal ends the browser; a real lock measured |
+| W16 | Stage 2's third round: what obfsvfs costs against plain SQLite, in Gecko's SQLite and in a site's IndexedDB |
 | encri-api L11, L12 | `write` saves only a finished writer; a writer's failure is told encri's reason |
 | encri D120, D145 | A grant is keyed on the package for good |
 
@@ -211,7 +222,7 @@ key is locked (W14), and which does not start without the vault (W15).
   memory at a lock.
 - Patch 0010's locked path, on the G6 once its owner has unlocked it (`ROADMAP.md`).
 - A stopped download into the vault shows as failed, a cancelled one too (W5, flag 2).
-- Stage 2's third round, what `obfsvfs` costs, on stage 2's Gecko (W13); W13's three flags and W15's four.
+- W13's three flags, W15's four and W16's three.
 - What a lock should do, which the lost local storage bears on (W15).
 
 ## Read next

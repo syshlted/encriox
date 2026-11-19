@@ -83,7 +83,12 @@ sources are there, and are not repeated here:
      (`scripts/spike/stage-2/check-unlock`). On the A20 a real lock of the vault locked Gecko's keys as the gate's
      `drop` had, the passphrase typed into encri's screen unlocked them, and a refused start left the profile as it
      was; on the G6 too. A lock seconds after a page wrote lost its local storage, once (*Bugs*).
-   - **What `obfsvfs` costs** against plain SQLite.
+   - ~~**What `obfsvfs` costs** against plain SQLite.~~ **Done 2026-11-18 (W16)**,
+     `scripts/spike/stage-2/check-obfsvfs`, with patch 0011, on the G6 and the A20. In Gecko's own SQLite, twice
+     plain's time where a page is read from the file, a scan or reads scattered across a table, a third more to write
+     in bulk, and nothing on small commits, whose 8 KiB pages write less than plain's 32 KiB: 24 µs to decrypt a page
+     on the G6, 58 on the A20. A site's IndexedDB showed no cost above its own variation. Found: the SQLite switch
+     alone puts every database under the profile through obfsvfs, site storage's too. The S9 was not attached.
 5. **Ask Mozilla before carrying a patch**: an embedder-supplied KEK in GeckoView, beside the OS-keystore KEK of bug
    2055641. Who asks, and where, is open. Theirs to know too: Android Components' logins and autofill stores wait on
    themselves for good once their key is lost, which the spike carries a fix for (W6, patch 0018); QuotaManager's
