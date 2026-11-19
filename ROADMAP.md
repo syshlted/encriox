@@ -105,6 +105,10 @@ sources are there, and are not repeated here:
 
 ## Before the first release
 
+- **A plan for the first usable build**, drafted 2026-11-18 in `docs/first-usable-build.md`: encriox itself, used every
+  day on the user's phones before anything is published. It asks the user seven things first, among them what a lock
+  does, what of Fenix's own records of pages is sealed or dropped, and encriox's signing key, and nothing in it starts
+  before the user has chosen.
 - **Settle what is permanent**: ~~the product's name, which cannot contain "Firefox";~~ **named encriox
   2026-11-14 (W3)**; ~~its package, on which a grant is keyed for good (encri D120, D145);~~ **`com.systemhalted.encriox`
   2026-11-17 (W8)**; and its registry entry in encri-api, `registry/com.systemhalted.encriox.app` with a floor, without

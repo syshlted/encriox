@@ -4,6 +4,16 @@ What happened, newest first. Why is in `docs/decisions/`, and what is next is in
 
 ## Unreleased
 
+### A plan for encriox's first usable build (2026-11-18)
+
+At the user's request, `docs/first-usable-build.md` plans encriox itself, built from this repository, signed with its
+own key and used every day on the user's phones, after the spikes. It asks the user seven things first, with a
+recommendation for each: that encriox close at a lock; that Fenix's own records of pages be sealed with the vault's key
+or kept in memory, with history and bookmarks off in the first build; that Mozilla's services be off but for what keeps
+the browser safe; that encriox's key be made before its first build; its version; what to do when the vault's key does
+not open the profile; and the phones, the S24 among them. Then the work, in order and sized: about 20 of the spikes'
+30 patches are encriox's. Nothing is decided.
+
 ### Stage 2's third round: what obfsvfs costs (2026-11-18)
 
 At the user's word, stage 2's Gecko times the same work on plain SQLite and through obfsvfs, in its own SQLite and
