@@ -24,6 +24,10 @@ From its second round the profile's keys are kept under a secret from the vault'
 - the gate can drop the vault's key, as a lock does, without locking the vault (0008);
 - Lockstore truncates its write-ahead log when it deletes a key, which otherwise stays on disk there (0009).
 
+The browser does not start without the vault (W15): with the vault locked, or not letting the browser in, at startup,
+the app brings up encri's own screens while Gecko waits, and if the vault is still shut once they are done, it ends
+before Gecko has opened anything of the profile (0010).
+
 ## Building
 
 On the drive for large builds (W7). The checkout's objdir and mach's state go beside it there, with the toolchains
@@ -51,7 +55,8 @@ git -C <firefox> format-patch -o "$PWD/scripts/spike/stage-2/patches" --no-numbe
 
 The phones and the rules are stage 1's (`../stage-1/README.md`): the ones that hold encri's test vaults, and the S24
 only with its owner's word. `ADB` works as it does there. Every start of the app asks the vault for the secret first;
-with the vault locked, Gecko starts with the profile's keys locked, or makes a profile in the clear.
+with the vault locked, encri's unlock comes up, and the app stops if it is refused. Only the gate's `kek withhold`
+starts Gecko with the profile's keys locked, or makes a profile in the clear.
 
 - `check-lockstore <serial>`: gives the spike a fresh Gecko profile, runs stage 1's `check-plaintext <serial> normal`
   with this directory's config, prints the Gecko that made the profile, the header of every SQLite file in it and each
@@ -61,6 +66,10 @@ with the vault locked, Gecko starts with the profile's keys locked, or makes a p
   start, given again, locked mid-session, the vault's key dropped and read again, and a profile made without it and
   then given it. It prints what each store read back, the files and keys that changed while locked, and which KEK
   wraps each key, with any LocalKey left in Lockstore's database or its log. The vault must be open to the spike.
+- `check-unlock <serial>`: the vault itself locked and unlocked (W15), in five steps (its header): a lock mid-session,
+  then encri's unlock from the gate; a start with the vault locked, unlocked; one where the unlock is refused, which
+  must stop the app and leave the profile as it was; and the vault left open. It types the passphrase on file into
+  encri's screen, never printing it, so it is for a test vault whose passphrase is on file; the G6's would not open.
 - The gate's controls (`EncriGateActivity`): `--es kek give|withhold` for the next start's secret, `--es profile
   lock|unlock` for the running Gecko's keys, and `--ez drop true` to drop the vault's key as a lock does.
 - `fresh-profile <serial>`: deletes the spike's Gecko profile and its cache, and nothing else. A profile's SQLite

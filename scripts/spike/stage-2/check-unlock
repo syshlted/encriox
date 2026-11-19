@@ -1,0 +1,293 @@
+#!/bin/sh
+# The vault itself locked and unlocked under stage 2's spike (W15): Gecko's keys follow a real lock of the vault, and a
+# start with the vault locked brings up encri's unlock, and does not go on without it. It locks the phone's vault and
+# unlocks it again by typing the passphrase on file into encri's own screen, so it is for a test vault whose passphrase
+# is on file, and the phone's owner's word.
+#
+#   scripts/spike/stage-2/check-unlock <adb serial>
+#
+# PASSPHRASES names the file of `<serial>=<passphrase>` lines, ~/.config/encri-images/test-vaults by default. The
+# passphrase is never printed.
+#
+# 1. The vault open at start: the secret is given without asking the user, and a first origin's stores are written,
+#    and given a minute in the session to reach the disk.
+# 2. The vault locked mid-session, by the gate as encri's own Lock does, seconds after a second origin's stores are
+#    written: the app must lock Gecko's keys, and a third origin's site storage fails. Then the gate asks encri to
+#    unlock, the passphrase is typed, the app must unlock Gecko's keys, and a fourth origin's stores are written. A
+#    start with the vault open reads back the first, the second and the fourth: local storage keeps a page's writes in
+#    memory a while, and the second's met the lock there.
+# 3. The vault locked at start, and unlocked: started from its launcher entry, the app must bring up encri's unlock
+#    before Gecko opens anything of the profile, and once the passphrase is typed, read the first origin back.
+# 4. The vault locked at start, and not unlocked: a wrong passphrase, then Back. The app must stop, leave the recent
+#    apps, and change nothing of the profile.
+# 5. The vault unlocked again through the gate, and the fourth origin read back at a start with it open.
+#
+# The vault must be open to the spike when it starts, and is left open.
+set -eu
+export LC_ALL=C
+
+here=$(cd "$(dirname "$0")" && pwd)
+stage1=$(cd "$here/../stage-1" && pwd)
+serial=${1:?usage: check-unlock <adb serial>}
+package=com.systemhalted.encri.browser.spike
+encri=com.systemhalted.encri
+ports=
+adb="${ADB:-$HOME/Android/Sdk/platform-tools/adb} -s $serial"
+passphrases=${PASSPHRASES:-$HOME/.config/encri-images/test-vaults}
+work=$(mktemp -d)
+server=
+trap '[ -z "$server" ] || kill "$server" 2>/dev/null || true; for p in $ports; do $adb reverse --remove tcp:$p 2>/dev/null || true; done; rm -rf "$work"' EXIT
+
+fail() {
+    echo "check-unlock: $*" >&2
+    exit 1
+}
+
+grep -q "^$serial=" "$passphrases" 2>/dev/null || fail "no passphrase for $serial in $passphrases"
+
+applog() { $adb logcat -d -s encriox-spike:I | sed 's/^.*encriox-spike: //'; }
+said() { applog | grep -E "$1" | sed 's/^/    /' || true; }
+
+# Starts the gate with the extras after the first two arguments, and waits up to $2 seconds for a line matching $1.
+gate() {
+    want=$1
+    wait=$2
+    shift 2
+    $adb logcat -c
+    $adb shell am start -n $package/org.mozilla.fenix.encri.EncriGateActivity "$@" >/dev/null
+    awaitlog "$want" "$wait"
+}
+
+awaitlog() {
+    for _ in $(seq "$2"); do
+        applog | grep -qE "$1" && return 0
+        sleep 1
+    done
+    applog >&2
+    fail "the app did not log /$1/ within $2s"
+}
+
+# The phone awake and its keyguard down, which on the A20 comes back: a page behind it never opens (W6).
+wake() {
+    for _ in $(seq 10); do
+        $adb shell input keyevent KEYCODE_WAKEUP
+        $adb shell wm dismiss-keyguard
+        sleep 1
+        $adb shell dumpsys window | grep -m1 mCurrentFocus | grep -qE 'NotificationShade|Keyguard|StatusBar' || return 0
+    done
+    fail "the keyguard would not go"
+}
+
+resumed() { $adb shell dumpsys activity activities | grep -m1 mResumedActivity | tr -d '\r'; }
+running() { [ -n "$($adb shell pidof $package | tr -d '\r')" ]; }
+
+# Waits up to $1 seconds for encri's own screen to be the one in front.
+awaitencri() {
+    for _ in $(seq "$1"); do
+        resumed | grep -q "$encri/.VaultActivity" && return 0
+        sleep 1
+    done
+    fail "encri's screen did not come up within $1s; in front: $(resumed)"
+}
+
+# The centre of the first node of encri's screen whose text is $1, from a dump of the screen.
+centre() {
+    $adb shell uiautomator dump /sdcard/encriox-ui.xml >/dev/null
+    $adb exec-out cat /sdcard/encriox-ui.xml | python3 -I -c '
+import re, sys
+want = sys.argv[1]
+for node in re.findall(r"<node [^>]*>", sys.stdin.read()):
+    a = dict(re.findall(r"([\w-]+)=\"([^\"]*)\"", node))
+    if a.get("package") == "com.systemhalted.encri" and a.get("text", "").upper() == want.upper():
+        x1, y1, x2, y2 = map(int, re.findall(r"\d+", a["bounds"]))
+        print((x1 + x2) // 2, (y1 + y2) // 2)
+        break
+' "$1"
+}
+
+# Types into encri's unlock the passphrase on file, or with `wrong`, one that is not, and presses its button. The
+# passphrase goes to the phone's shell quoted, and `input text` takes %s for a space.
+unlock() {
+    field=$(centre Passphrase)
+    [ -n "$field" ] || fail "encri's screen has no passphrase field"
+    $adb shell input tap $field
+    if [ "${1:-}" = wrong ]; then
+        $adb shell input text "not-the-passphrase"
+    else
+        # Quoted once more for the phone's shell, where an unquoted # would end the line.
+        secret=$(python3 -I -c '
+import shlex, sys
+for line in open(sys.argv[1]):
+    if line.startswith(sys.argv[2] + "="):
+        print(shlex.quote(line.rstrip("\n").split("=", 1)[1].replace(" ", "%s")))
+' "$passphrases" "$serial")
+        $adb shell input text "$secret"
+        secret=
+    fi
+    # The keyboard may cover the button: Back hides it, and only while it is shown.
+    $adb shell dumpsys input_method | grep -q 'mInputShown=true' && $adb shell input keyevent KEYCODE_BACK
+    button=$(centre "Unlock with passphrase")
+    [ -n "$button" ] || fail "encri's screen has no unlock button"
+    $adb shell input tap $button
+}
+
+# Locks the vault through the gate, as encri's own Lock does, in a session whose Gecko holds its keys, and waits for
+# the app to lock them.
+lockvault() {
+    gate "^lock " 60 --ez lock true
+    awaitlog "profile lock(ed| failed)" 30
+    said '^lock |profile lock'
+}
+
+page() {
+    path=$1
+    marker=$2
+    want=$3
+    at=$4
+    [ -z "$server" ] || kill "$server" 2>/dev/null || true
+    "$stage1/serve" "$at" "$marker" > "$work/served" 2>&1 &
+    server=$!
+    case " $ports " in *" $at "*) ;; *) ports="$ports $at" ;; esac
+    $adb reverse tcp:"$at" tcp:"$at" >/dev/null
+    sleep 1
+    wake
+    case $path in
+        /) url="http://127.0.0.1:$at/?run=$marker" ;;
+        *) url="http://127.0.0.1:$at/read?m=$marker" ;;
+    esac
+    timeout 120 $adb shell am start -W -a android.intent.action.VIEW -d "$url" \
+        -n $package/org.mozilla.fenix.IntentReceiverActivity >/dev/null || fail "$url did not open in 2 minutes"
+    reported=0
+    for _ in $(seq 60); do
+        reported=$(grep -c '^report' "$work/served" || true)
+        [ "$reported" -ge "$want" ] && break
+        sleep 1
+    done
+    echo "  $url: $reported of $want stores reported"
+    grep '^report' "$work/served" | sed 's/^report /    /'
+    if [ "$path" = /read ]; then
+        if grep -q "^request GET /cacheable?m=$marker" "$work/served"; then
+            echo "    httpCache: the request reached the server, so the cache did not answer it"
+        else
+            echo "    httpCache: answered from the cache"
+        fi
+    fi
+}
+
+# Home, and a minute for Gecko to write cookies, local storage and IndexedDB to disk, some while after a page does
+# (check-plaintext); then, with `stop`, the app stopped.
+settle() {
+    $adb shell input keyevent KEYCODE_HOME
+    sleep "${SETTLE:-60}"
+    [ "${1:-}" != stop ] || $adb shell am force-stop $package
+}
+
+files() {
+    $adb shell "run-as $package sh -c 'find files/mozilla cache -type f -exec ls -l {} \;'" | tr -d '\r' |
+        awk '{ print $NF, $5 }' | sort
+}
+
+# What changed in the profile between two of `files`, by name and size.
+changed() {
+    join -a1 -a2 -e - -o 0,1.2,2.2 "$1" "$2" | awk '$2 != $3 { print "    " $1 ": " $2 " -> " $3 }'
+}
+
+# From its launcher entry, as the user starts it. Not `monkey`, which may pick the debug build's other entry,
+# LeakCanary's.
+launch() {
+    wake
+    $adb logcat -c
+    $adb shell am start -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -n $package/.App >/dev/null
+}
+
+marker() { echo "ENCRIOX$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')"; }
+m1=$(marker)
+m2=$(marker)
+m3=$(marker)
+m4=$(marker)
+
+echo "== $serial: 1. the vault open at start"
+"$here/fresh-profile" "$serial"
+gate "kek withheld=false" 60 --es kek give
+awaitlog "profile secret (given|none)|encri is asked" 60
+said 'profile secret|unlock '
+applog | grep -q 'encri is asked' && fail "the vault must be open to the spike before this runs"
+$adb shell am force-stop $package
+$adb logcat -c
+page / "$m1" 8 8643
+said 'profile secret|unlock '
+settle
+
+echo "== 2. the vault locked mid-session, seconds after a page, then unlocked through encri's screen"
+page / "$m2" 8 8647
+lockvault
+page / "$m3" 8 8644
+wake
+$adb logcat -c
+$adb shell am start -n $package/org.mozilla.fenix.encri.EncriGateActivity --ez list true >/dev/null
+awaitencri 60
+unlock
+awaitlog "gate (open|still locked|not authorized|refused)" 60
+awaitlog "profile unlock(ed| failed)" 30
+said 'unlock |gate |key |profile '
+page / "$m4" 8 8645
+settle stop
+echo "  a start with the vault open, reading back the first, the second and the fourth origins"
+page /read "$m1" 6 8643
+said 'profile secret|unlock '
+page /read "$m2" 6 8647
+page /read "$m4" 6 8645
+echo "  each origin's local storage on disk:"
+$adb shell "run-as $package sh -c 'cd files/mozilla/*.default/storage/default && for o in *127.0.0.1*; do echo \"    \$o: \$(ls \$o/ls/data.sqlite 2>/dev/null || echo none)\"; done'" |
+    tr -d '\r'
+
+echo "== 3. the vault locked at start, and unlocked"
+lockvault
+$adb shell am force-stop $package
+files > "$work/files-3a"
+launch
+awaitencri 60
+said 'profile secret|unlock '
+files > "$work/files-3b"
+echo "  the profile while Gecko waits for the vault, against before the start:"
+changed "$work/files-3a" "$work/files-3b"
+unlock
+awaitlog "profile secret (given|none)" 60
+said 'profile secret|unlock |browser stops'
+page /read "$m1" 6 8643
+
+echo "== 4. the vault locked at start, and not unlocked"
+lockvault
+$adb shell am force-stop $package
+files > "$work/files-4a"
+launch
+awaitencri 60
+unlock wrong
+sleep 5
+resumed | grep -q "$encri/.VaultActivity" || fail "encri's screen went away after a wrong passphrase: $(resumed)"
+echo "  a wrong passphrase: encri's screen stays"
+$adb shell input keyevent KEYCODE_BACK
+awaitlog "browser stops" 30
+for _ in $(seq 15); do running || break; sleep 1; done
+running && fail "the app is still running after the unlock was refused"
+said 'profile secret|unlock |browser stops'
+echo "  the app's process: gone; in front: $(resumed | sed 's/^ *//')"
+$adb shell dumpsys activity recents | grep -q "realActivity=$package/" &&
+    echo "  in the recent apps: yes" || echo "  in the recent apps: no"
+files > "$work/files-4b"
+echo "  the profile, against before the start:"
+changed "$work/files-4a" "$work/files-4b"
+
+echo "== 5. the vault unlocked again through the gate"
+wake
+$adb logcat -c
+$adb shell am start -n $package/org.mozilla.fenix.encri.EncriGateActivity --ez list true >/dev/null
+awaitencri 60
+unlock
+awaitlog "gate (open|still locked|not authorized|refused)" 60
+said 'profile secret|unlock |gate |key '
+$adb shell am force-stop $package
+$adb logcat -c
+page /read "$m4" 6 8645
+said 'profile secret|unlock '
+$adb shell am force-stop $package
