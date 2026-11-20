@@ -65,6 +65,12 @@ the same searches.
   with the web, the app stores and the domain registries (`docs/trademark-search.md`). Nothing found blocks the name;
   the nearest live marks are ENCRY and MacPaw's ENCRYPTO, and Encrox, one letter off, is expired. encrium's is still
   owed, by its own project.
+- **W3's trademark search, beyond the knock-out one** (2026-11-20, the user's word: "Encriox is an open-source
+  project. If we receive a cease-and-desist letter, we will simply change the name then"): no clearance search by
+  counsel is run before the first public build. encriox keeps its name on the knock-out search, and a cease-and-desist
+  renames it: the app's label, its branding and its repository. Its package, on which encri keys a grant for good and
+  Play keys its listing (W8, encri D120), stays `com.systemhalted.encriox` unless the letter asks for that too, which
+  would make it a new app that every user installs and allows again.
 - **W3's name for the Chromium browser** (2026-11-18, W11): encrium is given up, because `encrium.com` appears to be a
   French technical-training academy's, and the browser is encrimium, *encri* and *(chro)mium*, with the package
   `com.systemhalted.encrimium`. Its knock-out search found nothing that blocks it (`docs/trademark-search.md`).

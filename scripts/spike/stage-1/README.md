@@ -6,7 +6,8 @@ for it, with `patches/` on top (W1, the study's *Stage 1*):
 - a throwaway package, `com.systemhalted.encri.browser.spike`, never published (W1, flag 1);
 - every tab private, a link from another app's included;
 - downloads into the folder the user gave it in the vault, through encri-client's `write`, all of one or none of it:
-  a download paused or cancelled part way leaves nothing (W5);
+  a download paused or cancelled part way leaves nothing (W5), shows as paused or cancelled, and resumes whole from
+  the start (W19);
 - a private tab's thumbnail kept in memory, never on disk (W6);
 - a key of its own, `encriox.key`, 32 random bytes in that folder and held in memory while the vault is open, which
   seals the logins' and the cards' keys in place of Fenix's `SecureAbove22Preferences`, and which those stores wait

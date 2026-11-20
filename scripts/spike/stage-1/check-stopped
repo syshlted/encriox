@@ -5,12 +5,15 @@
 #
 # A download of 16 MiB into the vault, from the spike's own server at 2 MiB/s, is stopped after 3 seconds through the
 # broadcast its notification's button sends. `unsized` has the server send no length, so the body ends when the
-# connection closes. With `retry`, it is then tried again through the broadcast the notification's *Try again* sends,
-# and a sized server answers that with the rest of the file, as a server that lets a download resume does.
+# connection closes. With `retry`, it is then started again through the broadcast of the button its notification then
+# offers, *Resume* for a paused download and *Try again* for a failed one, and a sized server answers a request for the
+# rest of the file with the rest, as a server that lets a download resume does.
 #
-# A download that stopped must leave nothing in the vault, and one tried again must arrive whole: 16777216 bytes.
-# The vault must be open to the spike: run the gate once (README.md). Prints the statuses the download passed
-# through, then what the vault holds of it.
+# A download that stopped must leave nothing in the vault, and one started again must arrive whole: 16777216 bytes.
+# It must show as what stopped it, paused or cancelled, and never as failed (ROADMAP.md, *Bugs*): a cancelled one is
+# not started again, and leaves nothing. The vault must be open to the spike: run the gate once (README.md). Prints
+# the statuses the download passed through, its notification, and what the vault holds of it, then fails if any of
+# those is wrong.
 set -eu
 
 serial=${1:?usage: check-stopped <adb serial> pause|cancel sized|unsized [retry]}
@@ -46,6 +49,8 @@ gate() {
     log | grep -q 'gate open' || { log | grep 'gate ' >&2; exit 1; }
 }
 
+# A stop takes the app's notifications with it, so that only this download's is read below.
+$adb shell am force-stop $package
 gate --ez clean true
 wait_for "clean removed=" 120
 
@@ -53,8 +58,18 @@ echo "== $serial: 16 MiB into the vault, $size, stopped by $how after 3 s${retry
 gate --ei fetch 16 --es sink encri --ez unsized $unsized --ei rate 2048 \
     --es stop "$how" --ei stop_after 3000 --ez retry $again
 wait_for "fetch settled" 240
-log | grep -E 'fetch (status|sent|settled)|loopback (Range|client went away)' | sed 's/^.*encriox-spike: /  /'
+fetched=$(log | grep -E 'fetch (status|sent|settled)|loopback (Range|client went away)' | sed 's/^.*encriox-spike: //')
+echo "$fetched" | sed 's/^/  /'
 $adb logcat -d -s AbstractFetchDownloadService:E | grep -m 2 -E 'marked as FAILED|IOException' | sed 's/^/  /' || true
+statuses=$(echo "$fetched" | sed -n 's/^fetch status .* status=\([A-Z]*\) .*/\1/p' | tr '\n' ' ')
+settled=$(echo "$fetched" | sed -n 's/^fetch settled .* status=\([A-Za-z]*\)$/\1/p')
+
+# What the notification says, title and text, for each of the spike's.
+echo "== its notification"
+$adb shell dumpsys notification --noredact | tr -d '\r' | awk -v pkg="$package" '
+    /NotificationRecord\(/ { mine = index($0, "pkg=" pkg " ") > 0 }
+    mine && /android\.(title|text)=/ { sub(/^ */, "  "); print }
+' | sort -u || true
 
 echo "== what the vault holds of it"
 gate --ez list true
@@ -64,3 +79,21 @@ echo "${held:-  nothing}"
 
 gate --ez clean true
 wait_for "clean removed=" 120
+
+wrong() {
+    echo "check-stopped: $*" >&2
+    exit 1
+}
+case " $statuses" in *" FAILED "*) wrong "the download showed as failed: $statuses" ;; esac
+if $again && [ "$how" = pause ]; then
+    [ "$settled" = COMPLETED ] || wrong "resumed, the download settled $settled, not COMPLETED"
+    echo "$held" | grep -q ' bytes=16777216$' || wrong "resumed, the vault does not hold it whole: ${held:-nothing}"
+else
+    case $how in
+        pause) [ "$settled" = PAUSED ] || wrong "paused, the download settled $settled, not PAUSED" ;;
+        cancel) [ "$settled" = CANCELLED ] || [ "$settled" = gone ] ||
+            wrong "cancelled, the download settled $settled, not CANCELLED" ;;
+    esac
+    [ -z "$held" ] || wrong "stopped, the vault holds some of it: $held"
+fi
+echo "== as it should: statuses $statuses; settled $settled"

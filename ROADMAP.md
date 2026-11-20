@@ -108,16 +108,23 @@ sources are there, and are not repeated here:
    key or kept in memory, with no history and no bookmarks in the first build; Mozilla's services are off but for
    Remote Settings' lists and Safe Browsing; encriox's key comes first; its version is the Firefox release and its own
    count; a key that does not open the profile stops it; and its checks run on the S24. In order, sized as the plan
-   sizes them (S, M, L):
+   sizes them (S, M, L), with the first two on the user's word of 2026-11-20 (W17's amendment):
+   - **The spikes' three bugs, before anything else** (*Bugs*, below): ~~a stopped download into the vault shown as
+     failed~~ **fixed 2026-11-20 (W19)**, stage 1's patch 0020; and closing at a lock, which ends the other two, in
+     stage 2, with what Gecko's shutdown writes measured, M.
+   - **History and bookmarks in a sealed store**, next: `places.sqlite` has no hook for a key (`open-questions.md`,
+     *application-services*), so the first step is to find how one is given it, L. W17 has the first usable build go
+     without them; whether it waits for them now is the user's to say.
    - **The repository and the build**: `patches/`, `scripts/` and the file naming the Firefox release (W9), S; the
      series moved onto the newest release tag, the first measure of a rebase's cost, M; a build type of encriox's
      own, minified, Gecko optimised, without Fenix's `sharedUserId`, with a `.debug` type beside it, M; the branding,
      every string and icon that names Firefox, M; Gecko's prefs as the build's defaults, S.
    - **The spikes' patches that are encriox's**, about 20 of 30, rewritten without the gate and with `.encriox.key`,
      M.
-   - **What the spikes left**: closing at a lock, with what Gecko's shutdown writes measured, M; Fenix's records of
-     pages, L; Mozilla's services off, with a check that a session reaches no other server, M; a key that does not
-     open the profile, S; the About screen's line and the version, S.
+   - **What the spikes left**: closing at a lock, carried from the spike (above); Fenix's records of pages, L;
+     Mozilla's services off, with a check that a session reaches no other server, M; a key that does not open the
+     profile, S; the About screen's line, naming the Firefox release and where the source is (W9, W18), and the
+     version, S.
    - **The checks**, from the spikes' `check-plaintext`, `check-lockstore`, `check-unlock` and `check-stopped`, run by
      the script that follows each Firefox release (W9), M.
    - **The key and the registry**: ~~the user makes encriox's key on the key machine with encri's kit (encri D141)~~
@@ -139,23 +146,29 @@ sources are there, and are not repeated here:
   series to the newest release tag, builds and tests, and stops at the first thing it cannot do; the About screen's
   line; and `README.md` and each release's `CHANGELOG.md` entry naming the release. ~~encriox's own version is
   open~~ Its version is the Firefox release and its own count (W17). The script and the line come in item 6.
-- **Where it is published**: GitHub releases, as the suite's open-source apps' builds are (encri D143), F-Droid, or
-  Google Play, where encri is (encri D142). The user's to choose.
-- **History and bookmarks in a sealed store**, which the first build goes without (W17): `places.sqlite` has no hook
-  for a key (`open-questions.md`, *application-services*).
+- ~~**Where it is published**: GitHub releases, as the suite's open-source apps' builds are (encri D143), F-Droid, or
+  Google Play, where encri is (encri D142). The user's to choose.~~ **Google Play alone, 2026-11-20 (W18)**, where
+  encri is (encri D142), with each release's source on the public remote, as MPL-2.0 asks, and the Play listing and the
+  About screen saying where. Two points flagged for veto: no APK on GitHub's releases, and a tag for each release.
+- ~~**History and bookmarks in a sealed store**, which the first build goes without (W17)~~ **Moved into item 6,
+  next after the bugs** (W17's amendment, 2026-11-20).
 - ~~**A trademark search for encriox**, in the US, EU, international and Japanese registers (W3).~~ **A knock-out
   search, 2026-11-17** (`docs/trademark-search.md`): no ENCRIOX in TMview, which holds those registers' records, or in
   Trademarkia's US data; no use found; and `.com`, `.net`, `.org` and `.app` unregistered. The offices' own searches
-  could not be queried. Whether counsel runs a clearance search before the first public build is the user's to say.
-- **A public remote** for this repository, before any build leaves the test phones (W2).
+  could not be queried. ~~Whether counsel runs a clearance search before the first public build is the user's to
+  say.~~ **None, 2026-11-20** (W3's amendment): encriox keeps its name, and a cease-and-desist renames it.
+- **A public remote** for this repository, before any build leaves the test phones (W2): ~~owed~~ **made by the user
+  2026-11-20**, `syshlted/encriox` on GitHub, public, holding only GitHub's first commit of `LICENSE` on `main`. This
+  repository's history is not pushed yet; its branch is `master` (`AGENTS.md`).
 - ~~**How encriox keeps its own key**: a document in the vault, as the spike does (W6, flag 1), the same wrapped by a
   Keystore key of its own, or wrapped by encri for its package, which is a change to the contract
   (`open-questions.md`).~~ **A hidden document in the vault, `.encriox.key`, for now (W10).**
 
 ## Later
 
-- **App-level security controls**, which the user expects users to benefit from (W10). With them, the two other ways
-  of keeping encriox's key: wrapped by a Keystore key of its own, or by encri for its package (`open-questions.md`).
+- **App-level security controls**, which the user expects users to benefit from (W10), and kept on the roadmap at the
+  user's word of 2026-11-20. With them, the two other ways of keeping encriox's key: wrapped by a Keystore key of its
+  own, or by encri for its package (`open-questions.md`). Which controls they are is not decided.
 
 ## Bugs
 
@@ -167,7 +180,8 @@ sources are there, and are not repeated here:
 - **S3 — A lock leaves the logins' and the cards' keys in memory** until the process ends: the stores keep the keys
   they were given, and the spike wipes only its own at a lock (W6, flag 3). encriox closes at a lock (W17), which ends
   it once item 6 builds it.
-- **S4 — A download into the vault that stopped shows as failed**, a cancelled one too, where Fenix's own writer shows
-  it paused or cancelled (W5, flag 2). *Try again* starts it from the start.
+- ~~**S4 — A download into the vault that stopped shows as failed**, a cancelled one too, where Fenix's own writer
+  shows it paused or cancelled (W5, flag 2). *Try again* starts it from the start.~~ **Fixed 2026-11-20 (W19)**, stage
+  1's patch 0020: it shows as paused or cancelled, and *Resume* brings it whole from the start, on the A20.
 
 What the records left open, the study's *Open questions* included, is in `docs/decisions/open-questions.md`.

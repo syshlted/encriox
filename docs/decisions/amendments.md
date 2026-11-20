@@ -12,6 +12,12 @@ Each entry corrects a record. Its bold lead names the record possessively ("W1's
   with the web, the app stores and the domain registries (`docs/trademark-search.md`). Nothing found blocks the name;
   the nearest live marks are ENCRY and MacPaw's ENCRYPTO, and Encrox, one letter off, is expired. encrium's is still
   owed, by its own project.
+- **W3's trademark search, beyond the knock-out one** (2026-11-20, the user's word: "Encriox is an open-source
+  project. If we receive a cease-and-desist letter, we will simply change the name then"): no clearance search by
+  counsel is run before the first public build. encriox keeps its name on the knock-out search, and a cease-and-desist
+  renames it: the app's label, its branding and its repository. Its package, on which encri keys a grant for good and
+  Play keys its listing (W8, encri D120), stays `com.systemhalted.encriox` unless the letter asks for that too, which
+  would make it a new app that every user installs and allows again.
 - **W3's name for the Chromium browser** (2026-11-18, W11): encrium is given up, because `encrium.com` appears to be a
   French technical-training academy's, and the browser is encrimium, *encri* and *(chro)mium*, with the package
   `com.systemhalted.encrimium`. Its knock-out search found nothing that blocks it (`docs/trademark-search.md`).
@@ -29,3 +35,9 @@ Each entry corrects a record. Its bold lead names the record possessively ("W1's
 - **W14's fifth flag** (2026-11-18, W15): a vault was locked, on the user's word. The A20's, locked through the gate as
   encri's own *Lock* does, had the app lock Gecko's keys as the gate's `drop` had, and opened again with the
   passphrase on file, typed into encri's screen.
+- **W17's order of work** (2026-11-20, the user's word: of the spikes' bugs, "We should fix these before continuing,
+  if they are not fixed yet", and of history and bookmarks in a sealed store, "Let's work on this next"): the three
+  bugs come first, fixed in the spikes, then history and bookmarks in a sealed store, then the rest of item 6. W17 has
+  the first usable build go without history and bookmarks; whether it waits for them now is the user's to say.
+- **W5's first rejection** (2026-11-20, W19): a stopped download is left paused or cancelled, and *Resume* starts one
+  nothing was kept of from the start, so it no longer fails for want of a file in `Download/`. W5's flag 2 ends.

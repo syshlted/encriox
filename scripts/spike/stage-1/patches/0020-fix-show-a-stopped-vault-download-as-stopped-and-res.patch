@@ -1,0 +1,120 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jeremy Melanson <1080872+zish@users.noreply.github.com>
+Date: Fri, 20 Nov 2026 03:05:25 +0000
+Subject: [PATCH] fix: show a stopped vault download as stopped, and resume it
+ whole
+
+A download into the vault that was paused or cancelled showed as
+failed. The vault's writer throws once the copy returns, to abandon a
+write the vault cannot keep in part, and the download service marked
+failed any download whose writer threw, over the status the user had
+asked for. Resume then looked for the partial file in Download/, found
+none, and failed too, so only Try again worked (encri-firefox W5).
+
+The service now leaves a paused or cancelled download as it is when its
+writer throws, and resumes one nothing was kept of from the start, file
+or no file. The writer's forgetting of what was copied now reaches the
+download's state, so a paused one no longer shows a part as copied. The
+gate's retry sends the button the notification offers.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+---
+ .../downloads/AbstractFetchDownloadService.kt | 17 +++++++++++---
+ .../mozilla/fenix/encri/EncriGateActivity.kt  | 23 ++++++++++++++-----
+ 2 files changed, 31 insertions(+), 9 deletions(-)
+
+diff --git a/mobile/android/android-components/components/feature/downloads/src/main/java/mozilla/components/feature/downloads/AbstractFetchDownloadService.kt b/mobile/android/android-components/components/feature/downloads/src/main/java/mozilla/components/feature/downloads/AbstractFetchDownloadService.kt
+index ea801cc277..66b9343988 100644
+--- a/mobile/android/android-components/components/feature/downloads/src/main/java/mozilla/components/feature/downloads/AbstractFetchDownloadService.kt
++++ b/mobile/android/android-components/components/feature/downloads/src/main/java/mozilla/components/feature/downloads/AbstractFetchDownloadService.kt
+@@ -184,10 +184,12 @@ abstract class AbstractFetchDownloadService : Service() {
+ 
+     /**
+      * encriox (encri-firefox W5): forgets what was copied, for a writer that kept none of it, so that a retry asks for
+-     * the whole file and not for the rest of it.
++     * the whole file and not for the rest of it, and the download no longer shows a part of it as copied.
+      */
+     protected fun forgetCopiedBytes(downloadId: String) {
+-        downloadJobs[downloadId]?.currentBytesCopied = 0
++        val job = downloadJobs[downloadId] ?: return
++        job.currentBytesCopied = 0
++        updateDownloadState(job.state.copy(currentBytesCopied = 0))
+     }
+ 
+     internal val broadcastReceiver by lazy {
+@@ -211,7 +213,10 @@ abstract class AbstractFetchDownloadService : Service() {
+                                 directoryPath = currentDownloadJobState.state.directoryPath,
+                                 fileName = currentDownloadJobState.state.fileName,
+                             )
+-                        if (!fileExists) {
++                        // encriox (encri-firefox W5): a download nothing was kept of has no file to resume into, and
++                        // starts again from the start, as a writer into the vault leaves every one it stopped.
++                        val keptNothing = currentDownloadJobState.currentBytesCopied == 0L
++                        if (!fileExists && !keptNothing) {
+                             currentDownloadJobState.lastNotificationUpdate = dateTimeProvider.currentTimeMillis()
+                             currentDownloadJobState.createdTime = dateTimeProvider.currentTimeMillis()
+                             currentDownloadJobState.notifiedStopped = false
+@@ -533,6 +538,12 @@ abstract class AbstractFetchDownloadService : Service() {
+         try {
+             performDownload(currentDownloadJobState)
+         } catch (e: Exception) {
++            // encriox (encri-firefox W5): a writer that keeps nothing of a stopped download throws once its copy
++            // returns. It was paused or cancelled, as the user asked, and has not failed.
++            if (getDownloadJobStatus(currentDownloadJobState) in listOf(PAUSED, CANCELLED)) {
++                logger.debug("Download for ${currentDownloadJobState.state.id} stopped; its writer kept nothing", e)
++                return
++            }
+             logger.error("Unable to complete download for ${currentDownloadJobState.state.id} marked as FAILED", e)
+             setDownloadJobStatus(currentDownloadJobState, FAILED)
+         }
+diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt
+index 9967c0cb4d..0f30c6efc3 100644
+--- a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt
++++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt
+@@ -54,7 +54,8 @@ import org.mozilla.fenix.settings.downloads.DownloadLocationManager
+  *   Fenix's download service, in a private download. With `--ez unsized true` the server sends no length, and with
+  *   `--ei rate <KiB/s>` it sends no faster;
+  * - with `--es stop pause|cancel --ei stop_after <ms>` too, the first round is stopped after that long as its
+- *   notification's button would stop it, and with `--ez retry true` then tried again as its *Try again* button would.
++ *   notification's button would stop it, and with `--ez retry true` then started again by the button its notification
++ *   then offers, *Resume* for a paused one and *Try again* for a failed one.
+  *   Every status it passes through is logged, then `fetch settled`;
+  * - `--ez list true` logs what the vault holds of the two;
+  * - `--ez lock true` locks the vault, for every app and for encri;
+@@ -218,8 +219,8 @@ class EncriGateActivity : ComponentActivity() {
+ 
+         /**
+          * Stops a download [after] that many milliseconds, by [how], `pause` or `cancel`, through the broadcast its
+-         * notification's button sends; then, if [retry], sends the one *Try again* sends. Each status the download
+-         * passes through is logged as it happens.
++         * notification's button sends; then, if [retry], sends the one its notification then offers, *Resume* or *Try
++         * again*. Each status the download passes through is logged as it happens.
+          */
+         @Suppress("LongParameterList")
+         private suspend fun stopPartWay(
+@@ -242,9 +243,19 @@ class EncriGateActivity : ComponentActivity() {
+             Log.i(TAG, "fetch sent $how name=$name")
+             // A writer that refuses what it was given waits up to two seconds for encri's reason (encri-api L12).
+             delay(SETTLE_MILLIS)
+-            if (retry) {
+-                send(context, AbstractFetchDownloadService.ACTION_TRY_AGAIN, id)
+-                Log.i(TAG, "fetch sent retry name=$name")
++            // The button the notification offers: *Resume* for a paused download, *Try again* for a failed one. A
++            // cancelled one has left the service, and offers neither.
++            val button =
++                when (store.state.downloads[id]?.status) {
++                    Status.PAUSED -> AbstractFetchDownloadService.ACTION_RESUME
++                    Status.FAILED -> AbstractFetchDownloadService.ACTION_TRY_AGAIN
++                    else -> null
++                }
++            if (retry && button == null) {
++                Log.i(TAG, "fetch sent no retry name=$name: nothing offers one")
++            } else if (retry && button != null) {
++                send(context, button, id)
++                Log.i(TAG, "fetch sent retry name=$name as=${button.substringAfterLast('.')}")
+                 awaitStatus(store, id, setOf(Status.DOWNLOADING), SETTLE_MILLIS)
+                 awaitStatus(store, id, setOf(Status.COMPLETED, Status.FAILED, Status.CANCELLED), RETRY_MILLIS)
+                 delay(SETTLE_MILLIS)
+-- 
+2.47.3
+

@@ -33,7 +33,8 @@ key is locked (W14), which does not start without the vault (W15), and what its 
 - **A download into the vault is whole or not there.** encri saves what a writer finishes (encri-api L11), and `write`
   replaces a document whole, so the writer abandons any copy that stopped short: one that ended before the length
   the response promised, and one whose download was paused or cancelled, which ends the copy as the end of the
-  response does (W4, W5).
+  response does (W4, W5). Such a download shows as what stopped it, never as failed, and *Resume* starts it from the
+  start (W19).
 - **The browser's key is never written over, and nothing answers "none" without it** (W6). `encriox.key` is read,
   or made where there is none and read back; one of the wrong length, two of the name, or one that does not read back
   are refused. A store of keys that cannot be read yet waits in `awaitReady()` or throws, never answers that nothing
@@ -76,6 +77,9 @@ key is locked (W14), which does not start without the vault (W15), and what its 
 - A pause or a cancel ends Android Components' copy loop just as the end of the response does, and the writer sees
   only that the block returned. Where the response gave no length, a stopped download was saved into the vault cut
   short; and *Try again* from the notification asked for the rest, which the vault cannot take (W5, patch 0008).
+- **Android Components marks failed any download whose writer throws**, over the paused or cancelled the user asked
+  for, and *Resume* fails where `Download/` has no partial file, which the vault's writer never leaves (W19, patch
+  0020).
 - An exception uncaught on one of the loopback server's threads kills the app. A download paused or cancelled closes
   its end of the socket, which the server's write throws on (W5, patch 0007).
 - A setting saved with `apply()` is lost if the app is stopped a moment later. The gate's private setting was, on the
@@ -158,7 +162,9 @@ key is locked (W14), which does not start without the vault (W15), and what its 
   against 0.56–0.73 s, 0.37–0.43 s and 0.76–1.35 s through Fenix's own writer (W4, W5). The vault's copy is as fast
   through Gecko as from memory on each, so encri's pipe sets the pace.
 - **A download stopped part way leaves nothing in the vault, and *Try again* brings it whole**, with a length and
-  without, on the G6, the S9 and the A20 (`check-stopped`, W5).
+  without, on the G6, the S9 and the A20 (`check-stopped`, W5). **Since patch 0020 it shows as paused or cancelled,
+  and *Resume* brings it whole**, with a length and without, on the A20; patch 0019's build showed each as failed
+  (W19).
 - A clean build took about 8 minutes after the artifact build's 6; a change to Fenix, about 10 seconds (W4). It costs
   about 20 GB of disk: the checkout, the objdir, `~/.gradle` and `~/.mozbuild` (W4's table).
 - **GeckoView reads an explicit `configFilePath` whether or not the app is debuggable**: `GeckoRuntime` checks
@@ -211,6 +217,7 @@ key is locked (W14), which does not start without the vault (W15), and what its 
 | W15 | No start without the vault: encri's unlock at startup, a refusal ends the browser; a real lock measured |
 | W16 | Stage 2's third round: what obfsvfs costs against plain SQLite, in Gecko's SQLite and in a site's IndexedDB |
 | W17 | encriox's first usable build: about 20 of the spikes' 30 patches are its own; it closes at a lock |
+| W19 | A stopped download into the vault shows as paused or cancelled, and *Resume* brings it whole (patch 0020) |
 | encri-api L11, L12 | `write` saves only a finished writer; a writer's failure is told encri's reason |
 | encri D120, D145 | A grant is keyed on the package for good |
 
@@ -222,7 +229,6 @@ key is locked (W14), which does not start without the vault (W15), and what its 
 - W6's three flags: the key as a document in the vault, an unopenable key taken as lost, and the stores' keys left in
   memory at a lock.
 - Patch 0010's locked path, on the G6 once its owner has unlocked it (`ROADMAP.md`).
-- A stopped download into the vault shows as failed, a cancelled one too (W5, flag 2).
 - W13's three flags, W15's four and W16's three.
 - W17's three flags.
 

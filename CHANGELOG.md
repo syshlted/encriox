@@ -4,6 +4,28 @@ What happened, newest first. Why is in `docs/decisions/`, and what is next is in
 
 ## Unreleased
 
+### A stopped download into the vault shows as stopped (2026-11-20)
+
+**Fixed.** `ROADMAP.md`'s S4, at the user's word that the bugs come before anything else (W19): a download into the
+vault that was paused or cancelled no longer shows as failed. Android Components' download service leaves it paused
+or cancelled when the vault's writer throws to abandon it, and *Resume* starts one nothing was kept of from the start,
+where it had looked for a partial file in `Download/` and failed (stage 1's patch 0020). On the A20, `check-stopped`,
+which now fails on a stopped download shown as failed, failed on patch 0019's build in every case and passed on 0020's:
+paused and cancelled, with a length and without, and resumed whole, 16777216 bytes. W5's first rejection is amended.
+The G6 and the S9 are unmeasured.
+
+### Published on Google Play alone, the name kept, and a public remote (2026-11-20)
+
+**Decided**, at the user's word. encriox is published on Google Play alone (W18): encri is there alone (encri D142),
+so F-Droid would serve no one who could open a vault with it. MPL-2.0 asks for the source, not for a second place to
+get the app, so each release's source is on the public remote, and the Play listing and the About screen say where;
+no APK on GitHub's releases and a tag for each release are flagged for veto. No clearance search by counsel is run:
+encriox keeps its name on the knock-out search, and a cease-and-desist renames it (W3's amendment). The user made the
+public remote, `syshlted/encriox` on GitHub, which holds only GitHub's first commit; it is this repository's `origin`,
+and nothing is pushed yet. The order of work changes (W17's amendment): the spikes' three bugs first, then history
+and bookmarks in a sealed store, then the rest of the first usable build. App-level security controls stay on the
+roadmap, for later.
+
 ### encriox's first usable build, decided (2026-11-19)
 
 The user accepted the plan's seven recommendations whole (W17): encriox closes at a lock, letting Gecko write what it

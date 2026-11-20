@@ -87,8 +87,9 @@ encri's lessons, which hold here before this project has any of its own.
 
 ## Repository conventions
 
-- **A git repository since 2026-11-11, with no remote yet.** It follows its siblings' conventions. A public remote
-  comes before any build leaves the test phones (W2).
+- **A git repository since 2026-11-11.** It follows its siblings' conventions. Its public remote is
+  `git@syshlt-github:syshlted/encriox.git` (2026-11-20), as `origin`, before any build leaves the test phones (W2);
+  nothing of this history is pushed to it yet.
 - **Every file is MPL-2.0** (W2), and a new source file begins with Exhibit A's notice, as Mozilla's own files do.
 - **Default branch is `master`**, by SystemHalted organization policy. Never rename it to `main`.
 - **Commits are signed** (key `E483D747728C1C9EA213FB29615692825276E947`, repo-local `commit.gpgsign` and
