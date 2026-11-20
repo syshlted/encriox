@@ -1,0 +1,76 @@
+#!/bin/sh
+# Tests sql-support's obfsvfs on this machine, before a phone build: the checkout's own `obfsvfs.rs`, with its tests,
+# against the SQLite application-services bundles, with a toy cipher where NSS's AES-256-GCM would be, since there is
+# no NSS for the host. The toy seals nothing, but fails to open what another key sealed, or what was changed, as
+# AES-GCM does, so what is tested is the VFS: pages, the reserved bytes, the log and the journal, checkpoints, and
+# the refusals. Offline, from the checkout's vendored crates, with mach's Rust.
+#
+#   scripts/spike/stage-3/check-obfsvfs-host <firefox checkout>
+set -eu
+
+here=$(cd "$(dirname "$0")" && pwd)
+firefox=$(cd "${1:?usage: check-obfsvfs-host <firefox checkout>}" && pwd)
+state=${MOZBUILD_STATE_PATH:-$(dirname "$firefox")/mozbuild}
+export PATH="$state/rustc/bin:$PATH"
+crate=$(dirname "$firefox")/obfsvfs-host
+mkdir -p "$crate/src" "$crate/.cargo"
+
+cat > "$crate/.cargo/config.toml" <<CONFIG
+[source.crates-io]
+replace-with = "vendored"
+
+[source.vendored]
+directory = "$firefox/third_party/rust"
+
+[net]
+offline = true
+CONFIG
+
+cat > "$crate/Cargo.toml" <<MANIFEST
+[package]
+name = "obfsvfs-host"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rusqlite = { version = "0.37.0", features = ["bundled"] }
+url = "2.1"
+thiserror = "2"
+
+[dev-dependencies]
+tempfile = "3.1.0"
+
+# The Firefox workspace's own patches that its vendored crates need to resolve.
+[patch.crates-io]
+hashlink = { path = "$firefox/build/rust/hashlink" }
+hashbrown_0_16 = { package = "hashbrown", path = "$firefox/build/rust/hashbrown" }
+cc = { path = "$firefox/third_party/rust/cc" }
+vcpkg = { path = "$firefox/build/rust/vcpkg" }
+r-efi = { path = "$firefox/build/rust/r-efi" }
+icu_collections = { path = "$firefox/third_party/rust/icu_collections" }
+icu_normalizer = { path = "$firefox/third_party/rust/icu_normalizer" }
+icu_normalizer_data = { path = "$firefox/third_party/rust/icu_normalizer_data" }
+icu_properties = { path = "$firefox/third_party/rust/icu_properties" }
+icu_properties_data = { path = "$firefox/third_party/rust/icu_properties_data" }
+utf8_iter = { path = "$firefox/third_party/rust/utf8_iter" }
+MANIFEST
+
+# What sql-support gives obfsvfs: a cipher module and a warn! macro.
+cat > "$crate/src/lib.rs" <<LIB
+#[macro_export]
+macro_rules! harness_warn {
+    (\$(\$arg:tt)*) => { eprintln!(\$(\$arg)*) };
+}
+pub(crate) use crate::harness_warn as warn;
+
+mod obfsvfs_cipher;
+#[path = "$firefox/third_party/application-services/components/support/sql/src/obfsvfs.rs"]
+pub mod obfsvfs;
+LIB
+cp "$here/obfsvfs-host/src/obfsvfs_cipher.rs" "$crate/src/obfsvfs_cipher.rs"
+
+cd "$crate"
+status=0
+cargo test --offline --quiet > test.log 2>&1 || status=$?
+grep -v '^warning: patch .* was not used\|^help: \|^      ' test.log || true
+exit $status

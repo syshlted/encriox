@@ -1,0 +1,1141 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jeremy Melanson <1080872+zish@users.noreply.github.com>
+Date: Fri, 20 Nov 2026 08:16:42 +0000
+Subject: [PATCH] feat: seal a database's pages in application-services, for
+ encriox
+
+sql-support gains obfsvfs, for an app that keeps its databases sealed:
+encriox's spike, whose history, bookmarks, logins and cards are sealed
+with keys from the user's vault (encri-firefox, stage 3). It is the
+scheme of Gecko's obfuscating VFS, brought to application-services'
+own SQLite with AES-256-GCM from NSS: each 8192-byte page, its log's
+and its journal's, sealed under a key given in the database's URI.
+
+A page that does not open under its key is an I/O error, never a
+corrupt database, which places and autofill delete and make again. On
+Android, where application-services has a SQLite of its own, it is
+SQLite's default VFS before any database opens, and refuses a sealed
+database opened without its key, and one in the clear with a key.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+---
+ Cargo.lock                                    |   2 +
+ .../components/support/sql/Cargo.toml         |   3 +
+ .../components/support/sql/src/lib.rs         |   2 +
+ .../components/support/sql/src/obfsvfs.rs     | 941 ++++++++++++++++++
+ .../support/sql/src/obfsvfs_cipher.rs         | 102 ++
+ .../support/sql/src/open_database.rs          |   1 +
+ 6 files changed, 1051 insertions(+)
+ create mode 100644 third_party/application-services/components/support/sql/src/obfsvfs.rs
+ create mode 100644 third_party/application-services/components/support/sql/src/obfsvfs_cipher.rs
+
+diff --git a/Cargo.lock b/Cargo.lock
+index 546a05a39d..c0a12ff034 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -7820,6 +7820,8 @@ dependencies = [
+  "interrupt-support",
+  "lazy_static",
+  "libc",
++ "nss-as",
++ "nss_sys",
+  "parking_lot",
+  "rusqlite 0.37.0",
+  "tempfile",
+diff --git a/third_party/application-services/components/support/sql/Cargo.toml b/third_party/application-services/components/support/sql/Cargo.toml
+index 4867ecef65..3d69361bfb 100644
+--- a/third_party/application-services/components/support/sql/Cargo.toml
++++ b/third_party/application-services/components/support/sql/Cargo.toml
+@@ -14,6 +14,9 @@ debug-tools = ["dep:text-table", "rusqlite/column_decltype"]
+ error-support = { path = "../error" }
+ lazy_static = "1.4"
+ interrupt-support = { path = "../interrupt" }
++# obfsvfs's cipher.
++nss-as = { path = "../rc_crypto/nss" }
++nss_sys = { path = "../rc_crypto/nss/nss_sys" }
+ thiserror = "2"
+ tempfile = "3.1.0"
+ text-table = { path = "../text-table", optional = true }
+diff --git a/third_party/application-services/components/support/sql/src/lib.rs b/third_party/application-services/components/support/sql/src/lib.rs
+index e7b7aacfd5..7474fc2323 100644
+--- a/third_party/application-services/components/support/sql/src/lib.rs
++++ b/third_party/application-services/components/support/sql/src/lib.rs
+@@ -14,6 +14,8 @@ mod each_chunk;
+ mod lazy;
+ pub mod maintenance;
+ mod maybe_cached;
++pub mod obfsvfs;
++mod obfsvfs_cipher;
+ pub mod open_database;
+ pub mod path;
+ mod repeat;
+diff --git a/third_party/application-services/components/support/sql/src/obfsvfs.rs b/third_party/application-services/components/support/sql/src/obfsvfs.rs
+new file mode 100644
+index 0000000000..a510458eb5
+--- /dev/null
++++ b/third_party/application-services/components/support/sql/src/obfsvfs.rs
+@@ -0,0 +1,941 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++//! A VFS shim that seals a database's pages under a key given with its name, for an app that keeps its databases
++//! sealed: encriox, whose history, bookmarks, logins and cards are sealed with a key from the user's vault
++//! (encri-firefox, `docs/sealed-history.md`).
++//!
++//! It is the scheme of Gecko's obfuscating VFS (`storage/ObfuscatingVFS.cpp`, after SQLite's public-domain obfsvfs
++//! demo), which seals Gecko's own profile databases, brought to application-services' SQLite, with AES-256-GCM from
++//! NSS in place of Gecko's cipher strategy:
++//!
++//! - A database is opened sealed by a `file:` URI that names this VFS and carries the key, `key=` and 64 hex digits,
++//!   as [`sealed_name`] makes it. Its write-ahead log and its journal are sealed under the same key.
++//! - Each page is [`PAGE_SIZE`] bytes, of which the last 32 are reserved: the tag, then the nonce. Page 1's first 32
++//!   bytes, the start of SQLite's header, stay in the clear, so that SQLite can read the page size and the reserved
++//!   bytes before it reads any page. A `PRAGMA page_size` is ignored.
++//! - A page that does not open under the key is an I/O error, `SQLITE_IOERR_DATA`, never a corrupt database, which
++//!   application-services' components delete and make again.
++//! - Registered as SQLite's default, it refuses to open a sealed database without a key, and one in the clear with
++//!   a key: either would be read as corrupt, and deleted.
++//! - A checkpoint copies sealed pages from the log into the database as they are.
++//!
++//! Its limits are Gecko's: a database is sealed when it is made and its key never changes; memory-mapped I/O is off;
++//! and only the database, its log and its journal are sealed, so temporary files must stay in memory, as they do on
++//! Android, where SQLite is built with `SQLITE_TEMP_STORE=3`.
++
++use crate::obfsvfs_cipher::{Cipher, NONCE_BYTES, TAG_BYTES};
++use crate::warn;
++use rusqlite::ffi;
++use std::ffi::{c_char, c_int, c_void, CStr};
++use std::io::Read;
++use std::path::{Path, PathBuf};
++use std::sync::OnceLock;
++use std::{mem, ptr, slice};
++use url::Url;
++
++/// The page size of a sealed database.
++pub const PAGE_SIZE: usize = 8192;
++/// The length of a key, in bytes.
++pub const KEY_BYTES: usize = 32;
++
++const NAME: &CStr = c"appservices-obfsvfs";
++const PAGE: c_int = PAGE_SIZE as c_int;
++const RESERVED_BYTES: usize = 32;
++const CLEAR_PREFIX_BYTES: usize = 32;
++const WAL_HEADER_BYTES: c_int = 32;
++const WAL_FRAME_HEADER_BYTES: c_int = 24;
++const MAGIC: &[u8] = b"SQLite format 3\0";
++// The pager reads these 16 bytes of page 1 to see whether another connection changed the database. Bytes 32 to 39
++// are sealed on disk, so they are served from page 1 opened.
++const CHANGE_COUNTER_OFFSET: i64 = 24;
++const CHANGE_COUNTER_BYTES: c_int = 16;
++// A page's reserved bytes: the tag, which the cipher writes after the sealed payload, then the nonce.
++const PAYLOAD_END: usize = PAGE_SIZE - RESERVED_BYTES;
++const NONCE_START: usize = PAYLOAD_END + TAG_BYTES;
++const _: () = assert!(TAG_BYTES + NONCE_BYTES <= RESERVED_BYTES);
++
++/// Page 1's header for a file that is still empty, as Gecko's has it: sealed pages, the reserved bytes, WAL mode.
++/// SQLite takes a new database's page size and reserved bytes from it, and they cannot be changed after.
++const EMPTY_HEADER: [u8; 56] = [
++    0x53, 0x51, 0x4c, 0x69, 0x74, 0x65, 0x20, 0x66, 0x6f, 0x72, 0x6d, 0x61, 0x74, 0x20, 0x33, 0x00, // magic
++    0x20, 0x00, // page size, 8192
++    0x02, 0x02, // write and read versions: WAL
++    RESERVED_BYTES as u8,
++    0x40, 0x20, 0x20, // payload fractions
++    0x00, 0x00, 0x00, 0x01, // change counter
++    0x00, 0x00, 0x00, 0x01, // size in pages
++    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
++    0x00, 0x00, // from offset 32
++    0x00, 0x00, 0x00, 0x01, // offset 52: the largest root page, auto-vacuum
++];
++
++#[derive(Debug, thiserror::Error)]
++pub enum Error {
++    #[error("A key is {KEY_BYTES} bytes, not {0}")]
++    KeyLength(usize),
++    #[error("obfsvfs could not be registered with SQLite")]
++    NotRegistered,
++    #[error("A sealed database's path must be absolute: {0:?}")]
++    RelativePath(PathBuf),
++}
++
++/// The name to open the database at `path` by, sealed under `key`: a `file:` URI naming this VFS and carrying the
++/// key. Open it with `SQLITE_OPEN_URI`. Its query holds the key, so it is never logged.
++pub fn sealed_name(path: &Path, key: &[u8]) -> Result<PathBuf, Error> {
++    if key.len() != KEY_BYTES {
++        return Err(Error::KeyLength(key.len()));
++    }
++    // Named in the URI, an unregistered VFS fails the open; a key alone would be ignored, and the database made in
++    // the clear.
++    if !ensure_registered() {
++        return Err(Error::NotRegistered);
++    }
++    let mut url = Url::from_file_path(path).map_err(|_| Error::RelativePath(path.to_owned()))?;
++    let mut query = format!("vfs={}&key=", NAME.to_str().expect("ASCII"));
++    for b in key {
++        query.push_str(&format!("{b:02x}"));
++    }
++    url.set_query(Some(&query));
++    // SAFETY: zeroes are UTF-8.
++    unsafe { query.as_bytes_mut() }.fill(0);
++    Ok(PathBuf::from(String::from(url)))
++}
++
++/// On Android, where application-services has a SQLite of its own, registers obfsvfs before a database is opened,
++/// sealed or not, so that its refusals hold for every open: a sealed database opened by a component that was given no
++/// key is refused, rather than read as corrupt and deleted. Elsewhere, it is registered by the first sealed open.
++pub fn register_on_android() {
++    #[cfg(target_os = "android")]
++    ensure_registered();
++}
++
++/// Registers obfsvfs as SQLite's default VFS, over the one that was. Whether it is registered.
++pub fn ensure_registered() -> bool {
++    static REGISTERED: OnceLock<bool> = OnceLock::new();
++    // SAFETY: SQLite's VFS calls, made once; the VFS is leaked, as SQLite keeps it for good.
++    *REGISTERED.get_or_init(|| unsafe { register() })
++}
++
++unsafe fn register() -> bool {
++    if !ffi::sqlite3_vfs_find(NAME.as_ptr()).is_null() {
++        return true;
++    }
++    let below = ffi::sqlite3_vfs_find(ptr::null());
++    if below.is_null() {
++        return false;
++    }
++    let vfs = Box::leak(Box::new(ffi::sqlite3_vfs {
++        iVersion: (*below).iVersion.min(3),
++        szOsFile: (*below).szOsFile + mem::size_of::<ObfsFile>() as c_int,
++        mxPathname: (*below).mxPathname,
++        pNext: ptr::null_mut(),
++        zName: NAME.as_ptr(),
++        pAppData: below as *mut c_void,
++        xOpen: Some(obfs_open),
++        xDelete: Some(obfs_delete),
++        xAccess: Some(obfs_access),
++        xFullPathname: Some(obfs_full_pathname),
++        xDlOpen: Some(obfs_dl_open),
++        xDlError: Some(obfs_dl_error),
++        xDlSym: Some(obfs_dl_sym),
++        xDlClose: Some(obfs_dl_close),
++        xRandomness: Some(obfs_randomness),
++        xSleep: Some(obfs_sleep),
++        xCurrentTime: Some(obfs_current_time),
++        xGetLastError: Some(obfs_get_last_error),
++        xCurrentTimeInt64: Some(obfs_current_time_int64),
++        xSetSystemCall: Some(obfs_set_system_call),
++        xGetSystemCall: Some(obfs_get_system_call),
++        xNextSystemCall: Some(obfs_next_system_call),
++    }));
++    ffi::sqlite3_vfs_register(vfs, 1) == ffi::SQLITE_OK
++}
++
++#[derive(Clone, Copy, PartialEq, Eq)]
++enum Kind {
++    Database,
++    Log,
++    Journal,
++}
++
++/// An open sealed file. SQLite gives each file `szOsFile` bytes, and the file of the VFS below follows this one.
++#[repr(C)]
++struct ObfsFile {
++    base: ffi::sqlite3_file,
++    kind: Kind,
++    cipher: *mut Cipher,
++    /// One page: what is written is sealed into it, and what is read is opened into it.
++    scratch: *mut [u8; PAGE_SIZE],
++    /// The database's log or journal, or the log's or journal's database, while both are open.
++    partner: *mut ObfsFile,
++    key: [u8; KEY_BYTES],
++    /// In a checkpoint, pages go from the log into the database as they are, sealed.
++    in_checkpoint: bool,
++    /// Whether a page of this file has opened under its key, which tells a torn frame of the log from a wrong key.
++    opened_one: bool,
++}
++
++static IO_METHODS: ffi::sqlite3_io_methods = ffi::sqlite3_io_methods {
++    iVersion: 3,
++    xClose: Some(obfs_close),
++    xRead: Some(obfs_read),
++    xWrite: Some(obfs_write),
++    xTruncate: Some(obfs_truncate),
++    xSync: Some(obfs_sync),
++    xFileSize: Some(obfs_file_size),
++    xLock: Some(obfs_lock),
++    xUnlock: Some(obfs_unlock),
++    xCheckReservedLock: Some(obfs_check_reserved_lock),
++    xFileControl: Some(obfs_file_control),
++    xSectorSize: Some(obfs_sector_size),
++    xDeviceCharacteristics: Some(obfs_device_characteristics),
++    xShmMap: Some(obfs_shm_map),
++    xShmLock: Some(obfs_shm_lock),
++    xShmBarrier: Some(obfs_shm_barrier),
++    xShmUnmap: Some(obfs_shm_unmap),
++    xFetch: Some(obfs_fetch),
++    xUnfetch: Some(obfs_unfetch),
++};
++
++unsafe fn below(file: *mut ffi::sqlite3_file) -> *mut ffi::sqlite3_file {
++    (file as *mut ObfsFile).add(1) as *mut ffi::sqlite3_file
++}
++
++unsafe fn below_vfs(vfs: *mut ffi::sqlite3_vfs) -> *mut ffi::sqlite3_vfs {
++    (*vfs).pAppData as *mut ffi::sqlite3_vfs
++}
++
++unsafe fn is_ours(file: *mut ffi::sqlite3_file) -> bool {
++    !file.is_null() && ptr::eq((*file).pMethods, &IO_METHODS)
++}
++
++// A method of the file below, or `$missing` where it has none.
++macro_rules! below_call {
++    ($file:expr, $method:ident, $missing:expr $(, $arg:expr)*) => {{
++        let file = below($file);
++        match (*(*file).pMethods).$method {
++            Some(method) => method(file $(, $arg)*),
++            None => $missing,
++        }
++    }};
++}
++
++// A method of the VFS below, or `$missing` where it has none.
++macro_rules! below_vfs_call {
++    ($vfs:expr, $method:ident, $missing:expr $(, $arg:expr)*) => {{
++        let vfs = below_vfs($vfs);
++        match (*vfs).$method {
++            Some(method) => method(vfs $(, $arg)*),
++            None => $missing,
++        }
++    }};
++}
++
++/// Seals a page into the file's scratch page. None if it cannot be sealed.
++unsafe fn seal_page(p: &mut ObfsFile, page: &[u8]) -> Option<*const u8> {
++    let out = &mut *p.scratch;
++    let start = if page.starts_with(MAGIC) {
++        if page[20] as usize != RESERVED_BYTES {
++            warn!("obfsvfs: a sealed database's pages must reserve {RESERVED_BYTES} bytes");
++            return None;
++        }
++        out[..CLEAR_PREFIX_BYTES].copy_from_slice(&page[..CLEAR_PREFIX_BYTES]);
++        CLEAR_PREFIX_BYTES
++    } else {
++        0
++    };
++    let mut nonce = [0u8; NONCE_BYTES];
++    if !Cipher::random(&mut nonce)
++        || !(*p.cipher).seal(&nonce, &page[start..PAYLOAD_END], &mut out[start..NONCE_START])
++    {
++        return None;
++    }
++    out[NONCE_START..NONCE_START + NONCE_BYTES].copy_from_slice(&nonce);
++    out[NONCE_START + NONCE_BYTES..].fill(0);
++    Some(out.as_ptr())
++}
++
++/// Opens a sealed page in place. False if it does not open under the file's key, which leaves it as it was.
++unsafe fn open_page(p: &mut ObfsFile, page: &mut [u8]) -> bool {
++    let start = if page.starts_with(MAGIC) { CLEAR_PREFIX_BYTES } else { 0 };
++    let mut nonce = [0u8; NONCE_BYTES];
++    nonce.copy_from_slice(&page[NONCE_START..NONCE_START + NONCE_BYTES]);
++    let out = &mut *p.scratch;
++    let opened = (*p.cipher).open(&nonce, &page[start..NONCE_START], &mut out[start..]);
++    if opened {
++        page[start..PAYLOAD_END].copy_from_slice(&out[start..PAYLOAD_END]);
++        page[PAYLOAD_END..].fill(0);
++    }
++    out.fill(0);
++    opened
++}
++
++unsafe extern "C" fn obfs_close(file: *mut ffi::sqlite3_file) -> c_int {
++    let p = &mut *(file as *mut ObfsFile);
++    if !p.partner.is_null() {
++        (*p.partner).partner = ptr::null_mut();
++        p.partner = ptr::null_mut();
++    }
++    drop(Box::from_raw(p.cipher));
++    (*p.scratch).fill(0);
++    drop(Box::from_raw(p.scratch));
++    p.key.fill(0);
++    below_call!(file, xClose, ffi::SQLITE_OK)
++}
++
++unsafe extern "C" fn obfs_read(
++    file: *mut ffi::sqlite3_file,
++    buf: *mut c_void,
++    amount: c_int,
++    offset: ffi::sqlite3_int64,
++) -> c_int {
++    let p = &mut *(file as *mut ObfsFile);
++    if p.kind == Kind::Database
++        && !p.in_checkpoint
++        && offset == CHANGE_COUNTER_OFFSET
++        && amount == CHANGE_COUNTER_BYTES
++    {
++        let mut first = [0u8; PAGE_SIZE];
++        let rc = below_call!(file, xRead, ffi::SQLITE_IOERR_READ, first.as_mut_ptr() as *mut c_void, PAGE, 0);
++        let served = rc == ffi::SQLITE_OK && first.starts_with(MAGIC) && open_page(p, &mut first);
++        if served {
++            ptr::copy_nonoverlapping(
++                first.as_ptr().add(CHANGE_COUNTER_OFFSET as usize),
++                buf as *mut u8,
++                CHANGE_COUNTER_BYTES as usize,
++            );
++        }
++        first.fill(0);
++        if served {
++            return ffi::SQLITE_OK;
++        }
++    }
++    let rc = below_call!(file, xRead, ffi::SQLITE_IOERR_READ, buf, amount, offset);
++    if rc == ffi::SQLITE_OK {
++        if (amount == PAGE || amount == PAGE + WAL_FRAME_HEADER_BYTES) && !p.in_checkpoint {
++            let page = slice::from_raw_parts_mut((buf as *mut u8).add((amount - PAGE) as usize), PAGE_SIZE);
++            if open_page(p, page) {
++                p.opened_one = true;
++            } else if p.kind == Kind::Log && amount == PAGE + WAL_FRAME_HEADER_BYTES && p.opened_one {
++                // A frame of the log that does not open under a key that opened one before it: one a crash tore, or
++                // one left from an earlier log. SQLite's checksum refuses it as it is, and the log ends there.
++            } else {
++                warn!("obfsvfs: a page does not open under its database's key");
++                return ffi::SQLITE_IOERR_DATA;
++            }
++        }
++    } else if rc == ffi::SQLITE_IOERR_SHORT_READ && p.kind == Kind::Database && offset == 0 && amount >= 100 {
++        ptr::copy_nonoverlapping(EMPTY_HEADER.as_ptr(), buf as *mut u8, EMPTY_HEADER.len());
++        ptr::write_bytes((buf as *mut u8).add(EMPTY_HEADER.len()), 0, amount as usize - EMPTY_HEADER.len());
++        return ffi::SQLITE_OK;
++    }
++    rc
++}
++
++unsafe extern "C" fn obfs_write(
++    file: *mut ffi::sqlite3_file,
++    buf: *const c_void,
++    amount: c_int,
++    offset: ffi::sqlite3_int64,
++) -> c_int {
++    let p = &mut *(file as *mut ObfsFile);
++    let mut data = buf;
++    if amount == PAGE && !p.in_checkpoint {
++        match seal_page(p, slice::from_raw_parts(buf as *const u8, PAGE_SIZE)) {
++            Some(sealed) => data = sealed as *const c_void,
++            None => return ffi::SQLITE_IOERR_WRITE,
++        }
++    } else if amount != PAGE {
++        // Nothing but whole pages goes into a sealed database, and nothing but pages and their headers into its log:
++        // anything else would be written in the clear.
++        let clear = match p.kind {
++            Kind::Database => false,
++            Kind::Log => amount == WAL_HEADER_BYTES || amount == WAL_FRAME_HEADER_BYTES,
++            Kind::Journal => true,
++        };
++        if !clear {
++            warn!("obfsvfs: a write of {amount} bytes into a sealed file is refused");
++            return ffi::SQLITE_IOERR_WRITE;
++        }
++    }
++    below_call!(file, xWrite, ffi::SQLITE_IOERR_WRITE, data, amount, offset)
++}
++
++unsafe extern "C" fn obfs_truncate(file: *mut ffi::sqlite3_file, size: ffi::sqlite3_int64) -> c_int {
++    below_call!(file, xTruncate, ffi::SQLITE_IOERR_TRUNCATE, size)
++}
++
++unsafe extern "C" fn obfs_sync(file: *mut ffi::sqlite3_file, flags: c_int) -> c_int {
++    below_call!(file, xSync, ffi::SQLITE_IOERR_FSYNC, flags)
++}
++
++unsafe extern "C" fn obfs_file_size(file: *mut ffi::sqlite3_file, size: *mut ffi::sqlite3_int64) -> c_int {
++    below_call!(file, xFileSize, ffi::SQLITE_IOERR_FSTAT, size)
++}
++
++unsafe extern "C" fn obfs_lock(file: *mut ffi::sqlite3_file, lock: c_int) -> c_int {
++    below_call!(file, xLock, ffi::SQLITE_IOERR_LOCK, lock)
++}
++
++unsafe extern "C" fn obfs_unlock(file: *mut ffi::sqlite3_file, lock: c_int) -> c_int {
++    below_call!(file, xUnlock, ffi::SQLITE_IOERR_UNLOCK, lock)
++}
++
++unsafe extern "C" fn obfs_check_reserved_lock(file: *mut ffi::sqlite3_file, out: *mut c_int) -> c_int {
++    below_call!(file, xCheckReservedLock, ffi::SQLITE_IOERR_CHECKRESERVEDLOCK, out)
++}
++
++unsafe extern "C" fn obfs_file_control(file: *mut ffi::sqlite3_file, op: c_int, arg: *mut c_void) -> c_int {
++    let p = &mut *(file as *mut ObfsFile);
++    match op {
++        ffi::SQLITE_FCNTL_PRAGMA => {
++            // The pragma's name and value: answering it here leaves the page size as the database has it.
++            let args = arg as *mut *mut c_char;
++            let name = *args.add(1);
++            let value = *args.add(2);
++            if !name.is_null() && !value.is_null() && ffi::sqlite3_stricmp(name, c"page_size".as_ptr()) == 0 {
++                return ffi::SQLITE_OK;
++            }
++        }
++        ffi::SQLITE_FCNTL_CKPT_START | ffi::SQLITE_FCNTL_CKPT_DONE => {
++            p.in_checkpoint = op == ffi::SQLITE_FCNTL_CKPT_START;
++            if !p.partner.is_null() {
++                (*p.partner).in_checkpoint = p.in_checkpoint;
++            }
++        }
++        _ => {}
++    }
++    below_call!(file, xFileControl, ffi::SQLITE_NOTFOUND, op, arg)
++}
++
++unsafe extern "C" fn obfs_sector_size(file: *mut ffi::sqlite3_file) -> c_int {
++    below_call!(file, xSectorSize, 4096)
++}
++
++unsafe extern "C" fn obfs_device_characteristics(file: *mut ffi::sqlite3_file) -> c_int {
++    // Pages are read whole, to be opened.
++    below_call!(file, xDeviceCharacteristics, 0) & !ffi::SQLITE_IOCAP_SUBPAGE_READ
++}
++
++unsafe extern "C" fn obfs_shm_map(
++    file: *mut ffi::sqlite3_file,
++    page: c_int,
++    page_size: c_int,
++    extend: c_int,
++    out: *mut *mut c_void,
++) -> c_int {
++    below_call!(file, xShmMap, ffi::SQLITE_IOERR_SHMMAP, page, page_size, extend, out)
++}
++
++unsafe extern "C" fn obfs_shm_lock(file: *mut ffi::sqlite3_file, offset: c_int, n: c_int, flags: c_int) -> c_int {
++    below_call!(file, xShmLock, ffi::SQLITE_IOERR_SHMLOCK, offset, n, flags)
++}
++
++unsafe extern "C" fn obfs_shm_barrier(file: *mut ffi::sqlite3_file) {
++    below_call!(file, xShmBarrier, ())
++}
++
++unsafe extern "C" fn obfs_shm_unmap(file: *mut ffi::sqlite3_file, delete: c_int) -> c_int {
++    below_call!(file, xShmUnmap, ffi::SQLITE_OK, delete)
++}
++
++unsafe extern "C" fn obfs_fetch(
++    _file: *mut ffi::sqlite3_file,
++    _offset: ffi::sqlite3_int64,
++    _amount: c_int,
++    out: *mut *mut c_void,
++) -> c_int {
++    // Memory-mapped pages would be read sealed.
++    *out = ptr::null_mut();
++    ffi::SQLITE_OK
++}
++
++unsafe extern "C" fn obfs_unfetch(file: *mut ffi::sqlite3_file, offset: ffi::sqlite3_int64, page: *mut c_void) -> c_int {
++    below_call!(file, xUnfetch, ffi::SQLITE_OK, offset, page)
++}
++
++/// What the start of a database's file says it is.
++enum OnDisk {
++    Missing,
++    Unreadable,
++    /// Too short to say, or not SQLite's: a new database, or one that reads as corrupt either way.
++    Unknown,
++    Clear,
++    Sealed,
++}
++
++fn on_disk(path: &CStr) -> OnDisk {
++    let Ok(path) = path.to_str() else {
++        return OnDisk::Unreadable;
++    };
++    let mut file = match std::fs::File::open(path) {
++        Ok(file) => file,
++        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return OnDisk::Missing,
++        Err(_) => return OnDisk::Unreadable,
++    };
++    let mut header = [0u8; 24];
++    match file.read_exact(&mut header) {
++        Ok(()) => {}
++        Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return OnDisk::Unknown,
++        Err(_) => return OnDisk::Unreadable,
++    }
++    if !header.starts_with(MAGIC) {
++        return OnDisk::Unknown;
++    }
++    let page_size = match u16::from_be_bytes([header[16], header[17]]) {
++        1 => 65536,
++        n => n as usize,
++    };
++    if page_size == PAGE_SIZE && header[20] as usize == RESERVED_BYTES {
++        OnDisk::Sealed
++    } else {
++        OnDisk::Clear
++    }
++}
++
++/// The key in a file's name, which a log's and a journal's name carry too: None if it has none, Err if it is not
++/// 64 hex digits.
++unsafe fn key_in(name: *const c_char) -> Option<Result<[u8; KEY_BYTES], ()>> {
++    let value = ffi::sqlite3_uri_parameter(name, c"key".as_ptr());
++    if value.is_null() {
++        return None;
++    }
++    let hex = CStr::from_ptr(value).to_bytes();
++    if hex.len() != KEY_BYTES * 2 {
++        return Some(Err(()));
++    }
++    let mut key = [0u8; KEY_BYTES];
++    for (i, pair) in hex.chunks(2).enumerate() {
++        let digit = |c: u8| (c as char).to_digit(16);
++        match (digit(pair[0]), digit(pair[1])) {
++            (Some(high), Some(low)) => key[i] = (high << 4 | low) as u8,
++            _ => {
++                key.fill(0);
++                return Some(Err(()));
++            }
++        }
++    }
++    Some(Ok(key))
++}
++
++unsafe extern "C" fn obfs_open(
++    vfs: *mut ffi::sqlite3_vfs,
++    name: *const c_char,
++    file: *mut ffi::sqlite3_file,
++    flags: c_int,
++    out_flags: *mut c_int,
++) -> c_int {
++    let kind = if flags & ffi::SQLITE_OPEN_MAIN_DB != 0 {
++        Kind::Database
++    } else if flags & ffi::SQLITE_OPEN_WAL != 0 {
++        Kind::Log
++    } else if flags & ffi::SQLITE_OPEN_MAIN_JOURNAL != 0 {
++        Kind::Journal
++    } else {
++        return below_vfs_call!(vfs, xOpen, ffi::SQLITE_CANTOPEN, name, file, flags, out_flags);
++    };
++    if name.is_null() {
++        return below_vfs_call!(vfs, xOpen, ffi::SQLITE_CANTOPEN, name, file, flags, out_flags);
++    }
++    let database = if kind == Kind::Database {
++        ptr::null_mut()
++    } else {
++        ffi::sqlite3_database_file_object(name)
++    };
++    let key = match key_in(name) {
++        Some(Ok(key)) => Some(key),
++        Some(Err(())) => {
++            warn!("obfsvfs: a key that is not {} hex digits is refused", KEY_BYTES * 2);
++            return ffi::SQLITE_CANTOPEN;
++        }
++        // A log's or a journal's name carries its database's key; its database is asked too.
++        None if is_ours(database) => Some((*(database as *mut ObfsFile)).key),
++        None => None,
++    };
++    if kind == Kind::Database {
++        match (on_disk(CStr::from_ptr(name)), key.is_some()) {
++            (OnDisk::Unreadable, _) => {
++                warn!("obfsvfs: a database whose start cannot be read is refused");
++                return ffi::SQLITE_CANTOPEN;
++            }
++            (OnDisk::Sealed, false) => {
++                warn!("obfsvfs: a sealed database opened without its key is refused");
++                return ffi::SQLITE_CANTOPEN;
++            }
++            (OnDisk::Clear, true) => {
++                warn!("obfsvfs: a database in the clear opened with a key is refused");
++                return ffi::SQLITE_CANTOPEN;
++            }
++            _ => {}
++        }
++    }
++    let Some(mut key) = key else {
++        return below_vfs_call!(vfs, xOpen, ffi::SQLITE_CANTOPEN, name, file, flags, out_flags);
++    };
++    let Some(cipher) = Cipher::new(&key) else {
++        key.fill(0);
++        warn!("obfsvfs: the cipher could not take the key");
++        return ffi::SQLITE_CANTOPEN;
++    };
++    let p = file as *mut ObfsFile;
++    ptr::write(
++        p,
++        ObfsFile {
++            base: ffi::sqlite3_file { pMethods: &IO_METHODS },
++            kind,
++            cipher: Box::into_raw(Box::new(cipher)),
++            scratch: Box::into_raw(Box::new([0u8; PAGE_SIZE])),
++            partner: ptr::null_mut(),
++            key,
++            in_checkpoint: false,
++            opened_one: false,
++        },
++    );
++    key.fill(0);
++    let rc = below_vfs_call!(vfs, xOpen, ffi::SQLITE_CANTOPEN, name, below(file), flags, out_flags);
++    if rc != ffi::SQLITE_OK {
++        // SQLite does not close a file whose open failed.
++        drop(Box::from_raw((*p).cipher));
++        drop(Box::from_raw((*p).scratch));
++        (*p).key.fill(0);
++        (*file).pMethods = ptr::null();
++        return rc;
++    }
++    if is_ours(database) {
++        let database = database as *mut ObfsFile;
++        (*p).partner = database;
++        (*database).partner = p;
++    }
++    ffi::SQLITE_OK
++}
++
++unsafe extern "C" fn obfs_delete(vfs: *mut ffi::sqlite3_vfs, name: *const c_char, sync_dir: c_int) -> c_int {
++    below_vfs_call!(vfs, xDelete, ffi::SQLITE_IOERR_DELETE, name, sync_dir)
++}
++
++unsafe extern "C" fn obfs_access(vfs: *mut ffi::sqlite3_vfs, name: *const c_char, flags: c_int, out: *mut c_int) -> c_int {
++    below_vfs_call!(vfs, xAccess, ffi::SQLITE_IOERR_ACCESS, name, flags, out)
++}
++
++unsafe extern "C" fn obfs_full_pathname(
++    vfs: *mut ffi::sqlite3_vfs,
++    name: *const c_char,
++    n: c_int,
++    out: *mut c_char,
++) -> c_int {
++    below_vfs_call!(vfs, xFullPathname, ffi::SQLITE_CANTOPEN, name, n, out)
++}
++
++unsafe extern "C" fn obfs_dl_open(vfs: *mut ffi::sqlite3_vfs, name: *const c_char) -> *mut c_void {
++    below_vfs_call!(vfs, xDlOpen, ptr::null_mut(), name)
++}
++
++unsafe extern "C" fn obfs_dl_error(vfs: *mut ffi::sqlite3_vfs, n: c_int, out: *mut c_char) {
++    below_vfs_call!(vfs, xDlError, (), n, out)
++}
++
++type DlSym = Option<unsafe extern "C" fn(*mut ffi::sqlite3_vfs, *mut c_void, *const c_char)>;
++
++unsafe extern "C" fn obfs_dl_sym(vfs: *mut ffi::sqlite3_vfs, handle: *mut c_void, symbol: *const c_char) -> DlSym {
++    below_vfs_call!(vfs, xDlSym, None, handle, symbol)
++}
++
++unsafe extern "C" fn obfs_dl_close(vfs: *mut ffi::sqlite3_vfs, handle: *mut c_void) {
++    below_vfs_call!(vfs, xDlClose, (), handle)
++}
++
++unsafe extern "C" fn obfs_randomness(vfs: *mut ffi::sqlite3_vfs, n: c_int, out: *mut c_char) -> c_int {
++    below_vfs_call!(vfs, xRandomness, 0, n, out)
++}
++
++unsafe extern "C" fn obfs_sleep(vfs: *mut ffi::sqlite3_vfs, microseconds: c_int) -> c_int {
++    below_vfs_call!(vfs, xSleep, 0, microseconds)
++}
++
++unsafe extern "C" fn obfs_current_time(vfs: *mut ffi::sqlite3_vfs, out: *mut f64) -> c_int {
++    below_vfs_call!(vfs, xCurrentTime, ffi::SQLITE_ERROR, out)
++}
++
++unsafe extern "C" fn obfs_get_last_error(vfs: *mut ffi::sqlite3_vfs, n: c_int, out: *mut c_char) -> c_int {
++    below_vfs_call!(vfs, xGetLastError, 0, n, out)
++}
++
++unsafe extern "C" fn obfs_current_time_int64(vfs: *mut ffi::sqlite3_vfs, out: *mut ffi::sqlite3_int64) -> c_int {
++    below_vfs_call!(vfs, xCurrentTimeInt64, ffi::SQLITE_ERROR, out)
++}
++
++unsafe extern "C" fn obfs_set_system_call(
++    vfs: *mut ffi::sqlite3_vfs,
++    name: *const c_char,
++    call: ffi::sqlite3_syscall_ptr,
++) -> c_int {
++    below_vfs_call!(vfs, xSetSystemCall, ffi::SQLITE_NOTFOUND, name, call)
++}
++
++unsafe extern "C" fn obfs_get_system_call(vfs: *mut ffi::sqlite3_vfs, name: *const c_char) -> ffi::sqlite3_syscall_ptr {
++    below_vfs_call!(vfs, xGetSystemCall, None, name)
++}
++
++unsafe extern "C" fn obfs_next_system_call(vfs: *mut ffi::sqlite3_vfs, name: *const c_char) -> *const c_char {
++    below_vfs_call!(vfs, xNextSystemCall, ptr::null(), name)
++}
++
++#[cfg(test)]
++mod test {
++    use super::*;
++    use rusqlite::{Connection, ErrorCode, OpenFlags};
++
++    const KEY: [u8; KEY_BYTES] = [7; KEY_BYTES];
++    const OTHER_KEY: [u8; KEY_BYTES] = [9; KEY_BYTES];
++    const MARKER: &str = "ENCRIOXMARKER0123456789abcdef";
++
++    fn flags() -> OpenFlags {
++        OpenFlags::SQLITE_OPEN_URI | OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_CREATE
++    }
++
++    fn open_sealed(path: &Path, key: &[u8]) -> rusqlite::Result<Connection> {
++        let conn = Connection::open_with_flags(sealed_name(path, key).unwrap(), flags())?;
++        // As places' own pragmas have it.
++        conn.execute_batch(
++            "PRAGMA page_size = 32768; PRAGMA temp_store = 2; PRAGMA journal_mode = WAL;
++             PRAGMA wal_autocheckpoint = 62;",
++        )?;
++        Ok(conn)
++    }
++
++    fn fill(conn: &Connection, rows: usize) {
++        conn.execute_batch("CREATE TABLE IF NOT EXISTS t (id INTEGER PRIMARY KEY, v TEXT)").unwrap();
++        let tx = conn.unchecked_transaction().unwrap();
++        for i in 0..rows {
++            tx.execute("INSERT INTO t (v) VALUES (?)", [format!("{MARKER}-{i}-{}", "x".repeat(i % 300))])
++                .unwrap();
++        }
++        tx.commit().unwrap();
++    }
++
++    fn count(conn: &Connection) -> rusqlite::Result<i64> {
++        conn.query_row("SELECT count(*) FROM t WHERE v LIKE ?", [format!("{MARKER}%")], |r| r.get(0))
++    }
++
++    fn files(dir: &Path) -> Vec<(PathBuf, Vec<u8>)> {
++        let mut found: Vec<_> = std::fs::read_dir(dir)
++            .unwrap()
++            .map(|e| e.unwrap().path())
++            .map(|p| {
++                let bytes = std::fs::read(&p).unwrap();
++                (p, bytes)
++            })
++            .collect();
++        found.sort();
++        found
++    }
++
++    fn assert_no_marker(dir: &Path) {
++        for (path, bytes) in files(dir) {
++            let found = bytes.windows(MARKER.len()).any(|w| w == MARKER.as_bytes());
++            assert!(!found, "{path:?} holds the marker in the clear");
++        }
++    }
++
++    fn code(e: &rusqlite::Error) -> Option<(ErrorCode, c_int)> {
++        match e {
++            rusqlite::Error::SqliteFailure(f, _) => Some((f.code, f.extended_code)),
++            _ => None,
++        }
++    }
++
++    #[test]
++    fn test_sealed_database_reads_back_and_holds_nothing_in_the_clear() {
++        let dir = tempfile::tempdir().unwrap();
++        let path = dir.path().join("places.sqlite");
++        {
++            let conn = open_sealed(&path, &KEY).unwrap();
++            fill(&conn, 2000);
++            assert_eq!(count(&conn).unwrap(), 2000);
++            let page_size: i64 = conn.query_row("PRAGMA page_size", [], |r| r.get(0)).unwrap();
++            assert_eq!(page_size, PAGE_SIZE as i64, "places' page size was taken");
++            assert_no_marker(dir.path());
++        }
++        assert_no_marker(dir.path());
++        let header = std::fs::read(&path).unwrap();
++        assert_eq!(&header[..16], MAGIC);
++        assert_eq!(header[20] as usize, RESERVED_BYTES);
++        let conn = open_sealed(&path, &KEY).unwrap();
++        assert_eq!(count(&conn).unwrap(), 2000);
++    }
++
++    #[test]
++    fn test_log_is_sealed_and_recovered() {
++        let dir = tempfile::tempdir().unwrap();
++        let path = dir.path().join("logins.db");
++        let conn = open_sealed(&path, &KEY).unwrap();
++        conn.execute_batch("PRAGMA wal_autocheckpoint = 0").unwrap();
++        fill(&conn, 500);
++        let wal = dir.path().join("logins.db-wal");
++        assert!(std::fs::metadata(&wal).unwrap().len() > 0, "nothing is in the log");
++        assert_no_marker(dir.path());
++        // A second connection while the first holds the log open recovers it from the log alone.
++        let other = open_sealed(&path, &KEY).unwrap();
++        assert_eq!(count(&other).unwrap(), 500);
++        // A copy of the files, as a crash leaves them, recovers from the log.
++        let copy = tempfile::tempdir().unwrap();
++        for (p, bytes) in files(dir.path()) {
++            if !p.to_string_lossy().ends_with("-shm") {
++                std::fs::write(copy.path().join(p.file_name().unwrap()), bytes).unwrap();
++            }
++        }
++        let recovered = open_sealed(&copy.path().join("logins.db"), &KEY).unwrap();
++        assert_eq!(count(&recovered).unwrap(), 500);
++    }
++
++    #[test]
++    fn test_checkpoint_keeps_pages_sealed() {
++        let dir = tempfile::tempdir().unwrap();
++        let path = dir.path().join("autofill.db");
++        let conn = open_sealed(&path, &KEY).unwrap();
++        fill(&conn, 1000);
++        conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)").unwrap();
++        assert_eq!(std::fs::metadata(dir.path().join("autofill.db-wal")).unwrap().len(), 0);
++        assert!(std::fs::metadata(&path).unwrap().len() > PAGE_SIZE as u64);
++        assert_no_marker(dir.path());
++        drop(conn);
++        let conn = open_sealed(&path, &KEY).unwrap();
++        assert_eq!(count(&conn).unwrap(), 1000);
++        conn.execute_batch("VACUUM").unwrap();
++        assert_eq!(count(&conn).unwrap(), 1000);
++        assert_no_marker(dir.path());
++    }
++
++    #[test]
++    fn test_rollback_journal_is_sealed_and_rolls_back() {
++        let dir = tempfile::tempdir().unwrap();
++        let path = dir.path().join("journal.db");
++        let conn = Connection::open_with_flags(sealed_name(&path, &KEY).unwrap(), flags()).unwrap();
++        conn.execute_batch("PRAGMA journal_mode = DELETE; PRAGMA page_size = 32768").unwrap();
++        fill(&conn, 1000);
++        // Outside WAL mode, a VACUUM takes the page size a pragma asked for, unless the pragma was refused.
++        conn.execute_batch("VACUUM").unwrap();
++        let page_size: i64 = conn.query_row("PRAGMA page_size", [], |r| r.get(0)).unwrap();
++        assert_eq!(page_size, PAGE_SIZE as i64);
++        // A cache too small for the change spills it into the database, with the pages it replaces in the journal.
++        conn.execute_batch("PRAGMA cache_size = 2").unwrap();
++        let tx = conn.unchecked_transaction().unwrap();
++        tx.execute("UPDATE t SET v = v || 'changed'", []).unwrap();
++        assert!(dir.path().join("journal.db-journal").exists(), "nothing was journaled");
++        assert_no_marker(dir.path());
++        tx.rollback().unwrap();
++        assert_eq!(count(&conn).unwrap(), 1000);
++        let changed: i64 = conn.query_row("SELECT count(*) FROM t WHERE v LIKE '%changed'", [], |r| r.get(0)).unwrap();
++        assert_eq!(changed, 0);
++        assert_no_marker(dir.path());
++    }
++
++    #[test]
++    fn test_without_its_key_a_sealed_database_is_refused_and_left_as_it_was() {
++        let dir = tempfile::tempdir().unwrap();
++        let path = dir.path().join("places.sqlite");
++        {
++            let conn = open_sealed(&path, &KEY).unwrap();
++            conn.execute_batch("PRAGMA wal_autocheckpoint = 0").unwrap();
++            fill(&conn, 300);
++            conn.execute_batch("PRAGMA wal_checkpoint(PASSIVE)").unwrap();
++            fill(&conn, 300);
++            // Left open, so that its log stays, as a lock leaves it.
++            std::mem::forget(conn);
++        }
++        let before = files(dir.path());
++        assert!(ensure_registered());
++        let e = Connection::open_with_flags(&path, flags())
++            .and_then(|c| c.query_row("SELECT count(*) FROM sqlite_master", [], |r| r.get::<_, i64>(0)))
++            .unwrap_err();
++        assert_eq!(code(&e).unwrap().0, ErrorCode::CannotOpen, "{e}");
++        assert_eq!(files(dir.path()), before, "an open without the key changed a file");
++    }
++
++    #[test]
++    fn test_under_another_key_a_sealed_database_is_an_io_error_and_left_as_it_was() {
++        let dir = tempfile::tempdir().unwrap();
++        let path = dir.path().join("places.sqlite");
++        {
++            let conn = open_sealed(&path, &KEY).unwrap();
++            conn.execute_batch("PRAGMA wal_autocheckpoint = 0").unwrap();
++            fill(&conn, 300);
++            conn.execute_batch("PRAGMA wal_checkpoint(PASSIVE)").unwrap();
++            fill(&conn, 300);
++            std::mem::forget(conn);
++        }
++        // The database and its log as a new process finds them.
++        let copy = tempfile::tempdir().unwrap();
++        for name in ["places.sqlite", "places.sqlite-wal"] {
++            std::fs::copy(dir.path().join(name), copy.path().join(name)).unwrap();
++        }
++        let path = copy.path().join("places.sqlite");
++        let shm = copy.path().join("places.sqlite-shm");
++        let before = files(copy.path());
++        let e = open_sealed(&path, &OTHER_KEY)
++            .and_then(|c| count(&c))
++            .unwrap_err();
++        let (code, extended) = code(&e).unwrap();
++        assert_eq!(code, ErrorCode::SystemIoFailure, "{e}");
++        assert_eq!(extended, ffi::SQLITE_IOERR_DATA, "{e}");
++        let after: Vec<_> = files(copy.path()).into_iter().filter(|(p, _)| *p != shm).collect();
++        assert_eq!(after, before, "an open under another key changed a file");
++        let conn = open_sealed(&path, &KEY).unwrap();
++        assert_eq!(count(&conn).unwrap(), 600);
++    }
++
++    #[test]
++    fn test_with_a_key_a_database_in_the_clear_is_refused_and_left_as_it_was() {
++        let dir = tempfile::tempdir().unwrap();
++        let path = dir.path().join("places.sqlite");
++        {
++            let conn = Connection::open(&path).unwrap();
++            conn.execute_batch("PRAGMA journal_mode = WAL").unwrap();
++            fill(&conn, 10);
++        }
++        let before = files(dir.path());
++        let e = open_sealed(&path, &KEY).and_then(|c| count(&c)).unwrap_err();
++        assert_eq!(code(&e).unwrap().0, ErrorCode::CannotOpen, "{e}");
++        assert_eq!(files(dir.path()), before);
++        let conn = Connection::open(&path).unwrap();
++        assert_eq!(count(&conn).unwrap(), 10);
++    }
++
++    #[test]
++    fn test_a_torn_last_frame_ends_the_log_there() {
++        let dir = tempfile::tempdir().unwrap();
++        let path = dir.path().join("places.sqlite");
++        {
++            let conn = open_sealed(&path, &KEY).unwrap();
++            conn.execute_batch("PRAGMA wal_autocheckpoint = 0").unwrap();
++            fill(&conn, 200);
++            conn.execute("INSERT INTO t (v) VALUES ('last')", []).unwrap();
++            std::mem::forget(conn);
++        }
++        let wal = dir.path().join("places.sqlite-wal");
++        let copy = tempfile::tempdir().unwrap();
++        let mut log = std::fs::read(&wal).unwrap();
++        let n = log.len();
++        // The last frame's page, half written.
++        for b in &mut log[n - PAGE_SIZE / 2..] {
++            *b ^= 0x5a;
++        }
++        std::fs::write(copy.path().join("places.sqlite-wal"), log).unwrap();
++        std::fs::copy(&path, copy.path().join("places.sqlite")).unwrap();
++        let conn = open_sealed(&copy.path().join("places.sqlite"), &KEY).unwrap();
++        assert_eq!(count(&conn).unwrap(), 200, "the frames before the torn one were lost");
++        let last: i64 = conn.query_row("SELECT count(*) FROM t WHERE v = 'last'", [], |r| r.get(0)).unwrap();
++        assert_eq!(last, 0);
++    }
++
++    #[test]
++    fn test_key_must_be_whole() {
++        assert!(matches!(sealed_name(Path::new("/tmp/x.db"), &[1; 16]), Err(Error::KeyLength(16))));
++        assert!(matches!(sealed_name(Path::new("x.db"), &KEY), Err(Error::RelativePath(_))));
++        let name = sealed_name(Path::new("/data/a b/places.sqlite"), &KEY).unwrap();
++        let name = name.to_str().unwrap();
++        assert!(name.starts_with("file:///data/a%20b/places.sqlite?vfs=appservices-obfsvfs&key=0707"), "{name}");
++    }
++}
+diff --git a/third_party/application-services/components/support/sql/src/obfsvfs_cipher.rs b/third_party/application-services/components/support/sql/src/obfsvfs_cipher.rs
+new file mode 100644
+index 0000000000..3bfeb5c9e9
+--- /dev/null
++++ b/third_party/application-services/components/support/sql/src/obfsvfs_cipher.rs
+@@ -0,0 +1,102 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++//! obfsvfs's cipher: AES-256-GCM, from the NSS application-services links, with a key imported once for each open
++//! file.
++
++use nss_sys::*;
++use std::os::raw::{c_int, c_uchar, c_uint};
++use std::{mem, ptr};
++
++pub(crate) const NONCE_BYTES: usize = 12;
++pub(crate) const TAG_BYTES: usize = 16;
++
++pub(crate) struct Cipher {
++    key: *mut PK11SymKey,
++}
++
++impl Cipher {
++    pub(crate) fn new(key: &[u8; 32]) -> Option<Self> {
++        nss_as::ensure_initialized();
++        // SAFETY: NSS is initialized, and `item` borrows `key` for the import alone.
++        unsafe {
++            let slot = PK11_GetInternalSlot();
++            if slot.is_null() {
++                return None;
++            }
++            let mut item = SECItem {
++                type_: SECItemType::siBuffer as u32,
++                data: key.as_ptr() as *mut c_uchar,
++                len: key.len() as c_uint,
++            };
++            let imported = PK11_ImportSymKey(
++                slot,
++                CKM_AES_GCM.into(),
++                PK11Origin::PK11_OriginUnwrap as u32,
++                CKA_ENCRYPT.into(),
++                &mut item,
++                ptr::null_mut(),
++            );
++            PK11_FreeSlot(slot);
++            (!imported.is_null()).then_some(Self { key: imported })
++        }
++    }
++
++    fn crypt(&self, encrypt: bool, nonce: &[u8; NONCE_BYTES], input: &[u8], out: &mut [u8], expected: usize) -> bool {
++        let aad: [u8; 0] = [];
++        let mut gcm = CK_GCM_PARAMS {
++            pIv: nonce.as_ptr() as CK_BYTE_PTR,
++            ulIvLen: NONCE_BYTES as CK_ULONG,
++            ulIvBits: (NONCE_BYTES * 8) as CK_ULONG,
++            pAAD: aad.as_ptr() as CK_BYTE_PTR,
++            ulAADLen: 0,
++            ulTagBits: (TAG_BYTES * 8) as CK_ULONG,
++        };
++        let mut params = SECItem {
++            type_: SECItemType::siBuffer as u32,
++            data: &mut gcm as *mut _ as *mut c_uchar,
++            len: mem::size_of::<CK_GCM_PARAMS>() as c_uint,
++        };
++        let mut out_len: c_uint = 0;
++        let f = if encrypt { PK11_Encrypt } else { PK11_Decrypt };
++        // SAFETY: `params` and the buffers outlive the call, and the lengths given are theirs.
++        let rv = unsafe {
++            f(
++                self.key,
++                CKM_AES_GCM.into(),
++                &mut params,
++                out.as_mut_ptr(),
++                &mut out_len,
++                out.len() as c_uint,
++                input.as_ptr(),
++                input.len() as c_uint,
++            )
++        };
++        rv == SECStatus::SECSuccess && out_len as usize == expected
++    }
++
++    /// Seals `data` into `out`, which takes it and the tag after it.
++    pub(crate) fn seal(&self, nonce: &[u8; NONCE_BYTES], data: &[u8], out: &mut [u8]) -> bool {
++        out.len() == data.len() + TAG_BYTES && self.crypt(true, nonce, data, out, data.len() + TAG_BYTES)
++    }
++
++    /// Opens `sealed`, a payload and its tag, into the start of `out`. False if its tag does not match.
++    pub(crate) fn open(&self, nonce: &[u8; NONCE_BYTES], sealed: &[u8], out: &mut [u8]) -> bool {
++        sealed.len() >= TAG_BYTES
++            && out.len() >= sealed.len() - TAG_BYTES
++            && self.crypt(false, nonce, sealed, out, sealed.len() - TAG_BYTES)
++    }
++
++    pub(crate) fn random(buf: &mut [u8]) -> bool {
++        // SAFETY: the length given is the buffer's.
++        unsafe { PK11_GenerateRandom(buf.as_mut_ptr(), buf.len() as c_int) == SECStatus::SECSuccess }
++    }
++}
++
++impl Drop for Cipher {
++    fn drop(&mut self) {
++        // SAFETY: the key was imported in `new`, and is freed once.
++        unsafe { PK11_FreeSymKey(self.key) }
++    }
++}
+diff --git a/third_party/application-services/components/support/sql/src/open_database.rs b/third_party/application-services/components/support/sql/src/open_database.rs
+index 1a4b4bb71c..3d8f8011c4 100644
+--- a/third_party/application-services/components/support/sql/src/open_database.rs
++++ b/third_party/application-services/components/support/sql/src/open_database.rs
+@@ -118,6 +118,7 @@ pub fn open_database_with_flags<CI: ConnectionInitializer, P: AsRef<Path>>(
+     open_flags: OpenFlags,
+     connection_initializer: &CI,
+ ) -> Result<Connection> {
++    crate::obfsvfs::register_on_android();
+     do_open_database_with_flags(&path, open_flags, connection_initializer).or_else(|e| {
+         // See if we can recover from the error and try a second time
+         try_handle_db_failure(&path, open_flags, connection_initializer, e)?;
+-- 
+2.47.3
+

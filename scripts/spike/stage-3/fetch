@@ -1,0 +1,18 @@
+#!/bin/sh
+# Makes the Firefox checkout the stage 3 spike builds from: stage 2's, made by its `fetch`, with this directory's patches
+# committed on a branch of their own on top of stage 2's.
+#
+#   scripts/spike/stage-3/fetch <new directory>
+#
+# Put it on the drive for large builds, /home/coder/extra_space/encri-extraspace (W7): its objdir is tens of GB.
+set -eu
+
+here=$(cd "$(dirname "$0")" && pwd)
+target=${1:?usage: fetch <new directory>}
+. "$here/../stage-1/versions"
+
+"$here/../stage-2/fetch" "$target" >/dev/null
+cd "$target"
+git switch --quiet -c encriox-spike-stage-3
+git am --quiet "$here"/patches/*.patch
+git log --oneline "$FIREFOX_COMMIT"..HEAD

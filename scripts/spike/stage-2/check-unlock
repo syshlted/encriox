@@ -7,7 +7,9 @@
 #   scripts/spike/stage-2/check-unlock <adb serial>
 #
 # PASSPHRASES names the file of `<serial>=<passphrase>` lines, ~/.config/encri-images/test-vaults by default. The
-# passphrase is never printed.
+# passphrase is never printed. WATCHED names the app's directories whose files the run compares, Gecko's profile and
+# its cache by default, `files/mozilla cache`; stage 3's run adds application-services' databases with `files
+# databases cache` (../stage-3/README.md).
 #
 # 1. The vault open at start: the secret is given without asking the user, and a first origin's stores are written,
 #    and given a minute in the session to reach the disk.
@@ -38,6 +40,7 @@ encri=com.systemhalted.encri
 ports=
 adb="${ADB:-$HOME/Android/Sdk/platform-tools/adb} -s $serial"
 passphrases=${PASSPHRASES:-$HOME/.config/encri-images/test-vaults}
+watched=${WATCHED:-files/mozilla cache}
 work=$(mktemp -d)
 server=
 trap '[ -z "$server" ] || kill "$server" 2>/dev/null || true; for p in $ports; do $adb reverse --remove tcp:$p 2>/dev/null || true; done; rm -rf "$work"' EXIT
@@ -252,13 +255,13 @@ settle() {
 }
 
 files() {
-    $adb shell "run-as $package sh -c 'find files/mozilla cache -type f -exec ls -l {} \;'" | tr -d '\r' |
+    $adb shell "run-as $package sh -c 'find $watched -type f -exec ls -l {} \;'" | tr -d '\r' |
         awk '{ print $NF, $5 }' | sort
 }
 
 # The same, with each file's modification time after its size, for `changed`.
 stamped() {
-    $adb shell "run-as $package sh -c 'find files/mozilla cache -type f -exec stat -c %n:%s@%Y {} \;'" | tr -d '\r' |
+    $adb shell "run-as $package sh -c 'find $watched -type f -exec stat -c %n:%s@%Y {} \;'" | tr -d '\r' |
         sed 's/:\([0-9]*@[0-9]*\)$/ \1/' | sort
 }
 

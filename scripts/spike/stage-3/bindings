@@ -1,0 +1,65 @@
+#!/bin/sh
+# Regenerates the Kotlin bindings of the application-services components stage 3 changes, places, the logins and
+# autofill, after a change to one's UDL. In Firefox's tree they are generated ahead and checked in, under
+# `toolkit/components/uniffi-bindgen-gecko-js/android/components/`, and Gradle compiles them as they are: a UDL change
+# without them fails the build at `:places:compileReleaseKotlin` or the like, after mach has built the megazord.
+#
+#   scripts/spike/stage-3/bindings <firefox checkout>
+#
+# mach's own way, `mach uniffi generate`, builds a desktop objdir for it. This reads the megazord stage 3's `build`
+# has just compiled, with the bindgen of Mozilla's toolchain under ~/.mozbuild, which is the one its tree's bindings
+# come from: every other component's must come out as the tree has them, or it stops, and copies nothing. Then run
+# `build` again.
+set -eu
+
+firefox=$(cd "${1:?usage: bindings <firefox checkout>}" && pwd)
+state=${MOZBUILD_STATE_PATH:-$(dirname "$firefox")/mozbuild}
+objdir=$firefox/obj-encriox-stage-3
+megazord=$objdir/aarch64-linux-android/release-megazord/libmegazord.a
+bindgen=$HOME/.mozbuild/embedded-uniffi-bindgen/embedded-uniffi-bindgen
+tree=toolkit/components/uniffi-bindgen-gecko-js/android/components
+[ -f "$megazord" ] || { echo "bindings: no megazord at $megazord; run build first" >&2; exit 1; }
+[ -x "$bindgen" ] || { echo "bindings: no bindgen at $bindgen" >&2; exit 1; }
+
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+# The bindgen asks cargo for the workspace's metadata, offline, from the checkout's vendored crates.
+mkdir "$work/cargo"
+cp "$objdir/.cargo/config.toml" "$work/cargo/config.toml"
+cd "$firefox"
+PATH="$state/rustc/bin:$PATH" CARGO_HOME="$work/cargo" CARGO_NET_OFFLINE=true \
+    "$bindgen" generate --no-format --language kotlin --out-dir "$work/out" "$megazord"
+
+python3 -I - "$work/out" "$tree" <<'COMPARE'
+import filecmp, os, shutil, sys
+
+out, tree = sys.argv[1:]
+# The generated package of each component the tree has bindings for, and its directory there.
+components = {
+    "adsclient": "ads-client", "autofill": "autofill", "crashtest": "crashtest", "db_crypto": "db-crypto",
+    "errorsupport": "errorsupport", "fxaclient": "fxaclient", "init_rust_components": "init_rust_components",
+    "logins": "logins", "merino": "merino", "places": "places", "push": "push", "relay": "relay",
+    "remotesettings": "remotesettings", "remotetabs": "tabs", "rust_log_forwarder": "rust-log-forwarder",
+    "search": "search", "suggest": "suggest", "sync15": "sync15", "syncmanager": "syncmanager",
+    "tracing": "tracing", "viaduct": "viaduct",
+}
+changed = {"places", "logins", "autofill"}
+copies, unexpected = [], []
+for package, component in components.items():
+    source = os.path.join(out, "mozilla/appservices", package)
+    for root, _, names in os.walk(source):
+        for name in names:
+            rel = os.path.relpath(os.path.join(root, name), source)
+            target = os.path.join(tree, component, "android/src/main/java/mozilla/appservices", package, rel)
+            if os.path.exists(target) and filecmp.cmp(os.path.join(root, name), target, shallow=False):
+                continue
+            (copies if package in changed else unexpected).append((os.path.join(root, name), target))
+if unexpected:
+    sys.exit("bindings: these would change too, so this bindgen is not the tree's; nothing copied:\n  "
+             + "\n  ".join(t for _, t in unexpected))
+for source, target in copies:
+    shutil.copyfile(source, target)
+    print(f"bindings: regenerated {target}")
+if not copies:
+    print("bindings: every binding is as the megazord has it")
+COMPARE

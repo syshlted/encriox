@@ -1,0 +1,14 @@
+# The stage 3 spike's mach configuration: stage 2's (`../stage-2/mozconfig`), with application-services built from
+# Firefox's own copy, `third_party/application-services`, rather than taken as Mozilla published it, so that its
+# databases can be sealed as Gecko's are (`docs/sealed-history.md`).
+ac_add_options --enable-project=mobile/android
+ac_add_options --target=aarch64-linux-android
+ac_add_options --enable-android-subproject=fenix
+ac_add_options --with-android-sdk=$HOME/.mozbuild/android-sdk-linux
+ac_add_options --enable-update-channel=release
+ac_add_options --enable-bootstrap=-android-sdk
+ac_add_options --disable-debug-symbols
+# The megazord, libmegazord.so, compiled by mach from the checkout's copy, which is application-services' v160.0 in
+# every component the spike changes, against Gecko's NSS; Gradle then takes its components as projects of the build.
+ac_add_options --enable-appservices-in-tree
+mk_add_options MOZ_OBJDIR=@TOPSRCDIR@/obj-encriox-stage-3

@@ -1,0 +1,183 @@
+#!/bin/sh
+# Checks stage 3's sealed databases (`docs/sealed-history.md`): places', which holds the history and the bookmarks, the
+# logins' and autofill's, each sealed through application-services' obfsvfs with a key from the vault's.
+#
+#   scripts/spike/stage-3/check-sealed <adb serial> [sealed|unsealed]
+#
+# `unsealed` is the control run: the gate has the three opened in the clear, as a release keeps them, and the marker
+# must be found in each. The default, `sealed`, must find it in none.
+#
+# 1. A fresh start: Gecko's profile deleted, as stage 2's config needs, and the three databases, which the spike's
+#    earlier builds kept in the clear and a sealed open refuses. The gate records a visit and a bookmark, a login and
+#    a card, each holding a fresh marker in a column its database keeps in the clear, and reads them back.
+# 2. The app stopped, its data is searched for the marker, as ASCII and UTF-16, and each database's and log's header
+#    read: their page size and reserved bytes say whether they are sealed.
+# 3. A new process reads the four back.
+# 4. Sealed only: each database opened without its key, as a component given none would. Each open must be refused,
+#    and no file of the three databases changed.
+# 5. The four deleted. The control run then deletes the three databases it kept in the clear, and turns sealing on.
+#
+# The vault must be open to the spike. A step that does not hold is recorded and the run goes on; it then fails,
+# naming each.
+set -eu
+export LC_ALL=C
+
+here=$(cd "$(dirname "$0")" && pwd)
+stage2=$(cd "$here/../stage-2" && pwd)
+serial=${1:?usage: check-sealed <adb serial> [sealed|unsealed]}
+mode=${2:-sealed}
+case $mode in sealed | unsealed) ;; *) echo "check-sealed: sealed or unsealed, not $mode" >&2 && exit 2 ;; esac
+package=com.systemhalted.encri.browser.spike
+adb="${ADB:-$HOME/Android/Sdk/platform-tools/adb} -s $serial"
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+
+fail() {
+    echo "check-sealed: $*" >&2
+    exit 1
+}
+
+wrongs=
+wrong() {
+    echo "  WRONG: $*"
+    wrongs="$wrongs
+  $*"
+}
+
+applog() { $adb logcat -d -s encriox-spike:I | sed 's/^.*encriox-spike: //'; }
+said() { applog | grep -E "$1" | sed 's/^/    /' || true; }
+
+# Starts the gate with the extras after the first two arguments, and waits up to $2 seconds for a line matching $1.
+gate() {
+    want=$1
+    wait=$2
+    shift 2
+    $adb logcat -c
+    # Not `am start -W`: the gate finishes without drawing, and -W would wait for it forever.
+    $adb shell am start -n $package/org.mozilla.fenix.encri.EncriGateActivity "$@" >/dev/null
+    for _ in $(seq "$wait"); do
+        applog | grep -qE "$want" && return 0
+        sleep 1
+    done
+    applog >&2
+    fail "the gate did not log /$want/ within ${wait}s"
+}
+
+# The three databases' files, each with its log, journal and log index, copied off the phone into $1.
+pull() {
+    mkdir -p "$1"
+    # adb joins its arguments into one line for the phone's shell, which then reads the quotes.
+    $adb exec-out "run-as $package sh -c 'tar -cf - files/places.sqlite* databases/logins2.sqlite* \
+databases/autofill.sqlite* 2>/dev/null'" | tar -xf - -C "$1" 2>/dev/null || true
+}
+
+marker="ENCRIOX$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')"
+echo "== $serial, $mode, marker $marker"
+
+echo "== 1. a fresh start: the visit, the bookmark, the login and the card written, and read back"
+"$stage2/fresh-profile" "$serial" >/dev/null
+$adb shell "run-as $package sh -c 'rm -f files/places.sqlite* databases/logins2.sqlite* databases/autofill.sqlite*'"
+$adb push "$stage2/geckoview-config.yaml" /data/local/tmp/$package-geckoview-config.yaml >/dev/null
+gate "sealing unsealed=" 30 --es sealing "$([ "$mode" = sealed ] && echo on || echo off)"
+said "sealing "
+$adb shell am force-stop $package
+gate "seal wrote" 120 --es seal write --es marker "$marker"
+said "gate open|key (made|read|held)|database key|seal wrote"
+applog | grep -q "gate open" || fail "the vault is not open to the spike"
+applog | grep -E "seal wrote" | grep -q "failed" && wrong "the gate could not write all four"
+gate "seal read" 60 --es seal read --es marker "$marker"
+said "seal read"
+applog | grep -q "seal read visits=1 bookmarks=1 logins=1 cards=1$" || wrong "the session did not read all four back"
+$adb shell am force-stop $package
+
+echo "== 2. where the marker is, and what each database's header says"
+mkdir "$work/data"
+$adb exec-out run-as $package tar -cf - . 2>/dev/null | tar -xf - -C "$work/data" 2>/dev/null || true
+python3 -I - "$work/data" "$marker" > "$work/found" <<'SEARCH'
+import os, sys
+
+top, marker = sys.argv[1:]
+needles = [marker.encode(), marker.lower().encode(), marker.encode("utf-16-le")]
+for path, _, names in os.walk(top):
+    for name in sorted(names):
+        full = os.path.join(path, name)
+        if os.path.islink(full):
+            continue  # Gecko's profile lock, which points nowhere
+        with open(full, "rb") as f:
+            body = f.read()
+        if any(n in body for n in needles):
+            print(f"MARKER {os.path.relpath(full, top)}")
+for db in ("files/places.sqlite", "databases/logins2.sqlite", "databases/autofill.sqlite"):
+    for suffix in ("", "-wal", "-journal"):
+        full = os.path.join(top, db + suffix)
+        if not os.path.exists(full):
+            continue
+        with open(full, "rb") as f:
+            head = f.read(32)
+        size = os.path.getsize(full)
+        if suffix == "" and head[:16] == b"SQLite format 3\0":
+            page = int.from_bytes(head[16:18], "big")
+            page = 65536 if page == 1 else page
+            state = "sealed" if page == 8192 and head[20] == 32 else "clear"
+            print(f"HEADER {db}{suffix} {state} {size} bytes, {page}-byte pages, {head[20]} reserved")
+        elif suffix == "-wal" and len(head) == 32 and int.from_bytes(head[:4], "big") & ~1 == 0x377F0682:
+            page = int.from_bytes(head[8:12], "big")
+            print(f"HEADER {db}{suffix} {'sealed' if page == 8192 else 'clear'} {size} bytes, {page}-byte pages")
+        else:
+            print(f"HEADER {db}{suffix} - {size} bytes")
+SEARCH
+sed -n 's/^HEADER /  /p' "$work/found"
+if grep -q '^MARKER ' "$work/found"; then
+    echo "  the marker, as ASCII, in lower case or as UTF-16, is in:"
+    sed -n 's/^MARKER /    /p' "$work/found"
+else
+    echo "  the marker is in no file"
+fi
+for db in files/places.sqlite databases/logins2.sqlite databases/autofill.sqlite; do
+    grep -q "^HEADER $db " "$work/found" || wrong "$db is not there"
+    if [ "$mode" = sealed ]; then
+        grep -q "^HEADER $db sealed " "$work/found" || wrong "$db is not sealed"
+        grep -q "^MARKER $db" "$work/found" && wrong "the marker is in $db or its log"
+    else
+        grep -q "^MARKER $db" "$work/found" || wrong "the control found no marker in $db or its log"
+    fi
+done
+if [ "$mode" = sealed ]; then
+    grep '^MARKER ' "$work/found" | grep -q . && wrong "the marker is in a file"
+fi
+
+echo "== 3. a new process, reading the four back"
+gate "seal read" 120 --es seal read --es marker "$marker"
+said "database key|seal read"
+applog | grep -q "seal read visits=1 bookmarks=1 logins=1 cards=1$" || wrong "a new process did not read all four back"
+$adb shell am force-stop $package
+
+if [ "$mode" = sealed ]; then
+    echo "== 4. each database opened without its key"
+    pull "$work/before"
+    gate "seal plain" 120 --es seal plain
+    said "seal plain"
+    $adb shell am force-stop $package
+    for db in places logins autofill; do
+        applog | grep "seal plain" | grep -qE "$db=failed: " || wrong "$db opened without its key"
+    done
+    pull "$work/after"
+    if diff -r "$work/before" "$work/after" >/dev/null; then
+        echo "  no file of the three databases changed: $(cd "$work/after" && find . -type f | sort | tr '\n' ' ')"
+    else
+        wrong "an open without the key changed a file: $(diff -rq "$work/before" "$work/after" | tr '\n' ' ')"
+    fi
+fi
+
+echo "== 5. the four deleted"
+gate "seal forgot" 120 --es seal forget --es marker "$marker"
+said "seal forgot"
+$adb shell am force-stop $package
+if [ "$mode" = unsealed ]; then
+    $adb shell "run-as $package sh -c 'rm -f files/places.sqlite* databases/logins2.sqlite* databases/autofill.sqlite*'"
+    gate "sealing unsealed=false" 30 --es sealing on
+    echo "  the three databases kept in the clear deleted, and sealing on again"
+fi
+
+[ -z "$wrongs" ] || fail "what was wrong:$wrongs"
+echo "check-sealed: $mode: every step held"
