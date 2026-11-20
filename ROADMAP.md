@@ -120,8 +120,10 @@ sources are there, and are not repeated here:
      open the profile, S; the About screen's line and the version, S.
    - **The checks**, from the spikes' `check-plaintext`, `check-lockstore`, `check-unlock` and `check-stopped`, run by
      the script that follows each Firefox release (W9), M.
-   - **The key and the registry**: the user makes encriox's key on the key machine with encri's kit (encri D141);
-     then its entry in encri-api's registry, `registry/com.systemhalted.encriox.app` with a floor (W8, encri D130).
+   - **The key and the registry**: ~~the user makes encriox's key on the key machine with encri's kit (encri D141)~~
+     **made 2026-11-20**, `encriox-app-signing`, with a transparency key of its own, by the suite's key tool, each
+     password in its store and seen by no one (the superproject's `keys/`); then its entry in encri-api's registry,
+     `registry/com.systemhalted.encriox.app` with a floor (W8, encri D130).
    - **The first usable build**, signed, on the S9, the A20 and the S24, the S24's rounds each named to the user
      first (W17, flag 1), and used for some days. Then a signed build at every Firefox release, every two weeks.
 
