@@ -5,7 +5,7 @@ Let's continue on to history and bookmarks. Then logins and cards, so 1 and 2 ar
 `docs/sealed-history.md`'s three decisions; built as stage 3's patches 0001–0006 and measured on the A20 and the S9.
 **Flagged for veto on six points** (below), **which stand (W22)**. ~~The G6's vault is locked
 and the S24 waits for its owner: both unmeasured.~~ **Measured on the G6 too, 2026-11-20**, once its owner had
-unlocked its vault, with patch 0007's fix to the bench (below).*
+unlocked its vault, with patch 0007's fix to the bench (below), **and on the S24** (W23).*
 
 #### What the user decided
 
@@ -62,14 +62,17 @@ unlocked its vault, with patch 0007's fix to the bench (below).*
 
 #### Measured (2026-11-20, the A20 and the S9, patch 0005's build, and 0006's for the bench; the G6, 0006's, and 0007's for the bench)
 
-| | A20 | S9 | G6 |
-|---|---|---|---|
-| Control run, the three in the clear (`check-sealed … unsealed`) | marker in `places.sqlite`, its log, `logins2.sqlite` and autofill's log | the same | the same |
-| Sealed (`check-sealed`) | the marker in no file of the app's; the three databases and their logs with 8 KiB pages and 32 reserved bytes | the same | the same |
-| The four read back in a new process, after the app was killed with its logs not checkpointed | yes | yes | yes |
-| Each database opened without its key | refused, `unable to open database file`; no file of the three changed | the same | the same |
-| Logins asked for before the vault was open (`check-keys`) | came after the vault's key and the database's, 3.6 s; nothing in the clear | 0.4 s; the same | 1.5 s; the same |
-| A database's key derived once the vault's was held | 1–35 ms | 0–3 ms | 0–3 ms |
+| | A20 | S9 | G6 | S24 (W23) |
+|---|---|---|---|---|
+| Control run, the three in the clear (`check-sealed … unsealed`) | marker in `places.sqlite`, its log, `logins2.sqlite` and autofill's log | the same | the same | the same |
+| Sealed (`check-sealed`) | the marker in no file of the app's; the three databases and their logs with 8 KiB pages and 32 reserved bytes | the same | the same | the same |
+| The four read back in a new process, after the app was killed with its logs not checkpointed | yes | yes | yes | yes |
+| Each database opened without its key | refused, `unable to open database file`; no file of the three changed | the same | the same | the same |
+| Logins asked for before the vault was open (`check-keys`) | came after the vault's key and the database's, 3.6 s; nothing in the clear | 0.4 s; the same | 1.5 s; the same | 36 ms; the same |
+| A database's key derived once the vault's was held | 1–35 ms | 0–3 ms | 0–3 ms | 0–2 ms |
+
+The A20's, the G6's and the S24's sealed runs were made again with `copy-data`, whose copy of the app's data is known
+to be whole, and held; the S9's rest on a copy nobody checked (W23, flag 1).
 
 **What sealing costs places** (`bench-places`, patch 0006's build: 2,000 visits a transaction each, as browsing
 records them, fifty autocomplete queries, and every visit read back, on three new databases a round in an order that
@@ -94,7 +97,8 @@ of plain's visits' time on the A20 and 0.85 on the S9.
 fifty autocomplete queries 581, 590 and 581 ms; every visit read back 26, 26 and 27 ms; and 4.5, 2.0 and 2.0 MB on
 disk. **The cipher costs 5% of a visit's write there**, and sealed places writes in 0.77 of plain's time. Its first
 run, on patch 0006's build, made every plain-8k database with 4 KiB pages (*Found on the way*, 4); its sealed and
-plain sides agreed with these within 2%.
+plain sides agreed with these within 2%. **On the S24** the cipher costs 1%, and sealed writes in 0.71 of plain's time
+(W23).
 
 **History recorded by pages, not the gate** (stage 2's `check-lockstore` and stage 1's `check-plaintext normal`, on the
 S9): the marker page, loaded in a tab, went to Fenix's history, whose metadata service logged it, and
@@ -167,7 +171,7 @@ a change to obfsvfs, 6 minutes; to the spike's Fenix, under 2.
 
 #### Unmeasured
 
-~~The G6, whose vault is locked;~~ the S24, which waits for its owner's word. A log torn by a crash, and a page that
+~~The G6, whose vault is locked; the S24, which waits for its owner's word.~~ A log torn by a crash, and a page that
 does not open under the right key, were tested on this machine alone (`check-obfsvfs-host`). On the G6, whether a
 page's visit reached places: `check-plaintext` lists a file by name and size, and places' log had the same size.
 
@@ -184,5 +188,10 @@ locking the vault.
 
 - **W21's unmeasured G6** (2026-11-20): measured, as on the A20 and the S9; the cipher costs 5% of a visit's write
   there. Its first bench made `plain-8k` with 4 KiB pages, which patch 0007 fixes.
+- **W19's, W20's and W21's unmeasured S24** (2026-11-20, W23): measured, on its owner's word, all as on the other
+  phones; W20's real lock not, which would lock the S24's vault.
+- **W4's, W5's, W6's and W21's private and sealed results** (2026-11-20, W23): they searched copies of the app's data that
+  nothing checked were whole. Run again with `copy-data` on the G6, the A20 and the S24, they held; the S9's rest on
+  the old copies until it is attached.
 
 <!-- /amendments -->

@@ -111,5 +111,8 @@ test vault, which held nothing.
 - **W4's first item of what stage 1 has to do** (2026-11-15, W5): the length a response promises is not enough to tell
   a stopped copy from a finished one. A download with no length, paused or cancelled, was saved cut short into the
   vault. The writer also asks whether the download is still running, and a retry starts from the start.
+- **W4's, W5's, W6's and W21's private and sealed results** (2026-11-20, W23): they searched copies of the app's data that
+  nothing checked were whole. Run again with `copy-data` on the G6, the A20 and the S24, they held; the S9's rest on
+  the old copies until it is attached.
 
 <!-- /amendments -->

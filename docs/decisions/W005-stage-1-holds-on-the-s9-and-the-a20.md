@@ -124,5 +124,8 @@ because that path makes a new job (read in the source, not measured).
 
 - **W5's first rejection** (2026-11-20, W19): a stopped download is left paused or cancelled, and *Resume* starts one
   nothing was kept of from the start, so it no longer fails for want of a file in `Download/`. W5's flag 2 ends.
+- **W4's, W5's, W6's and W21's private and sealed results** (2026-11-20, W23): they searched copies of the app's data that
+  nothing checked were whole. Run again with `copy-data` on the G6, the A20 and the S24, they held; the S9's rest on
+  the old copies until it is attached.
 
 <!-- /amendments -->

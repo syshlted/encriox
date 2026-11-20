@@ -126,5 +126,8 @@ run stops with a message; on the A20 with its screen locked it stopped after 166
   lock, and its process ends with every key it held.
 - **W6's logins' origins** (2026-11-20, W21): each login's origin and times, which W6 left as plain columns of the
   logins' database, are sealed with the database now, under a key of their own from the vault's.
+- **W4's, W5's, W6's and W21's private and sealed results** (2026-11-20, W23): they searched copies of the app's data that
+  nothing checked were whole. Run again with `copy-data` on the G6, the A20 and the S24, they held; the S9's rest on
+  the old copies until it is attached.
 
 <!-- /amendments -->

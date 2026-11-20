@@ -37,9 +37,11 @@ sources are there, and are not repeated here:
    in memory, so a private session leaves nothing of a page on disk on all three; and the logins' and the cards' keys
    are sealed with a key of the browser's own in the vault, `encriox.key`, measured on the S9 and the A20, with the
    locked path on the G6. Owed:
-   - **the S24**, with `check-plaintext`, `measure`, `check-stopped` and `check-keys`, on its owner's word and once it
+   - ~~**the S24**, with `check-plaintext`, `measure`, `check-stopped` and `check-keys`, on its owner's word and once it
      has a vault again: its old one was destroyed on 2026-11-17, when its encri gave way to a debug build (the
-     suite's `CHANGELOG.md`);
+     suite's `CHANGELOG.md`);~~ **Done on the S24 2026-11-20 (W23)**, on its owner's word: no page in plaintext after
+     a private session, downloads into the vault at about 125 MiB/s, and the stopped downloads and the keys as on the
+     other phones;
    - **patch 0010's locked path, on the G6**, once its owner has unlocked its vault, which the spike locked and the
      passphrase on file does not open (W5): open the gate, lock with `--ez lock true`, and open it again, which must
      ask to unlock. Typed quoted, so that its space and its `#` would reach encri, it still did not (W15), and a vault
@@ -123,7 +125,12 @@ sources are there, and are not repeated here:
      refused with nothing changed, and sealed places faster to write than plain. ~~Six points flagged for veto.~~ Its
      six flags stand (W22). ~~Owed here: the G6 and the S24; pages over TLS with the megazord on Gecko's NSS;
      `check-unlock` with the databases watched.~~ Pages over TLS and `check-unlock` with the databases watched, done on
-     the A20 (W21). Owed here: the S24.
+     the A20 (W21). ~~Owed here: the S24.~~ **On the S24 too, 2026-11-20 (W23)**, with `check-kek`; `check-unlock`,
+     which locks the vault, was not run there.
+   - **What a lock does to a browser Android has frozen** (W23): on Android 14 and later a cached app's process is
+     frozen, and a lock reaches it only when it is unfrozen. Measure it on the S24, which needs its vault locked, so
+     its owner's word and its owner there to unlock it; then whether encriox keeps itself from being frozen while it
+     holds the keys, by a foreground service of its own, or closes as it goes to the background. S.
    - **History and bookmarks on in encriox's menus**, which W17 had off, and Fenix's history delegate set, S; and the
      stage 3 patches carried into encriox's series with the in-tree build in its mozconfig, S.
    - **A key check in each sealed page, next** (W22's amendment, the user's word of 2026-11-20): in obfsvfs, a check

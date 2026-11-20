@@ -39,7 +39,7 @@ The check failed on the build before the patch, every time, and passed on the bu
 
 **On the G6** (2026-11-20, patch 0020's build), all six cases held as on the A20: paused, with a length and without,
 shown as *Download paused*; *Resume* brought it whole, 16777216 bytes, with a length and without; cancelled, with a
-length and without, shown as cancelled; and nothing in the vault of a download stopped.
+length and without, shown as cancelled; and nothing in the vault of a download stopped. **On the S24** too (W23).
 
 #### Rejected
 
@@ -53,5 +53,7 @@ length and without, shown as cancelled; and nothing in the vault of a download s
 
 - **W19's unmeasured G6** (2026-11-20): measured, once its owner had unlocked its vault. The six cases held as on the
   A20.
+- **W19's, W20's and W21's unmeasured S24** (2026-11-20, W23): measured, on its owner's word, all as on the other
+  phones; W20's real lock not, which would lock the S24's vault.
 
 <!-- /amendments -->

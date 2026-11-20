@@ -184,6 +184,15 @@ logins' and autofill's databases through an obfsvfs of application-services' own
 - **Android 9 opens a new database in its compatibility WAL**, through its own `SQLiteDatabase`, and the header is
   written with the default 4 KiB pages before any pragma: the G6's bench made its `plain-8k` so. Out of WAL, a vacuum
   sets the page size (W21, stage 3's patch 0007).
+- **`adb exec-out` has one stream**: tar's errors went into the archive, its exit status was lost, and a copy of the
+  app's data cut short when WorkManager started the app on the S24 read as one with no marker in it. The checks copy
+  through `stage-1/copy-data`, `adb shell -T`, which fails a copy that did not finish (W23).
+- **Android 14 and later freeze a cached app's process**: the gate finishes at once, and the S24's bench stopped in
+  its first run with nothing said. `bench-places` keeps the process unfrozen with `am unfreeze --sticky`, which
+  changes no setting, and fails if it finds it frozen (W23). A lock may reach a frozen browser only once it is
+  unfrozen: unmeasured.
+- **With stage 3, the app's own start asks for the vault's key before the gate does**, for its databases' keys, and
+  the gate then logs `key held` in a new process. `check-keys` looks for a key read in the process instead (W23).
 - **The A20's vault locks while a long bench runs**, as Samsung's process manager kills encri in the background:
   check that the vault is open before a check that needs it.
 - **Under zsh, `$adb` holding `adb -s <serial>` is one word**, and the command is not found: a loop waiting on it
@@ -258,7 +267,8 @@ logins' and autofill's databases through an obfsvfs of application-services' own
   after its key, 3.6 s on the A20 and 0.4 s on the S9. A page loaded in a tab wrote places, and left the marker in
   two files, saved tabs and `serviceworker.txt`, where stage 2 left it in four. The cipher costs 4% (A20) and 10% (S9)
   of a visit's write and nothing to read; with its 8 KiB pages, sealed places writes a third (A20) and a sixth (S9)
-  faster than places' own 32 KiB, in half the disk. A page over TLS loaded with the megazord on Gecko's NSS.
+  faster than places' own 32 KiB, in half the disk. A page over TLS loaded with the megazord on Gecko's NSS. On the
+  G6 and the S24 the same (W21, W23); the cipher costs 5% on the G6.
 - **Stage 3's first build took 72 minutes** with mach, Gecko and the megazord, and 9 more for Gradle; a change to
   obfsvfs, 6; to the spike's Fenix, under 2 (W21).
 - **Stage 2's first Gecko build took 76 minutes**, 69 of them `mach build` at 86% of 8 cores, and a change to one pref
@@ -283,6 +293,8 @@ logins' and autofill's databases through an obfsvfs of application-services' own
 | W19 | A stopped download into the vault shows as paused or cancelled, and *Resume* brings it whole (patch 0020) |
 | W20 | The browser closes at a lock: Gecko writes what it holds, and the session's processes end (patch 0012) |
 | W21 | Stage 3: places', the logins' and autofill's databases sealed through an obfsvfs of application-services' own |
+| W22 | W21's flags stand; a key check in each sealed page, next, and a prompt to delete or repair one that will not open |
+| W23 | Stages 1 and 3 on the S24; a copy of the app's data cut short fails its check (`copy-data`) |
 | encri-api L11, L12 | `write` saves only a finished writer; a writer's failure is told encri's reason |
 | encri D120, D145 | A grant is keyed on the package for good |
 
@@ -290,13 +302,13 @@ logins' and autofill's databases through an obfsvfs of application-services' own
 
 - Which of the spikes' patches become encriox's, in its first usable build (W17; `ROADMAP.md`, item 6), where encriox
   closes at a lock and its prefs are its own Gecko's defaults.
-- The S24's run waits for its owner's word: `check-plaintext`, `measure`, `check-stopped` and `check-keys`.
+- The S9's private and sealed results, on copies nobody checked, until it is attached again (W23, flag 1).
 - W6's first two flags: the key as a document in the vault, and an unopenable key taken as lost. Its third ended
   with W20.
-- Patch 0010's locked path, on the G6 once its owner has unlocked it (`ROADMAP.md`).
+- Patch 0010's locked path on the G6, which locks its vault, so with its owner there to unlock it (`ROADMAP.md`).
 - W13's three flags, W15's four and W16's three.
 - W17's three flags, and W20's three: the 10 seconds, the crash helper, and S1 closed unreproduced.
-- W21's six flags; stage 3 on the G6 and the S24.
+- W22's three flags and W23's two; a lock reaching a browser Android has frozen, on the S24 (`ROADMAP.md`).
 
 ## Read next
 

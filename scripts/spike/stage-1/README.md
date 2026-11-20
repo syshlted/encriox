@@ -73,3 +73,6 @@ passphrase. `adb logcat -s encriox-spike` says `gate open scope=…` once it hol
 - `check-keys <serial>`: a login and a card, each a fresh marker, are saved, and the app's data is searched for them
   and for a key in the clear. A new process then asks for the logins before the vault is open: they must arrive after
   the vault's key, whole. Both are deleted after. It needs the vault unlocked, and leaves `encriox.key` in it.
+- `copy-data <serial> <dir> [<path>...]`: the app's data directory, or the paths given in it, copied off the phone;
+  the checks search such a copy, and a copy that did not finish fails them, where it would read as one with no marker
+  in it (W23).

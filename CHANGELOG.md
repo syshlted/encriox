@@ -4,6 +4,19 @@ What happened, newest first. Why is in `docs/decisions/`, and what is next is in
 
 ## Unreleased
 
+### The S24 measured, and checks that fail a copy cut short (2026-11-20)
+
+On the user's word, the spike's owed rounds ran on the S24, the user's own phone, Android 17, its vault never locked
+by a check (W23). Stage 1 held: no page in plaintext after a private session, downloads into the vault at about
+125 MiB/s, the six stopped downloads as they should be, and the logins' and the cards' keys sealed. Stage 3 held as on
+the other phones, `check-kek` among it; the cipher costs 1% of a visit's write there, and pages over TLS agree
+X25519MLKEM768 with the megazord on Gecko's NSS. Found and fixed: the checks' copy of the app's data could end short
+with nothing said, which reads as no marker anywhere, so `copy-data` now fails a copy that did not finish, and the
+private and sealed runs were made again with it on the G6, the A20 and the S24, and held; `check-keys` could take a
+process WorkManager had started for a new one; and Android 17 froze the bench in the background, which now keeps its
+process unfrozen. Unmeasured: what a lock does to a browser Android has frozen, which needs the S24's vault locked.
+The user also gave the word for a key check in each sealed page, next (W22's amendment).
+
 ### The G6 measured, and the user's answers to W21 (2026-11-20)
 
 With the G6's vault unlocked by its owner, the spike's owed rounds ran there, none of them locking it. Stage 1's

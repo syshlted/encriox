@@ -67,3 +67,8 @@ Each entry corrects a record. Its bold lead names the record possessively ("W1's
   there. Its first bench made `plain-8k` with 4 KiB pages, which patch 0007 fixes.
 - **W22's first flag** (2026-11-20, the user's word: "yes, add the key check next session"): a key check in each
   sealed page tells a wrong key from a damaged file, and the prompt offers a repair beside deleting and keeping.
+- **W19's, W20's and W21's unmeasured S24** (2026-11-20, W23): measured, on its owner's word, all as on the other
+  phones; W20's real lock not, which would lock the S24's vault.
+- **W4's, W5's, W6's and W21's private and sealed results** (2026-11-20, W23): they searched copies of the app's data that
+  nothing checked were whole. Run again with `copy-data` on the G6, the A20 and the S24, they held; the S9's rest on
+  the old copies until it is attached.

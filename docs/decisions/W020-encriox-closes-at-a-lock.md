@@ -46,7 +46,9 @@ there by design (*Found*, below), so the vault locked and the browser closed bef
 *unmeasured*;~~ `check-unlock` measures the same close at a real lock. **On the G6** (2026-11-20, stage 3's build,
 which carries patch 0012), `check-kek` passed every step: at step 5 the vault's key was dropped seconds after a third
 origin wrote its seven stores, the browser closed, and a start with the secret read all six back, local storage among
-them.
+them. On the S24 the same (W23). **Unmeasured there, and on any phone of Android 14 or later: a lock that reaches a
+browser Android has frozen** in the background, as it froze the S24's bench (W23): its close cannot run until the
+process is unfrozen, and its keys stay in its memory until then.
 
 Watched by hand once more: the lock at 0 s, Gecko's thread exiting at 0.6 s, the app's process gone at 0.9 s and the
 tab's at 1.1 s. A GPU process Gecko started as it shut down went at about 9 s, and the session's crash helper at about
@@ -98,5 +100,7 @@ it started the browser again in the background, where it waited at the locked va
 
 - **W20's unmeasured step 5 of `check-kek`** (2026-11-20): measured on the G6, on stage 3's build, which carries patch
   0012. The browser closed at the vault's key dropped, and the third origin read back whole, local storage among it.
+- **W19's, W20's and W21's unmeasured S24** (2026-11-20, W23): measured, on its owner's word, all as on the other
+  phones; W20's real lock not, which would lock the S24's vault.
 
 <!-- /amendments -->
