@@ -138,7 +138,9 @@ Both come before Gecko opens a page, at every start.
    memory alone, and a site's storage cannot be used. Whether encriox should start Gecko at all with the vault locked
    is open.
 4. **A lock mid-session is not a lock of what is open.** It only stops what needs a new key, so the conservative
-   answer to *Lock behaviour*, stopping Gecko at a lock, stands (`open-questions.md`).
+   answer to *Lock behaviour*, stopping Gecko at a lock, stands (`open-questions.md`). **Built by W20
+   (2026-11-20):** the browser closes at a lock, and only the gate's `--es profile lock` still locks the keys
+   mid-session.
 
 After the round, each phone got a fresh Gecko profile, stage 1's APK and stage 1's config again (W13, flag 3). The
 gate is left giving the secret, a setting stage 1's build does not read. No vault was locked, and none was touched but
@@ -188,5 +190,8 @@ to read the spike's own key.
 - **W14's fifth flag** (2026-11-18, W15): a vault was locked, on the user's word. The A20's, locked through the gate as
   encri's own *Lock* does, had the app lock Gecko's keys as the gate's `drop` had, and opened again with the
   passphrase on file, typed into encri's screen.
+- **W14's lock mid-session** (2026-11-20, W20): the app no longer locks Gecko's keys at a lock and goes on. It
+  closes the browser, letting Gecko write what it holds first, and only the gate's `--es profile lock` still locks
+  them mid-session.
 
 <!-- /amendments -->

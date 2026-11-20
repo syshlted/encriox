@@ -1,0 +1,22 @@
+<!doctype html>
+<!-- This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0. If a copy of the MPL was not
+     distributed with this file, You can obtain one at https://mozilla.org/MPL/2.0/. -->
+<!-- The spike's local storage page (stage 2): writes the marker into local storage and nothing else, so that an origin
+     whose first store it is has no directory, key or database until local storage flushes, 5 seconds later. A lock in
+     those 5 seconds is what `check-unlock` looks at. `serve` puts the marker where __MARKER__ is. -->
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width">
+<title>encriox local storage</title>
+<p>Local storage <code id="marker">__MARKER__</code></p>
+<script>
+  const marker = "__MARKER__";
+  let ok = true;
+  let detail = "";
+  try {
+    localStorage.setItem("encriox", marker);
+  } catch (e) {
+    ok = false;
+    detail = String(e);
+  }
+  fetch(`/report?store=localStorage&ok=${ok}&detail=${encodeURIComponent(detail)}`, { cache: "no-store" });
+</script>

@@ -109,19 +109,22 @@ sources are there, and are not repeated here:
    Remote Settings' lists and Safe Browsing; encriox's key comes first; its version is the Firefox release and its own
    count; a key that does not open the profile stops it; and its checks run on the S24. In order, sized as the plan
    sizes them (S, M, L), with the first two on the user's word of 2026-11-20 (W17's amendment):
-   - **The spikes' three bugs, before anything else** (*Bugs*, below): ~~a stopped download into the vault shown as
-     failed~~ **fixed 2026-11-20 (W19)**, stage 1's patch 0020; and closing at a lock, which ends the other two, in
-     stage 2, with what Gecko's shutdown writes measured, M.
+   - ~~**The spikes' three bugs, before anything else** (*Bugs*, below)~~ **Done 2026-11-20**: a stopped download
+     into the vault shows as stopped (W19, stage 1's patch 0020); and the browser closes at a lock (W20, stage 2's
+     patch 0012), with what Gecko's shutdown writes measured, which ends S3. S1 was not seen again, and the state it
+     was seen in is gone. Measured on the A20; the G6 and the S9 are owed.
    - **History and bookmarks in a sealed store**, next: `places.sqlite` has no hook for a key (`open-questions.md`,
-     *application-services*), so the first step is to find how one is given it, L. W17 has the first usable build go
-     without them; whether it waits for them now is the user's to say.
+     *application-services*). `docs/sealed-history.md` weighs five ways and recommends Gecko's obfsvfs, ported into
+     application-services' own SQLite, for places, logins and autofill, with a spike round first, L. It asks the user
+     three things. W17 has the first usable build go without them; whether it waits for them now is the user's to say.
    - **The repository and the build**: `patches/`, `scripts/` and the file naming the Firefox release (W9), S; the
      series moved onto the newest release tag, the first measure of a rebase's cost, M; a build type of encriox's
      own, minified, Gecko optimised, without Fenix's `sharedUserId`, with a `.debug` type beside it, M; the branding,
      every string and icon that names Firefox, M; Gecko's prefs as the build's defaults, S.
    - **The spikes' patches that are encriox's**, about 20 of 30, rewritten without the gate and with `.encriox.key`,
      M.
-   - **What the spikes left**: closing at a lock, carried from the spike (above); Fenix's records of pages, L;
+   - **What the spikes left**: closing at a lock, carried from the spike's patch 0012 (W20); Fenix's records of
+     pages, L;
      Mozilla's services off, with a check that a session reaches no other server, M; a key that does not open the
      profile, S; the About screen's line, naming the Firefox release and where the source is (W9, W18), and the
      version, S.
@@ -172,14 +175,14 @@ sources are there, and are not repeated here:
 
 ## Bugs
 
-- **S1 — A lock in the 5 seconds after a page first writes local storage loses what it wrote** (W15). Gecko flushes
-  local storage 5 seconds after a write, and an origin's first flush makes its database, whose new key cannot be made
-  while the profile's KEK is locked: the writes never reach the disk. Measured once on the A20, and not in a second
-  run. encriox closes at a lock, letting Gecko write what it holds before its keys are locked (W17), which ends it
-  once item 6 builds it.
-- **S3 — A lock leaves the logins' and the cards' keys in memory** until the process ends: the stores keep the keys
-  they were given, and the spike wipes only its own at a lock (W6, flag 3). encriox closes at a lock (W17), which ends
-  it once item 6 builds it.
+- ~~**S1 — A lock in the 5 seconds after a page first writes local storage loses what it wrote** (W15).~~ **Not seen
+  again, 2026-11-20 (W20)**: three runs with the lock at most 1.5 s after the write kept it, so the 5 seconds are not
+  the cause, which is unknown. It was lost once, in a Gecko running on with its keys locked, and since patch 0012 the
+  browser closes at a lock instead, keeping local storage written just before it. Closed unreproduced, flagged for
+  veto.
+- ~~**S3 — A lock leaves the logins' and the cards' keys in memory** until the process ends (W6, flag 3).~~ **Fixed
+  2026-11-20 (W20)**, stage 2's patch 0012: the browser closes at a lock, and every process of the session that held
+  pages or keys ends within 4 seconds, on the A20.
 - ~~**S4 — A download into the vault that stopped shows as failed**, a cancelled one too, where Fenix's own writer
   shows it paused or cancelled (W5, flag 2). *Try again* starts it from the start.~~ **Fixed 2026-11-20 (W19)**, stage
   1's patch 0020: it shows as paused or cancelled, and *Resume* brings it whole from the start, on the A20.

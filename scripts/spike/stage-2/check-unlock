@@ -1,8 +1,8 @@
 #!/bin/sh
-# The vault itself locked and unlocked under stage 2's spike (W15): Gecko's keys follow a real lock of the vault, and a
-# start with the vault locked brings up encri's unlock, and does not go on without it. It locks the phone's vault and
-# unlocks it again by typing the passphrase on file into encri's own screen, so it is for a test vault whose passphrase
-# is on file, and the phone's owner's word.
+# The vault itself locked and unlocked under stage 2's spike (W15): the browser closes at a real lock of the vault,
+# keeping what its pages wrote (W17, W20), and a start with the vault locked brings up encri's unlock, and does not go
+# on without it. It locks the phone's vault and unlocks it again by typing the passphrase on file into encri's own
+# screen, so it is for a test vault whose passphrase is on file, and the phone's owner's word.
 #
 #   scripts/spike/stage-2/check-unlock <adb serial>
 #
@@ -11,18 +11,22 @@
 #
 # 1. The vault open at start: the secret is given without asking the user, and a first origin's stores are written,
 #    and given a minute in the session to reach the disk.
-# 2. The vault locked mid-session, by the gate as encri's own Lock does, seconds after a second origin's stores are
-#    written: the app must lock Gecko's keys, and a third origin's site storage fails. Then the gate asks encri to
-#    unlock, the passphrase is typed, the app must unlock Gecko's keys, and a fourth origin's stores are written. A
-#    start with the vault open reads back the first, the second and the fourth: local storage keeps a page's writes in
-#    memory a while, and the second's met the lock there.
-# 3. The vault locked at start, and unlocked: started from its launcher entry, the app must bring up encri's unlock
-#    before Gecko opens anything of the profile, and once the passphrase is typed, read the first origin back.
+# 2. The vault locked mid-session, by the gate as encri's own Lock does, as soon as a second origin's page has written
+#    local storage and nothing else, so that the origin has no directory, key or database until local storage flushes,
+#    well inside the 5 seconds it keeps a page's first writes in memory: the browser must close,
+#    every process of it gone, which ends the keys it held. Then a start through the gate brings up encri's unlock, the
+#    passphrase is typed, and a fourth origin's stores are written. A start with the vault open reads back the first,
+#    the second and the fourth, and the second's local storage must be there (ROADMAP.md, *Bugs*, S1).
+# 3. The vault locked in a session, and what the browser's close wrote; then started from its launcher entry, the app
+#    must bring up encri's unlock before Gecko opens anything of the profile, and once the passphrase is typed, read
+#    the first origin back.
 # 4. The vault locked at start, and not unlocked: a wrong passphrase, then Back. The app must stop, leave the recent
 #    apps, and change nothing of the profile.
 # 5. The vault unlocked again through the gate, and the fourth origin read back at a start with it open.
 #
-# The vault must be open to the spike when it starts, and is left open.
+# The vault must be open to the spike when it starts, and is left open. A lock the browser does not close at, or a
+# page's local storage the lock lost, is recorded and the run goes on, so that a build without the close shows both;
+# the run then fails, naming each.
 set -eu
 export LC_ALL=C
 
@@ -41,6 +45,18 @@ trap '[ -z "$server" ] || kill "$server" 2>/dev/null || true; for p in $ports; d
 fail() {
     echo "check-unlock: $*" >&2
     exit 1
+}
+
+now() { date +%s.%N; }
+# Seconds from $1 to $2, or to now.
+since() { awk -v a="$1" -v b="${2:-$(now)}" 'BEGIN { printf "%.1f", b - a }'; }
+
+# What was wrong, for the end of the run.
+wrongs=
+wrong() {
+    echo "  WRONG: $*"
+    wrongs="$wrongs
+  $*"
 }
 
 grep -q "^$serial=" "$passphrases" 2>/dev/null || fail "no passphrase for $serial in $passphrases"
@@ -80,6 +96,8 @@ wake() {
 
 resumed() { $adb shell dumpsys activity activities | grep -m1 mResumedActivity | tr -d '\r'; }
 running() { [ -n "$($adb shell pidof $package | tr -d '\r')" ]; }
+# Every process of the app, by id and name, Gecko's content, GPU and crash helper processes among them.
+pids() { $adb shell ps -A -o PID,NAME | tr -d '\r' | awk -v p="$package" 'index($2, p) == 1 { print $1, $2 }'; }
 
 # Waits up to $1 seconds for encri's own screen to be the one in front.
 awaitencri() {
@@ -131,12 +149,61 @@ for line in open(sys.argv[1]):
     $adb shell input tap $button
 }
 
-# Locks the vault through the gate, as encri's own Lock does, in a session whose Gecko holds its keys, and waits for
-# the app to lock them.
+# Locks the vault through the gate, as encri's own Lock does, in a session whose Gecko holds its keys, and waits up to
+# 30 seconds for the browser to close: every process of the session that held its pages or its keys gone, the app's
+# own and Gecko's content and GPU processes. One still running is recorded. Gecko's crash helper holds neither, and is
+# reported apart. A process started after the lock is the system's: the A20 starts apps it expects to be opened
+# (`mllaunch`) and runs their scheduled jobs, and such a browser waits at the locked vault before Gecko opens anything
+# (W15). The app is stopped at the end, so that the next step starts from nothing.
 lockvault() {
+    session=$(pids | grep -v ':crashhelper' | cut -d' ' -f1)
+    helper=$(pids | grep ':crashhelper' | cut -d' ' -f1)
     gate "^lock " 60 --ez lock true
-    awaitlog "profile lock(ed| failed)" 30
-    said '^lock |profile lock'
+    locked=$(now)
+    gone=
+    while [ "$(since "$locked" | cut -d. -f1)" -lt 30 ]; do
+        pids | cut -d' ' -f1 > "$work/pids"
+        left=$(printf '%s\n' "$session" | grep -Fx -f "$work/pids" || true)
+        [ -n "$left" ] || { gone=$(since "$locked"); break; }
+        sleep 0.2
+    done
+    said '^lock |profile lock|browser clos'
+    if [ -n "$gone" ]; then
+        echo "  the browser closed at the lock: the session's processes gone within ${gone}s"
+        # A task left in the recent apps keeps a picture of the page.
+        ! $adb shell dumpsys activity recents | grep -q "realActivity=$package/" ||
+            wrong "the browser closed at the lock, but is still in the recent apps"
+    else
+        wrong "the browser did not close at the lock: $(echo "$left" | wc -l) of the session's processes 30s later"
+    fi
+    if [ -n "$helper" ] && pids | cut -d' ' -f1 | grep -qx "$helper"; then
+        echo "  Gecko's crash helper from the session: still there"
+    else
+        echo "  Gecko's crash helper from the session: gone"
+    fi
+    $adb logcat -d -s ActivityManager:I | grep "Start proc .*:$package" | sed 's/^.*Start proc /    started since: /' |
+        cut -c1-160 || true
+    $adb shell am force-stop $package
+}
+
+# Opens the vault to the spike through the gate, typing the passphrase if encri asks, then stops the app: encri can
+# lock the vault itself while the browser is away, and a start that reads back must not meet its unlock.
+openvault() {
+    wake
+    $adb logcat -c
+    $adb shell am start -n $package/org.mozilla.fenix.encri.EncriGateActivity --ez list true >/dev/null
+    for _ in $(seq 60); do
+        applog | grep -q '^gate open$' && break
+        if resumed | grep -q "$encri/.VaultActivity"; then
+            echo "  the vault had locked while the browser was away: unlocked through encri's screen"
+            unlock
+            awaitlog "gate (open|still locked|not authorized|refused)" 60
+            break
+        fi
+        sleep 1
+    done
+    applog | grep -q '^gate open$' || fail "the vault did not open to the gate"
+    $adb shell am force-stop $package
 }
 
 page() {
@@ -153,15 +220,17 @@ page() {
     wake
     case $path in
         /) url="http://127.0.0.1:$at/?run=$marker" ;;
+        /ls) url="http://127.0.0.1:$at/ls?m=$marker" ;;
         *) url="http://127.0.0.1:$at/read?m=$marker" ;;
     esac
     timeout 120 $adb shell am start -W -a android.intent.action.VIEW -d "$url" \
         -n $package/org.mozilla.fenix.IntentReceiverActivity >/dev/null || fail "$url did not open in 2 minutes"
     reported=0
-    for _ in $(seq 60); do
+    # Often, so that step 2's lock follows the page's writes closely.
+    for _ in $(seq 300); do
         reported=$(grep -c '^report' "$work/served" || true)
         [ "$reported" -ge "$want" ] && break
-        sleep 1
+        sleep 0.2
     done
     echo "  $url: $reported of $want stores reported"
     grep '^report' "$work/served" | sed 's/^report /    /'
@@ -174,10 +243,10 @@ page() {
     fi
 }
 
-# Home, and a minute for Gecko to write cookies, local storage and IndexedDB to disk, some while after a page does
-# (check-plaintext); then, with `stop`, the app stopped.
+# A minute for Gecko to write cookies, local storage and IndexedDB to disk, some while after a page does
+# (check-plaintext); then, with `stop`, the app stopped. The browser stays in front: on the A20, Samsung's process
+# manager killed encri in the background, which locks the vault, four times in eleven minutes (W20).
 settle() {
-    $adb shell input keyevent KEYCODE_HOME
     sleep "${SETTLE:-60}"
     [ "${1:-}" != stop ] || $adb shell am force-stop $package
 }
@@ -187,7 +256,13 @@ files() {
         awk '{ print $NF, $5 }' | sort
 }
 
-# What changed in the profile between two of `files`, by name and size.
+# The same, with each file's modification time after its size, for `changed`.
+stamped() {
+    $adb shell "run-as $package sh -c 'find files/mozilla cache -type f -exec stat -c %n:%s@%Y {} \;'" | tr -d '\r' |
+        sed 's/:\([0-9]*@[0-9]*\)$/ \1/' | sort
+}
+
+# What changed in the profile between two of `files` or of `stamped`, by name and size, or size and time.
 changed() {
     join -a1 -a2 -e - -o 0,1.2,2.2 "$1" "$2" | awk '$2 != $3 { print "    " $1 ": " $2 " -> " $3 }'
 }
@@ -203,7 +278,6 @@ launch() {
 marker() { echo "ENCRIOX$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')"; }
 m1=$(marker)
 m2=$(marker)
-m3=$(marker)
 m4=$(marker)
 
 echo "== $serial: 1. the vault open at start"
@@ -218,31 +292,41 @@ page / "$m1" 8 8643
 said 'profile secret|unlock '
 settle
 
-echo "== 2. the vault locked mid-session, seconds after a page, then unlocked through encri's screen"
-page / "$m2" 8 8647
+echo "== 2. the vault locked as soon as a page has written local storage alone, then unlocked through encri's screen"
+# A new origin whose only store is local storage: its directory, its key and its database are made at the flush.
+page /ls "$m2" 1 8647
+written=$(now)
 lockvault
-page / "$m3" 8 8644
+echo "  the lock came at most $(since "$written" "$locked")s after the page's stores reported;" \
+    "local storage flushes them 5s after"
 wake
 $adb logcat -c
 $adb shell am start -n $package/org.mozilla.fenix.encri.EncriGateActivity --ez list true >/dev/null
 awaitencri 60
 unlock
 awaitlog "gate (open|still locked|not authorized|refused)" 60
-awaitlog "profile unlock(ed| failed)" 30
+awaitlog "profile secret (given|none)" 60
 said 'unlock |gate |key |profile '
 page / "$m4" 8 8645
 settle stop
+openvault
 echo "  a start with the vault open, reading back the first, the second and the fourth origins"
 page /read "$m1" 6 8643
 said 'profile secret|unlock '
 page /read "$m2" 6 8647
+grep -q "^report store=localStorage value=$m2\$" "$work/served" ||
+    wrong "the second origin's local storage, written just before the lock, was not read back"
 page /read "$m4" 6 8645
 echo "  each origin's local storage on disk:"
 $adb shell "run-as $package sh -c 'cd files/mozilla/*.default/storage/default && for o in *127.0.0.1*; do echo \"    \$o: \$(ls \$o/ls/data.sqlite 2>/dev/null || echo none)\"; done'" |
     tr -d '\r'
 
-echo "== 3. the vault locked at start, and unlocked"
+echo "== 3. the vault locked in a session, and what the close wrote; then locked at start, and unlocked"
+stamped > "$work/stamped-3a"
 lockvault
+stamped > "$work/stamped-3b"
+echo "  what the close wrote, by name, size and time, against the session before the lock:"
+changed "$work/stamped-3a" "$work/stamped-3b"
 $adb shell am force-stop $package
 files > "$work/files-3a"
 launch
@@ -291,3 +375,5 @@ $adb logcat -c
 page /read "$m4" 6 8645
 said 'profile secret|unlock '
 $adb shell am force-stop $package
+[ -z "$wrongs" ] || fail "what was wrong:$wrongs"
+echo "== as it should"

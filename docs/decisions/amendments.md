@@ -41,3 +41,12 @@ Each entry corrects a record. Its bold lead names the record possessively ("W1's
   the first usable build go without history and bookmarks; whether it waits for them now is the user's to say.
 - **W5's first rejection** (2026-11-20, W19): a stopped download is left paused or cancelled, and *Resume* starts one
   nothing was kept of from the start, so it no longer fails for want of a file in `Download/`. W5's flag 2 ends.
+- **W6's third flag** (2026-11-20, W20): a lock no longer leaves the stores' keys in memory. The browser closes at a
+  lock, and its process ends with every key it held.
+- **W14's lock mid-session** (2026-11-20, W20): the app no longer locks Gecko's keys at a lock and goes on. It
+  closes the browser, letting Gecko write what it holds first, and only the gate's `--es profile lock` still locks
+  them mid-session.
+- **W15's reading of the lost local storage** (2026-11-20, W20): not a lock inside local storage's 5 seconds. Three
+  runs with the lock at most 1.5 s after the write kept it every time, on an origin with all its stores and on one
+  with local storage alone; what lost it once is unknown, in a Gecko running on with its keys locked, which no longer
+  happens.

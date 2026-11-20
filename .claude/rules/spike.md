@@ -57,6 +57,9 @@ key is locked (W14), which does not start without the vault (W15), and what its 
   profile (W15). Only the gate's `kek withhold` starts Gecko locked. The gate's `kek` setting is read by the next
   start, and the gate's own start may already have read the old one: set it, then stop the app, before a fresh
   profile or a measured start.
+- **The browser closes at a lock** (W17, W20, patch 0012): when the vault's key is dropped, its windows go, out of
+  the recent apps, and Gecko shuts down while it still holds the profile's keys, then the process ends. Nothing locks
+  Gecko's keys mid-session but the gate's `--es profile lock`, which measures what a locked session does (W14).
 - **A test vault whose passphrase is on file may be locked**, and wiped if it does not open again (W15, the user's
   word); `check-unlock` types the passphrase into encri's screen and never prints it. Not the G6's, which does not
   open and would need its owner's screen lock again, nor the S24's.
@@ -144,8 +147,21 @@ key is locked (W14), which does not start without the vault (W15), and what its 
   storage and Cache API too, with QuotaManager's switch off and the origin recorded plaintext. Comparing QuotaManager's
   switch on and off compared obfsvfs with obfsvfs; a plain side needs a build whose SQLite default is off (W16).
 - mozStorage opens every database with `synchronous = OFF` on Android; each store sets its own (W16).
-- **Local storage flushes a page's writes 5 seconds later**, and an origin's first flush makes its database, whose key
-  cannot be made while the profile's KEK is locked: a lock in between lost them (W15, *Bugs* in `ROADMAP.md`).
+- **Local storage flushes a page's writes 5 seconds later**, and an origin's first flush makes its database (W15).
+  ~~Whose key cannot be made while the profile's KEK is locked: a lock in between lost them.~~ Not so (W20): three
+  runs with the lock at most 1.5 s after the write kept them, and the flush under locked keys made the database.
+- **A page that writes every store sets its origin up before local storage flushes**: IndexedDB and the Cache API make
+  the origin's directory and key when the page writes. `stage-1/site/ls.html`, served at `/ls`, writes local storage
+  alone (W20).
+- **Samsung's process manager kills encri in the background on the A20**, which locks the vault, and the browser then
+  closes (W20): four times in eleven minutes, the phone's memory reported low, while the browser sat at the home
+  screen. `adb logcat -b events` names it: `am_kill … com.systemhalted.encri … Chimera`. A settle keeps the browser in
+  front, so that encri stays bound to a foreground app.
+- **The A20 starts the browser again by itself** a few seconds after it closes: Samsung's predictive launch
+  (`Start proc … for mllaunch`) and WorkManager's scheduled jobs. Such a start waits at the locked vault before Gecko
+  opens anything (W15), so a check follows the session's processes by id, not the package's (W20).
+- **Gecko's crash helper outlives the browser** by 16 to 43 seconds after a close, and the system restarts it for a
+  new start. It holds no page and no key (W20).
 - After an install of the 239 MB APK, the A20 answered slowly for some minutes: the vault in 9.7 s, near the app's 10 s
   limit, and a page did not open in two minutes, where the run before had taken 1.8 s and opened every page (W14).
 
@@ -198,6 +214,12 @@ key is locked (W14), which does not start without the vault (W15), and what its 
   times for a bulk insert or an index; nothing for small commits. A page took 24 µs to decrypt on the G6 and 58 µs on
   the A20. A site's IndexedDB, plain against obfsvfs on builds differing in the SQLite default alone, showed no
   difference above rounds that spread two- to threefold.
+- **The browser closes at a lock** (W20, patch 0012), on the A20: the app's, the content and the GPU processes gone in
+  2.2–3.8 s, in three locks, out of the recent apps, and local storage written 1.9 s before the lock read back; patch
+  0011's build left 6 or 7 processes running 30 s after each of six locks. Gecko ends the process itself at its fast
+  shutdown's last stage, 0.9 s after the lock when watched. What the close wrote, within 2 seconds: the cookies', the
+  Cache API's and Lockstore's write-ahead logs checkpointed and emptied, QuotaManager's `storage.sqlite` and the
+  origins' `.metadata-v2`, and Gecko's shutdown records and caches.
 - **Stage 2's first Gecko build took 76 minutes**, 69 of them `mach build` at 86% of 8 cores, and a change to one pref
   8½. Its objdir holds 11 GB and its mach state 6.6 GB, on the drive for large builds; the checkout's clone took 14
   minutes, for 5.9 GB (W13).
@@ -218,6 +240,7 @@ key is locked (W14), which does not start without the vault (W15), and what its 
 | W16 | Stage 2's third round: what obfsvfs costs against plain SQLite, in Gecko's SQLite and in a site's IndexedDB |
 | W17 | encriox's first usable build: about 20 of the spikes' 30 patches are its own; it closes at a lock |
 | W19 | A stopped download into the vault shows as paused or cancelled, and *Resume* brings it whole (patch 0020) |
+| W20 | The browser closes at a lock: Gecko writes what it holds, and the session's processes end (patch 0012) |
 | encri-api L11, L12 | `write` saves only a finished writer; a writer's failure is told encri's reason |
 | encri D120, D145 | A grant is keyed on the package for good |
 
@@ -226,11 +249,11 @@ key is locked (W14), which does not start without the vault (W15), and what its 
 - Which of the spikes' patches become encriox's, in its first usable build (W17; `ROADMAP.md`, item 6), where encriox
   closes at a lock and its prefs are its own Gecko's defaults.
 - The S24's run waits for its owner's word: `check-plaintext`, `measure`, `check-stopped` and `check-keys`.
-- W6's three flags: the key as a document in the vault, an unopenable key taken as lost, and the stores' keys left in
-  memory at a lock.
+- W6's first two flags: the key as a document in the vault, and an unopenable key taken as lost. Its third ended
+  with W20.
 - Patch 0010's locked path, on the G6 once its owner has unlocked it (`ROADMAP.md`).
 - W13's three flags, W15's four and W16's three.
-- W17's three flags.
+- W17's three flags, and W20's three: the 10 seconds, the crash helper, and S1 closed unreproduced.
 
 ## Read next
 

@@ -49,7 +49,7 @@ index 798cd61677..08bf4e5981 100644
              android:name=".HomeActivity"
              android:theme="@style/SplashScreenThemeBase"
 diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt
-index 47cd61b0d6..d3f5e31e77 100644
+index 7627caccd2..15cc43cfe5 100644
 --- a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt
 +++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt
 @@ -13,9 +13,7 @@ import android.os.SystemClock
@@ -62,7 +62,7 @@ index 47cd61b0d6..d3f5e31e77 100644
  import com.systemhalted.encri.client.EncriResult
  import java.io.File
  import kotlin.random.Random
-@@ -73,9 +71,6 @@ import org.mozilla.fenix.settings.downloads.DownloadLocationManager
+@@ -74,9 +72,6 @@ import org.mozilla.fenix.settings.downloads.DownloadLocationManager
   * Every result is a line under the tag `encriox-spike`.
   */
  class EncriGateActivity : ComponentActivity() {
@@ -72,7 +72,7 @@ index 47cd61b0d6..d3f5e31e77 100644
      override fun onCreate(savedInstanceState: Bundle?) {
          super.onCreate(savedInstanceState)
          intent.getStringExtra("private")?.let {
-@@ -97,11 +92,15 @@ class EncriGateActivity : ComponentActivity() {
+@@ -98,11 +93,15 @@ class EncriGateActivity : ComponentActivity() {
      }
  
      private suspend fun proceed() {
@@ -93,7 +93,7 @@ index 47cd61b0d6..d3f5e31e77 100644
              is EncriVault.Opening.Refused -> done("refused: ${opening.reason}")
              is EncriVault.Opening.Open -> {
                  val scope = opening.session.grant.scope
-@@ -202,8 +201,6 @@ class EncriGateActivity : ComponentActivity() {
+@@ -203,8 +202,6 @@ class EncriGateActivity : ComponentActivity() {
  
      companion object {
          private const val TAG = EncriDownloadFileWriter.TAG

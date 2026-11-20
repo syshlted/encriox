@@ -48,7 +48,9 @@ The first four were the study's *Open questions*, moved here when W1 was recorde
   can lose what Gecko has not written yet: local storage flushes a page's writes 5 seconds later, and an origin's
   first flush needs a new key, so a lock in between lost them on the A20 (W15). Stopping Gecko, and letting it flush,
   before its keys are locked would not.~~ encriox closes at a lock (W17): it shuts Gecko down, letting it write
-  what it holds, then locks the profile's keys and ends, and the next start asks for the unlock.
+  what it holds, then locks the profile's keys and ends, and the next start asks for the unlock. **Built in the
+  spike, 2026-11-20 (W20)**: Gecko ends the process itself once it has shut down, within 4 seconds on the A20. The
+  local storage loss was not seen again, nor caused by the 5 seconds: what caused it is unknown.
 - ~~**Starting Gecko with the vault locked** (W14, flag 2). The spike starts Gecko with the profile's keys locked when
   the vault is locked or does not answer in 10 seconds: cookies and permissions are kept in memory alone, sites'
   storage cannot be used, and nothing is razed. Should encriox start Gecko at all then, or wait for the vault, or ask
@@ -93,6 +95,10 @@ The first four were the study's *Open questions*, moved here when W1 was recorde
   holding the page's marker (W6). Mozilla's half is answered: off, but for Remote Settings' lists and Safe Browsing
   (W17). *Listen to Page* and ExoPlayer's diagnostics are still to look at.
 - **For encri: a vault with no folders can only be allowed whole** (W4), and encri cannot make a folder itself.
+- **For encri: Samsung's process manager kills encri in the background**, which locks the vault (W20). On the A20,
+  with its memory reported low, Chimera killed encri four times in eleven minutes while the browser sat at the home
+  screen, and encriox, which closes at a lock, closed each time. Whether encri keeps itself alive while it is unlocked,
+  with a foreground service, say, is encri's to weigh; how often it happens on the other phones is unmeasured.
 - ~~**A key-encryption key from the vault without a Gecko build.**~~ No (W14): an extension runs only once Gecko is up,
   after the profile's databases have opened, and at 160 SQLite and the HTTP cache ask for their keys under their own
   LocalKeys by name, so keys moved under a password KEK cannot be found. Stage 2's Gecko takes the secret at startup

@@ -4,6 +4,29 @@ What happened, newest first. Why is in `docs/decisions/`, and what is next is in
 
 ## Unreleased
 
+### A plan for history and bookmarks in a sealed store (2026-11-20)
+
+At the user's word that it comes next, `docs/sealed-history.md` weighs how to give back history and bookmarks sealed
+with the vault's key. Places keeps them in application-services' own SQLite, which takes a path and no key, and drops a
+URI's query before it opens. Five ways are weighed; the plan recommends Gecko's obfsvfs, ported into
+application-services' SQLite, keyed from the vault's key, for places and for the logins' and the cards' databases too,
+whose origins and dates are plain columns. It asks the user three things first, and starts with a spike round that
+builds application-services itself. Nothing is decided.
+
+### encriox closes at a lock (2026-11-20)
+
+**Built and measured**, W17's first recommendation in the spike, at the user's word that the bugs come first (W20):
+at a lock of the vault the browser finishes its windows and shuts Gecko down while Gecko still holds the profile's
+keys, and Gecko ends the process itself (stage 2's patch 0012). On the A20, every process of the session that held
+its pages or keys ended within 2.2 to 3.8 seconds, the browser left the recent apps, and local storage written just
+before the lock read back; patch 0011's build left 6 or 7 processes running 30 seconds after each of six locks. The
+close checkpoints Gecko's write-ahead logs into their sealed databases. `ROADMAP.md`'s S3 is fixed. S1, local storage
+lost at a lock, was not seen again in three runs with the lock 1.5 seconds after the write, one of them W15's own
+script, so the 5 seconds W15 inferred are not its cause; it is closed unreproduced, flagged for veto. Found: Samsung's
+process manager on the A20 killed encri in the background four times in eleven minutes, which locks the vault and so
+closes the browser; that is encri's to weigh. `check-unlock` and `check-kek` now require the close, and their settles
+keep the browser in front.
+
 ### A stopped download into the vault shows as stopped (2026-11-20)
 
 **Fixed.** `ROADMAP.md`'s S4, at the user's word that the bugs come before anything else (W19): a download into the

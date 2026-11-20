@@ -18,10 +18,10 @@ Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
  1 file changed, 8 insertions(+)
 
 diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt
-index b161db0ec5..47cd61b0d6 100644
+index 66c29494b3..7627caccd2 100644
 --- a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt
 +++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt
-@@ -61,6 +61,9 @@ import org.mozilla.fenix.settings.downloads.DownloadLocationManager
+@@ -62,6 +62,9 @@ import org.mozilla.fenix.settings.downloads.DownloadLocationManager
   *   Every status it passes through is logged, then `fetch settled`;
   * - `--ez list true` logs what the vault holds of the two;
   * - `--ez lock true` locks the vault, for every app and for encri;
@@ -31,7 +31,7 @@ index b161db0ec5..47cd61b0d6 100644
   * - `--es login <text>` saves a login under the spike's own origin, `--es card <digits>` a card in the spike's name,
   *   and `--ez kept true` logs what the stores hold of the two, whose keys the vault's key seals (W6); `--ez forget
   *   true` deletes them. With `--ez early true`, the logins are first asked for before the vault is open, and when
-@@ -142,6 +145,11 @@ class EncriGateActivity : ComponentActivity() {
+@@ -143,6 +146,11 @@ class EncriGateActivity : ComponentActivity() {
              }
              extras.getBoolean("list") -> work.launch { list(context) }
              extras.getBoolean("lock") -> work.launch { lock(context) }

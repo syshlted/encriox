@@ -28,6 +28,12 @@ The browser does not start without the vault (W15): with the vault locked, or no
 the app brings up encri's own screens while Gecko waits, and if the vault is still shut once they are done, it ends
 before Gecko has opened anything of the profile (0010).
 
+The browser closes at a lock (W17, W20): when the vault's key is dropped, the app finishes its windows and shuts Gecko
+down while Gecko still holds the profile's keys, so that what it keeps in memory to write later reaches the disk
+sealed, then ends the process, and every key with it (0012). Until 0012 it locked Gecko's keys and went on, which
+lost a page's first local storage at a lock within 5 seconds of it, and left the logins' and the cards' keys in
+memory (`ROADMAP.md`, *Bugs*).
+
 Its third round asks what obfsvfs costs against plain SQLite (W16): a module of Gecko's times the same work in Gecko's
 own SQLite on plain databases and through obfsvfs, outside the profile, and the gate asks for it (0011).
 
@@ -71,12 +77,15 @@ starts Gecko with the profile's keys locked, or makes a profile in the clear.
   origin's flags in QuotaManager, then starts the app again and reads back, store by store, what the first session
   wrote.
 - `check-kek <serial>`: the second round, in six steps (its header): the secret given at both starts, withheld at a
-  start, given again, locked mid-session, the vault's key dropped and read again, and a profile made without it and
-  then given it. It prints what each store read back, the files and keys that changed while locked, and which KEK
+  start, given again, locked mid-session, the vault's key dropped, which closes the browser since 0012, and a profile
+  made without it and then given it. It prints what each store read back, the files and keys that changed while locked, and which KEK
   wraps each key, with any LocalKey left in Lockstore's database or its log. The vault must be open to the spike.
-- `check-unlock <serial>`: the vault itself locked and unlocked (W15), in five steps (its header): a lock mid-session,
-  then encri's unlock from the gate; a start with the vault locked, unlocked; one where the unlock is refused, which
-  must stop the app and leave the profile as it was; and the vault left open. It types the passphrase on file into
+- `check-unlock <serial>`: the vault itself locked and unlocked (W15, W20), in five steps (its header): a lock as
+  soon as a new origin's page has written local storage alone (`../stage-1/site/ls.html`), which must close the
+  browser, every process of the session, and keep the page's local storage;
+  a lock in a session, with what the close wrote, then a start with the vault locked, unlocked; one where the unlock
+  is refused, which must stop the app and leave the profile as it was; and the vault left open. A lock the browser
+  does not close at, or local storage it lost, fails the run at its end. It types the passphrase on file into
   encri's screen, never printing it, so it is for a test vault whose passphrase is on file; the G6's would not open.
 - `check-obfsvfs <serial>`: the third round (W16), in two parts (its header). Gecko's SQLite, plain and through
   obfsvfs, timed by the gate's `--ei sqlbench <rows> --ei rounds <n>`; then IndexedDB, as a site uses it, on a page

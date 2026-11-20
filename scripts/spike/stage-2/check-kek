@@ -13,10 +13,11 @@
 # 4. Locked mid-session: a session with the secret, whose keys the gate then locks; then the marker page on a second
 #    origin, whose site storage needs keys that cannot be made while they are locked. A start with the secret then
 #    reads both origins back.
-# 5. The vault's key dropped mid-session, as a lock of the vault drops it, with the vault left open: the app must lock
-#    Gecko's keys, and a third origin's site storage fails; then the gate reads the key again, the app must unlock
-#    them, and a fourth origin's site storage is written, and read back at the next start. The third and the fourth
-#    are 127.0.0.1 on other ports: site storage is the origin's, port and all, but a cookie is the host's.
+# 5. The vault's key dropped mid-session, as a lock of the vault drops it, with the vault left open, seconds after a
+#    third origin's stores are written: the browser must close (W20), and a start with the secret read the third
+#    origin back, its local storage among it. The third is 127.0.0.1 on another port: site storage is the origin's,
+#    port and all, but a cookie is the host's. Until patch 0012 the app locked Gecko's keys instead, and unlocked them
+#    when the gate read the key again (W14).
 # 6. A profile made while the secret is withheld, its keys under LocalKeys, then given it: the next start must move
 #    every key under the secret, read all six stores back, and leave no LocalKey's record on disk, in the database or
 #    in its write-ahead log.
@@ -77,6 +78,9 @@ awaitlog() {
     exit 1
 }
 
+# Each settle keeps the browser in front: on the A20, Samsung's process manager killed encri in the background, which
+# locks the vault, four times in eleven minutes (W20).
+#
 # The phone awake and its keyguard down: `am start -W` waits for good for a page the screen does not draw (W6).
 wake() {
     $adb shell input keyevent KEYCODE_WAKEUP
@@ -214,7 +218,6 @@ page /read "$m1" 127.0.0.1 6
 echo "  what the app and Gecko said:"
 applog | grep -E 'profile ' | sed 's/^/    /' || true
 geckolog 30
-$adb shell input keyevent KEYCODE_HOME
 sleep "${SETTLE:-30}"
 $adb shell am force-stop $package
 files > "$work/files-2"
@@ -239,7 +242,6 @@ gate "profile lock (unlocked|failed)" 30 --es profile lock
 applog | grep -E 'profile ' | sed 's/^/    /'
 page / "$m2" localhost 8
 geckolog 30
-$adb shell input keyevent KEYCODE_HOME
 # Gecko writes cookies, local storage and IndexedDB to disk some while after a page does (check-plaintext).
 sleep "${SETTLE:-60}"
 $adb shell am force-stop $package
@@ -251,23 +253,24 @@ page /read "$m2" localhost 6
 applog | grep -E 'profile ' | sed 's/^/    /' || true
 page /read "$m1" 127.0.0.1 6
 
-echo "== 5. the vault's key dropped mid-session, as a lock drops it, then read again"
+echo "== 5. the vault's key dropped mid-session, as a lock drops it, seconds after a third origin's page"
 m3="ENCRIOX$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')"
-m4="ENCRIOX$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')"
-# The session from the read-back above, which was given the secret, goes on.
+# The session from the read-back above, which was given the secret, goes on. Every store but the read-back.
+page / "$m3" 127.0.0.1 7 8644
 gate "key dropped" 60 --ez drop true
-awaitlog "profile lock(ed| failed)" 30
-applog | grep -E 'key dropped|profile ' | sed 's/^/    /'
-page / "$m3" 127.0.0.1 8 8644
-gate "gate open" 60 --ez list true
-awaitlog "profile unlock(ed| failed)" 30
-applog | grep -E 'key |profile ' | sed 's/^/    /'
-page / "$m4" 127.0.0.1 8 8645
-$adb shell input keyevent KEYCODE_HOME
-sleep "${SETTLE:-60}"
-$adb shell am force-stop $package
-echo "== a start with the secret, reading back $m4 on port 8645"
-page /read "$m4" 127.0.0.1 6 8645
+awaitlog "browser closes" 30
+for _ in $(seq 30); do
+    [ -n "$($adb shell pidof $package | tr -d '\r')" ] || break
+    sleep 1
+done
+[ -z "$($adb shell pidof $package | tr -d '\r')" ] ||
+    { echo "check-kek: the browser did not close when the vault's key was dropped" >&2; exit 1; }
+applog | grep -E 'key dropped|browser clos' | sed 's/^/    /'
+echo "  the browser closed"
+echo "== a start with the secret, reading back $m3 on port 8644"
+page /read "$m3" 127.0.0.1 6 8644
+grep -q "^report store=localStorage value=$m3\$" "$work/served" ||
+    { echo "check-kek: the third origin's local storage was lost when the browser closed" >&2; exit 1; }
 $adb shell am force-stop $package
 echo "== the key store at the end"
 keystore "$work/keys-5"
@@ -279,7 +282,6 @@ m5="ENCRIOX$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')"
 gate "kek withheld=true" 30 --es kek withhold
 "$here/fresh-profile" "$serial"
 page / "$m5" 127.0.0.1 8
-$adb shell input keyevent KEYCODE_HOME
 sleep "${SETTLE:-60}"
 $adb shell am force-stop $package
 echo "  the key store, made without the secret:"

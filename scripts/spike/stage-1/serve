@@ -16,6 +16,8 @@ PAGE = (SITE / "index.html").read_text()
 READ = (SITE / "read.html").read_text()
 # Times the same work on the origin's IndexedDB, which obfsvfs keeps when site storage is encrypted (stage 2).
 IDB = (SITE / "idb.html").read_text()
+# Writes local storage and nothing else, so that a new origin's first store is made at its flush (stage 2, W20).
+LS = (SITE / "ls.html").read_text()
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -36,6 +38,8 @@ class Handler(BaseHTTPRequestHandler):
             self.answer(200, READ.replace("__MARKER__", MARKER).encode(), "text/html; charset=utf-8")
         elif url.path == "/idb":
             self.answer(200, IDB.replace("__MARKER__", MARKER).encode(), "text/html; charset=utf-8")
+        elif url.path == "/ls":
+            self.answer(200, LS.replace("__MARKER__", MARKER).encode(), "text/html; charset=utf-8")
         else:
             self.answer(404, b"", "text/plain")
 

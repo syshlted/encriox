@@ -27,7 +27,7 @@ Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
  create mode 100644 mobile/shared/modules/geckoview/GeckoViewSQLiteBench.sys.mjs
 
 diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt
-index d3f5e31e77..6f636ccdd3 100644
+index 15cc43cfe5..52b5ba9ca3 100644
 --- a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt
 +++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt
 @@ -33,9 +33,12 @@ import mozilla.components.feature.downloads.INTENT_EXTRA_DOWNLOAD_ID
@@ -43,7 +43,7 @@ index d3f5e31e77..6f636ccdd3 100644
  
  /**
   * The stage 1 spike's controls, started over adb by `scripts/spike/stage-1/` (encri-firefox W1). It always first opens
-@@ -59,6 +62,9 @@ import org.mozilla.fenix.settings.downloads.DownloadLocationManager
+@@ -60,6 +63,9 @@ import org.mozilla.fenix.settings.downloads.DownloadLocationManager
   *   Every status it passes through is logged, then `fetch settled`;
   * - `--ez list true` logs what the vault holds of the two;
   * - `--ez lock true` locks the vault, for every app and for encri;
@@ -53,7 +53,7 @@ index d3f5e31e77..6f636ccdd3 100644
   * - `--ez drop true` drops the vault's key from memory, as a lock of the vault does, and leaves the vault open, so that
   *   [EncriProfileSecret.follow] locks Gecko's keys as at a lock; the next start of the gate reads the key again, which
   *   unlocks them. It is for a phone whose vault might not open again once locked, as the G6's did not (W5);
-@@ -83,6 +89,11 @@ class EncriGateActivity : ComponentActivity() {
+@@ -84,6 +90,11 @@ class EncriGateActivity : ComponentActivity() {
              done("kek withheld=${components.settings.encrioxKekWithheld}")
              return
          }
@@ -65,7 +65,7 @@ index d3f5e31e77..6f636ccdd3 100644
          LoopbackServer.start()
          if (intent.getBooleanExtra("early", false)) {
              val context = applicationContext
-@@ -417,6 +428,39 @@ class EncriGateActivity : ComponentActivity() {
+@@ -428,6 +439,39 @@ class EncriGateActivity : ComponentActivity() {
              )
          }
  

@@ -1,0 +1,151 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jeremy Melanson <1080872+zish@users.noreply.github.com>
+Date: Fri, 20 Nov 2026 03:24:57 +0000
+Subject: [PATCH] feat: close the browser at a lock, letting Gecko write what
+ it holds
+
+At a lock of the vault the spike locked Gecko's keys and went on. Local
+storage writes an origin's first writes 5 seconds later, and an
+origin's first write makes its database, whose key cannot be made while
+the keys are locked: a lock in those 5 seconds lost them. The logins'
+and the cards' keys stayed in memory until the process ended.
+
+encriox closes at a lock instead (encri-firefox W17): the app finishes
+its windows, out of the recent apps, and shuts Gecko down while it
+still holds the profile's keys, so that what it keeps in memory
+reaches the disk sealed; then the process ends, and every key with it.
+If Gecko has not ended it in 10 seconds, it is ended anyway. Android
+Components' engine throws at a shutdown it did not ask for, so the
+runtime's delegate is replaced first.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+---
+ .../mozilla/fenix/encri/EncriProfileSecret.kt | 50 ++++++++++++++++---
+ .../org/mozilla/fenix/encri/EncriUnlock.kt    |  7 ++-
+ 2 files changed, 48 insertions(+), 9 deletions(-)
+
+diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriProfileSecret.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriProfileSecret.kt
+index 667b12d0f6..1518d79a3a 100644
+--- a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriProfileSecret.kt
++++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriProfileSecret.kt
+@@ -5,10 +5,12 @@
+ package org.mozilla.fenix.encri
+ 
+ import android.content.Context
++import android.os.Process
+ import android.os.SystemClock
+ import android.util.Log
+ import javax.crypto.Mac
+ import javax.crypto.spec.SecretKeySpec
++import kotlin.system.exitProcess
+ import kotlinx.coroutines.CoroutineScope
+ import kotlinx.coroutines.Dispatchers
+ import kotlinx.coroutines.SupervisorJob
+@@ -27,8 +29,8 @@ import org.mozilla.geckoview.GeckoRuntime
+  * opens the vault for it, and where the vault is locked or has not let the browser in, brings up encri's own screens
+  * for the user ([EncriUnlock]). If the vault is still not open once they are done, or does not answer, the browser
+  * stops there, before Gecko has opened anything of the profile: it does not start without the vault (the user's word,
+- * encri-firefox W15). Then, for as long as the process lives, [follow] locks Gecko's keys when the vault's key is
+- * dropped, at a lock, and unlocks them when it is held again.
++ * encri-firefox W15). Then [follow] closes the browser when the vault's key is dropped, at a lock, letting Gecko write
++ * what it holds under its keys first (W17, W20).
+  *
+  * With `--es kek withhold` at the gate, it answers with nothing and never unlocks, whatever the vault does: Gecko
+  * starts with its keys locked, which encriox never does, to measure what Gecko does then (W14).
+@@ -65,6 +67,9 @@ class EncriProfileSecret(
+         private const val WAIT_MILLIS = 30_000L
+         private const val HMAC = "HmacSHA256"
+ 
++        // How long Gecko has to shut down at a lock before the process is ended anyway.
++        private const val CLOSE_MILLIS = 10_000L
++
+         // The secret is not the vault's key itself, which seals the logins' and the cards' keys too (W6).
+         private val LABEL = "encriox lockstore profile".toByteArray()
+ 
+@@ -117,8 +122,9 @@ class EncriProfileSecret(
+         }
+ 
+         /**
+-         * Locks [runtime]'s profile keys whenever the vault's key is dropped, and unlocks them whenever it is held
+-         * again, unless the gate was told to withhold the secret.
++         * Closes the browser whenever the vault's key is dropped, at a lock, and unlocks [runtime]'s profile keys
++         * whenever it is held again after Gecko started without them, unless the gate was told to withhold the
++         * secret.
+          */
+         fun follow(
+             context: Context,
+@@ -139,14 +145,42 @@ class EncriProfileSecret(
+                         }
+                         !held && given -> {
+                             given = false
+-                            runtime.lockProfile().accept(
+-                                { Log.i(TAG, "profile locked as the vault locked: unlocked=$it") },
+-                                { Log.i(TAG, "profile lock failed as the vault locked: $it") },
+-                            )
++                            close(runtime)
+                         }
+                     }
+                 }
+             }
+         }
++
++        /**
++         * Closes the browser at a lock of the vault (W17): its windows go, and Gecko shuts down while it still holds
++         * the profile's keys, so that what it keeps in memory to write later, a page's first local storage among it,
++         * reaches the disk sealed under them; then the process ends, and every key it held with it, the logins' and
++         * the cards' too. If Gecko has not ended it in [CLOSE_MILLIS], it is ended anyway.
++         */
++        private fun close(runtime: GeckoRuntime) {
++            val asked = SystemClock.elapsedRealtime()
++            Log.i(TAG, "browser closes: the vault locked")
++            EncriUnlock.finishAll()
++            // Android Components' engine throws at a shutdown it did not ask for, to hear of it as a crash.
++            runtime.delegate = GeckoRuntime.Delegate {
++                Log.i(TAG, "browser closed: Gecko shut down in ${SystemClock.elapsedRealtime() - asked}ms")
++                end()
++            }
++            Thread(
++                {
++                    SystemClock.sleep(CLOSE_MILLIS)
++                    Log.i(TAG, "browser closed: Gecko had not shut down in ${CLOSE_MILLIS}ms, so it is ended")
++                    end()
++                },
++                "encriox-close",
++            ).apply { isDaemon = true }.start()
++            runtime.shutdown()
++        }
++
++        private fun end(): Nothing {
++            Process.killProcess(Process.myPid())
++            exitProcess(0)
++        }
+     }
+ }
+diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriUnlock.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriUnlock.kt
+index 792eddae84..36f4e00288 100644
+--- a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriUnlock.kt
++++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriUnlock.kt
+@@ -77,7 +77,7 @@ object EncriUnlock {
+         Log.i(TAG, "browser stops: the vault is not open to it")
+         val finished = CountDownLatch(1)
+         main.post {
+-            synchronized(this) { live.mapNotNull { it.get() } }.forEach { it.finishAndRemoveTask() }
++            finishAll()
+             finished.countDown()
+         }
+         finished.await(FINISH_MILLIS, TimeUnit.MILLISECONDS)
+@@ -85,6 +85,11 @@ object EncriUnlock {
+         exitProcess(1)
+     }
+ 
++    /** Finishes every one of the browser's activities and takes it out of the recent apps. On the main thread. */
++    fun finishAll() {
++        synchronized(this) { live.mapNotNull { it.get() } }.forEach { it.finishAndRemoveTask() }
++    }
++
+     private fun show() {
+         val from = synchronized(this) { resumed?.get() }
+         if (from == null) {
+-- 
+2.47.3
+
