@@ -6,6 +6,11 @@
 # 8 KiB pages, which tells the page size's part from the cipher's; `sealed` is through obfsvfs. It needs neither the
 # vault nor its key. Prints each run, then the median of each step by kind, and sealed's over each plain kind's.
 #
+# The gate finishes at once, and the bench runs on in the app's process in the background, as it did on every phone.
+# Android 14 and later freeze a cached app's process: on the S24 the bench stopped in its first run, for ten minutes,
+# with nothing said (2026-11-20). Where `am` can, the process is kept unfrozen for its life, which changes no setting
+# of the phone's, and a process found frozen fails the run.
+#
 #   scripts/spike/stage-3/bench-places <adb serial> [<visits> [<rounds>]]
 set -eu
 
@@ -24,11 +29,24 @@ $adb shell am force-stop $package
 $adb logcat -c
 $adb shell am start -n $package/org.mozilla.fenix.encri.EncriGateActivity \
     --ei placesbench "$visits" --ei rounds "$rounds" >/dev/null
+pid=
+for _ in $(seq 30); do
+    pid=$($adb shell pidof $package | tr -d '\r')
+    [ -n "$pid" ] && break
+    sleep 1
+done
+[ -n "$pid" ] || { echo "bench-places: the app did not start" >&2; exit 1; }
+# `am isfrozen` answers true or false where the phone has a freezer, and something else where it does not.
+freezer=
+case $($adb shell am isfrozen "$pid" 2>&1 | tr -d '\r') in true | false) freezer=yes ;; esac
+[ -z "$freezer" ] || $adb shell am unfreeze --sticky "$pid" >/dev/null
 waited=0
 until applog | grep -qE "placesbench (done|failed)"; do
     sleep 5
     waited=$((waited + 5))
     [ "$waited" -lt 3600 ] || { applog >&2; echo "bench-places: no end in an hour" >&2; exit 1; }
+    [ -z "$freezer" ] || [ "$($adb shell am isfrozen "$pid" 2>&1 | tr -d '\r')" != true ] ||
+        { echo "bench-places: Android froze the app's process, $pid, and the run with it" >&2; exit 1; }
 done
 applog | grep -E "placesbench (failed|asked)" | sed 's/^/  /'
 applog | grep -q "placesbench done" || exit 1
