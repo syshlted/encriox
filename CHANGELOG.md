@@ -4,6 +4,18 @@ What happened, newest first. Why is in `docs/decisions/`, and what is next is in
 
 ## Unreleased
 
+### The G6 measured, and the user's answers to W21 (2026-11-20)
+
+With the G6's vault unlocked by its owner, the spike's owed rounds ran there, none of them locking it. Stage 1's
+stopped downloads held in all six cases (W19). `check-kek` passed every step on stage 3's build, its step 5 for the
+first time: the browser closed when the vault's key was dropped, and the page's stores read back whole (W20). Stage 3
+held as on the A20 and the S9: the marker in no file, all four records read back, a keyless open refused, and logins
+waiting 1.5 s for their key; the cipher costs 5% of a visit's write. Found and fixed: on Android 9 the bench made its
+`plain-8k` databases with 4 KiB pages (stage 3's patch 0007). The user's answers to W21 keep its six flags (W22): no
+data in the clear at rest; a prompt at start, in item 6, lets the user delete a sealed database that does not open,
+never deleted unasked; and changing a database's key comes before the first release. On the A20 the spike's TLS
+agreed X25519MLKEM768, Gecko 160's hybrid post-quantum key exchange. The S24 is owed.
+
 ### History, bookmarks, logins and cards are sealed (2026-11-20)
 
 **Decided, built and measured** in the spike's stage 3, on the user's word that the first usable build waits for it

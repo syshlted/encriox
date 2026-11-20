@@ -3,8 +3,9 @@
 *2026-11-20 · decided and built on the user's word ("Let's wait for 1 and 2 before calling the first usable build.
 Let's continue on to history and bookmarks. Then logins and cards, so 1 and 2 are completed"), on
 `docs/sealed-history.md`'s three decisions; built as stage 3's patches 0001–0006 and measured on the A20 and the S9.
-**Flagged for veto on six points** (below). The G6's vault is locked and the S24 waits for its owner: both
-unmeasured.*
+**Flagged for veto on six points** (below), **which stand (W22)**. ~~The G6's vault is locked
+and the S24 waits for its owner: both unmeasured.~~ **Measured on the G6 too, 2026-11-20**, once its owner had
+unlocked its vault, with patch 0007's fix to the bench (below).*
 
 #### What the user decided
 
@@ -59,16 +60,16 @@ unmeasured.*
   then the app's data searched, the four read back in a new process, and each database opened without its key; and
   `bench-places`.
 
-#### Measured (2026-11-20, the A20 and the S9, patch 0005's build, and 0006's for the bench)
+#### Measured (2026-11-20, the A20 and the S9, patch 0005's build, and 0006's for the bench; the G6, 0006's, and 0007's for the bench)
 
-| | A20 | S9 |
-|---|---|---|
-| Control run, the three in the clear (`check-sealed … unsealed`) | marker in `places.sqlite`, its log, `logins2.sqlite` and autofill's log | the same |
-| Sealed (`check-sealed`) | the marker in no file of the app's; the three databases and their logs with 8 KiB pages and 32 reserved bytes | the same |
-| The four read back in a new process, after the app was killed with its logs not checkpointed | yes | yes |
-| Each database opened without its key | refused, `unable to open database file`; no file of the three changed | the same |
-| Logins asked for before the vault was open (`check-keys`) | came after the vault's key and the database's, 3.6 s; nothing in the clear | 0.4 s; the same |
-| A database's key derived once the vault's was held | 1–35 ms | 0–3 ms |
+| | A20 | S9 | G6 |
+|---|---|---|---|
+| Control run, the three in the clear (`check-sealed … unsealed`) | marker in `places.sqlite`, its log, `logins2.sqlite` and autofill's log | the same | the same |
+| Sealed (`check-sealed`) | the marker in no file of the app's; the three databases and their logs with 8 KiB pages and 32 reserved bytes | the same | the same |
+| The four read back in a new process, after the app was killed with its logs not checkpointed | yes | yes | yes |
+| Each database opened without its key | refused, `unable to open database file`; no file of the three changed | the same | the same |
+| Logins asked for before the vault was open (`check-keys`) | came after the vault's key and the database's, 3.6 s; nothing in the clear | 0.4 s; the same | 1.5 s; the same |
+| A database's key derived once the vault's was held | 1–35 ms | 0–3 ms | 0–3 ms |
 
 **What sealing costs places** (`bench-places`, patch 0006's build: 2,000 visits a transaction each, as browsing
 records them, fifty autocomplete queries, and every visit read back, on three new databases a round in an order that
@@ -89,6 +90,12 @@ the disk.** A visit, which commits with a sync to the log, took 50 ms plain and 
 25 ms on the S9. Patch 0005's build, timed the same way without *plain-8k*, five rounds, gave the same: sealed 0.62
 of plain's visits' time on the A20 and 0.85 on the S9.
 
+**On the G6** (patch 0007's build, the same bench): 2,000 visits took 55.8 s plain, 41.2 s plain-8k and 43.1 s sealed;
+fifty autocomplete queries 581, 590 and 581 ms; every visit read back 26, 26 and 27 ms; and 4.5, 2.0 and 2.0 MB on
+disk. **The cipher costs 5% of a visit's write there**, and sealed places writes in 0.77 of plain's time. Its first
+run, on patch 0006's build, made every plain-8k database with 4 KiB pages (*Found on the way*, 4); its sealed and
+plain sides agreed with these within 2%.
+
 **History recorded by pages, not the gate** (stage 2's `check-lockstore` and stage 1's `check-plaintext normal`, on the
 S9): the marker page, loaded in a tab, went to Fenix's history, whose metadata service logged it, and
 `places.sqlite`'s log changed in the session; the marker was in two files of the app's, Fenix's saved tabs and
@@ -103,6 +110,10 @@ and Fenix's saved tabs. Places' key came 10 to 11 s after it was asked, when the
 
 **Pages over TLS** load with the megazord on Gecko's NSS: `https://www.mozilla.org/` on the A20, shown secure. The
 S9 has no network.
+
+**`check-kek` on the G6, on stage 3's build** (2026-11-20): every step held, as stage 2's did on the S9 and the A20
+(W14), and its step 5, the close at the vault's key dropped, for the first time (W20). Its real page, in a normal
+tab, left the marker in Fenix's saved tabs and `serviceworker.txt` alone, as on the S9.
 
 **The build**: mach's first build of stage 3 took 72 minutes, Gecko's and the megazord's, and Fenix's Gradle 9 more;
 a change to obfsvfs, 6 minutes; to the spike's Fenix, under 2.
@@ -119,6 +130,10 @@ a change to obfsvfs, 6 minutes; to the spike's Fenix, under 2.
    in reading, before the first build.
 3. **Places' 32 KiB pages hid the cipher's cost** behind the page size's (above), so the bench gained `plain-8k`
    (patch 0006).
+4. **On Android 9, the bench's `plain-8k` had 4 KiB pages**: on the G6, Android's own `SQLiteDatabase` opens a new
+   database in its compatibility WAL, which writes the header with the default page size before the gate's pragma.
+   The bench timed it under the wrong label; each run's `page` said so. Patch 0007 takes the database out of WAL,
+   vacuums it with 8 KiB pages, and fails the bench where the page size is anything else.
 
 #### Flagged for veto
 
@@ -152,8 +167,9 @@ a change to obfsvfs, 6 minutes; to the spike's Fenix, under 2.
 
 #### Unmeasured
 
-The G6, whose vault is locked; the S24, which waits for its owner's word. A log torn by a crash, and a page that does
-not open under the right key, were tested on this machine alone (`check-obfsvfs-host`).
+~~The G6, whose vault is locked;~~ the S24, which waits for its owner's word. A log torn by a crash, and a page that
+does not open under the right key, were tested on this machine alone (`check-obfsvfs-host`). On the G6, whether a
+page's visit reached places: `check-plaintext` lists a file by name and size, and places' log had the same size.
 
 #### Found for the checks
 
@@ -161,3 +177,12 @@ not open under the right key, were tested on this machine alone (`check-obfsvfs-
 page was private and nothing read back, which read as a lost local storage. It sets the setting itself now. And
 Samsung's process manager killed encri three times in ten minutes on the A20 between runs, as W20 found, each time
 locking the vault.
+
+<!-- amendments: generated by scripts/docs/decision-index.py; do not edit -->
+
+## Amended since, as recorded in `amendments.md`
+
+- **W21's unmeasured G6** (2026-11-20): measured, as on the A20 and the S9; the cipher costs 5% of a visit's write
+  there. Its first bench made `plain-8k` with 4 KiB pages, which patch 0007 fixes.
+
+<!-- /amendments -->

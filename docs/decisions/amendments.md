@@ -59,3 +59,9 @@ Each entry corrects a record. Its bold lead names the record possessively ("W1's
   reserved bytes, and the change counter and page count after them.
 - **W6's logins' origins** (2026-11-20, W21): each login's origin and times, which W6 left as plain columns of the
   logins' database, are sealed with the database now, under a key of their own from the vault's.
+- **W19's unmeasured G6** (2026-11-20): measured, once its owner had unlocked its vault. The six cases held as on the
+  A20.
+- **W20's unmeasured step 5 of `check-kek`** (2026-11-20): measured on the G6, on stage 3's build, which carries patch
+  0012. The browser closed at the vault's key dropped, and the third origin read back whole, local storage among it.
+- **W21's unmeasured G6** (2026-11-20): measured, as on the A20 and the S9; the cipher costs 5% of a visit's write
+  there. Its first bench made `plain-8k` with 4 KiB pages, which patch 0007 fixes.

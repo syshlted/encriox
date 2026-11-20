@@ -113,16 +113,22 @@ sources are there, and are not repeated here:
    - ~~**The spikes' three bugs, before anything else** (*Bugs*, below)~~ **Done 2026-11-20**: a stopped download
      into the vault shows as stopped (W19, stage 1's patch 0020); and the browser closes at a lock (W20, stage 2's
      patch 0012), with what Gecko's shutdown writes measured, which ends S3. S1 was not seen again, and the state it
-     was seen in is gone. Measured on the A20; the G6 and the S9 are owed.
+     was seen in is gone. Measured on the A20; ~~the G6 and the S9 are owed~~ **on the G6 too, 2026-11-20**, W19's
+     six cases and W20's close at the vault's key dropped (`check-kek`'s step 5); the S9 is owed.
    - ~~**History and bookmarks in a sealed store**, next~~ **Decided and built in the spike 2026-11-20 (W21)**, on the
      user's word: Gecko's obfsvfs, ported into application-services' own SQLite, seals places', the logins' and
      autofill's databases with keys from the vault's, and the first usable build waits for it and carries it. Firefox's
-     tree builds application-services in tree, so it is stage 3's six patches on stage 2's, in one series, not a fork.
-     Measured on the A20 and the S9: the marker in no file, all four read back, a keyless open refused with nothing
-     changed, and sealed places faster to write than plain. Six points flagged for veto. Owed here: the G6 and the S24;
-     pages over TLS with the megazord on Gecko's NSS; `check-unlock` with the databases watched.
+     tree builds application-services in tree, so it is stage 3's ~~six~~ seven patches on stage 2's, in one series,
+     not a fork. Measured on the A20, the S9 and the G6: the marker in no file, all four read back, a keyless open
+     refused with nothing changed, and sealed places faster to write than plain. ~~Six points flagged for veto.~~ Its
+     six flags stand (W22). ~~Owed here: the G6 and the S24; pages over TLS with the megazord on Gecko's NSS;
+     `check-unlock` with the databases watched.~~ Pages over TLS and `check-unlock` with the databases watched, done on
+     the A20 (W21). Owed here: the S24.
    - **History and bookmarks on in encriox's menus**, which W17 had off, and Fenix's history delegate set, S; and the
      stage 3 patches carried into encriox's series with the in-tree build in its mozconfig, S.
+   - **A prompt at start for a sealed database that does not open** (W22): which store it is, and the user's choice
+     to delete it and start that store empty, or keep it and go on without it; never deleted unasked. With Sync off
+     (W17), the prompt says a deleted store does not come back. S.
    - **The repository and the build**: `patches/`, `scripts/` and the file naming the Firefox release (W9), S; the
      series moved onto the newest release tag, the first measure of a rebase's cost, M; a build type of encriox's
      own, minified, Gecko optimised, without Fenix's `sharedUserId`, with a `.debug` type beside it, M; the branding,
@@ -172,6 +178,10 @@ sources are there, and are not repeated here:
 - ~~**How encriox keeps its own key**: a document in the vault, as the spike does (W6, flag 1), the same wrapped by a
   Keystore key of its own, or wrapped by encri for its package, which is a change to the contract
   (`open-questions.md`).~~ **A hidden document in the vault, `.encriox.key`, for now (W10).**
+- **Changing a sealed database's key**, on the user's word, where it is thought compromised (W22): every page written
+  again into a new database under a key whose label carries a count, which then replaces the old. It protects what
+  is written after, not what the old key already opened. A rotation of `encriox.key` itself, which W6 never writes
+  over, is larger and not planned. M.
 
 ## Later
 
