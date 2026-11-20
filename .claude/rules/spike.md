@@ -181,6 +181,9 @@ logins' and autofill's databases through an obfsvfs of application-services' own
 - **The app's directory reaches SQLite under two names**, `/data/user/0/…` from the logins' store and `/data/data/…`
   from places', which canonicalizes its path: a key looked up by path would miss (W21).
 - **SQLite deletes a database's log at an open when the database's own file is empty**, whatever the key (W21).
+- **Android 9 opens a new database in its compatibility WAL**, through its own `SQLiteDatabase`, and the header is
+  written with the default 4 KiB pages before any pragma: the G6's bench made its `plain-8k` so. Out of WAL, a vacuum
+  sets the page size (W21, stage 3's patch 0007).
 - **The A20's vault locks while a long bench runs**, as Samsung's process manager kills encri in the background:
   check that the vault is open before a check that needs it.
 - **Under zsh, `$adb` holding `adb -s <serial>` is one word**, and the command is not found: a loop waiting on it

@@ -1,0 +1,54 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jeremy Melanson <1080872+zish@users.noreply.github.com>
+Date: Fri, 20 Nov 2026 19:06:15 +0000
+Subject: [PATCH] fix: give the bench's plain-8k database 8 KiB pages on
+ Android 9
+
+On the G6, Android 9, every plain-8k database came out with 4096-byte
+pages: Android 9 opens a new database in its compatibility WAL, which
+writes the header with the default page size before the gate's pragma
+runs, so the bench timed the page size it did not mean to. The A20's and
+the S9's had 8 KiB. The gate now takes the database out of WAL, sets the
+page size and vacuums it before WAL again, and fails the bench if the
+page size is not 8 KiB.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+---
+ .../org/mozilla/fenix/encri/EncriGateActivity.kt  | 15 ++++++++++++++-
+ 1 file changed, 14 insertions(+), 1 deletion(-)
+
+diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt
+index 550a6c8967..7115db014a 100644
+--- a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt
++++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt
+@@ -640,13 +640,26 @@ class EncriGateActivity : ComponentActivity() {
+                             if (kind == "plain-8k") {
+                                 // Made empty, in WAL mode with 8 KiB pages, which places' own pragma then cannot
+                                 // change; without Android's own table, so that places takes it for a new database.
++                                // Android 9 opens a new database in its compatibility WAL, which writes the header
++                                // with the default page size before any pragma of ours: out of WAL, a vacuum makes
++                                // it again with 8 KiB pages. Any other page size fails the bench.
+                                 SQLiteDatabase.openDatabase(
+                                     path.path,
+                                     null,
+                                     SQLiteDatabase.CREATE_IF_NECESSARY or SQLiteDatabase.NO_LOCALIZED_COLLATORS,
+                                 ).use { db ->
++                                    fun pragma(sql: String) =
++                                        db.rawQuery("PRAGMA $sql", null).use {
++                                            if (it.moveToFirst()) it.getString(0) else null
++                                        }
++                                    pragma("journal_mode = DELETE")
+                                     db.execSQL("PRAGMA page_size = $PLACES_BENCH_SMALL_PAGE")
+-                                    db.rawQuery("PRAGMA journal_mode = WAL", null).use { it.moveToFirst() }
++                                    db.execSQL("VACUUM")
++                                    pragma("journal_mode = WAL")
++                                    val page = pragma("page_size")
++                                    check(page == "$PLACES_BENCH_SMALL_PAGE") {
++                                        "plain-8k was made with $page-byte pages"
++                                    }
+                                 }
+                             }
+                             val run = JSONObject().put("kind", kind).put("round", round).put("visits", visits)
+-- 
+2.47.3
+
