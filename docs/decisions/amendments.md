@@ -65,3 +65,5 @@ Each entry corrects a record. Its bold lead names the record possessively ("W1's
   0012. The browser closed at the vault's key dropped, and the third origin read back whole, local storage among it.
 - **W21's unmeasured G6** (2026-11-20): measured, as on the A20 and the S9; the cipher costs 5% of a visit's write
   there. Its first bench made `plain-8k` with 4 KiB pages, which patch 0007 fixes.
+- **W22's first flag** (2026-11-20, the user's word: "yes, add the key check next session"): a key check in each
+  sealed page tells a wrong key from a damaged file, and the prompt offers a repair beside deleting and keeping.

@@ -126,9 +126,14 @@ sources are there, and are not repeated here:
      the A20 (W21). Owed here: the S24.
    - **History and bookmarks on in encriox's menus**, which W17 had off, and Fenix's history delegate set, S; and the
      stage 3 patches carried into encriox's series with the in-tree build in its mozconfig, S.
+   - **A key check in each sealed page, next** (W22's amendment, the user's word of 2026-11-20): in obfsvfs, a check
+     derived from the database's key in each page's 4 spare reserved bytes, so that a wrong key is told from a damaged
+     file, measured with a log torn by a crash and a page that does not open under the right key, on a phone. S.
    - **A prompt at start for a sealed database that does not open** (W22): which store it is, and the user's choice
-     to delete it and start that store empty, or keep it and go on without it; never deleted unasked. With Sync off
-     (W17), the prompt says a deleted store does not come back. S.
+     to delete it and start that store empty, ~~or~~ keep it and go on without it, or, where some pages still open,
+     repair it into a new sealed database with what SQLite's recovery can read; never deleted unasked, and never
+     offered for deletion under a key that is not its own. With Sync off (W17), the prompt says a deleted store does
+     not come back. S.
    - **The repository and the build**: `patches/`, `scripts/` and the file naming the Firefox release (W9), S; the
      series moved onto the newest release tag, the first measure of a rebase's cost, M; a build type of encriox's
      own, minified, Gecko optimised, without Fenix's `sharedUserId`, with a `.debug` type beside it, M; the branding,
