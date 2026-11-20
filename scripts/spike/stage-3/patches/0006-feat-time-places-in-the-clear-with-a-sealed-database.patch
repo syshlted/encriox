@@ -1,0 +1,110 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jeremy Melanson <1080872+zish@users.noreply.github.com>
+Date: Fri, 20 Nov 2026 09:19:19 +0000
+Subject: [PATCH] feat: time places in the clear with a sealed database's page
+ size
+
+Places makes a database with 32 KiB pages, and a sealed one has 8 KiB,
+so the gate's placesbench measured the page size and the cipher
+together: on the A20, sealed places wrote its visits faster than plain.
+A third kind, plain-8k, made empty in WAL mode with 8 KiB pages before
+places opens it, tells the page size's part from the cipher's, and each
+run reports the page size its database was made with.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+---
+ .../mozilla/fenix/encri/EncriGateActivity.kt  | 38 +++++++++++++++----
+ 1 file changed, 30 insertions(+), 8 deletions(-)
+
+diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt
+index b120994532..550a6c8967 100644
+--- a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt
++++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt
+@@ -10,6 +10,7 @@ import android.os.Build
+ import android.os.Bundle
+ import android.os.Environment
+ import android.os.SystemClock
++import android.database.sqlite.SQLiteDatabase
+ import android.provider.MediaStore
+ import android.util.Log
+ import androidx.activity.ComponentActivity
+@@ -62,9 +63,10 @@ import org.mozilla.gecko.util.GeckoBundle
+  *   start, and does nothing else: `withhold` leaves them locked, as a locked vault does (stage 2, [EncriProfileSecret]);
+  * - `--es sealing on|off` sets whether places', the logins' and autofill's databases are sealed at the next start, and
+  *   does nothing else: `off` is for the control run of stage 3's `check-sealed` alone ([EncriDatabaseKeys]);
+- * - `--ei placesbench <visits> --ei rounds <n>` times the same work in places in the clear and sealed, each round on
+- *   two new databases outside the stores, alternating which goes first, and logs each run as a line of JSON, then
+- *   `placesbench done`. It needs neither the vault nor its key, and does nothing else;
++ * - `--ei placesbench <visits> --ei rounds <n>` times the same work in places in the clear, in the clear with a sealed
++ *   database's 8 KiB pages, and sealed, each round on three new databases outside the stores, in an order that turns
++ *   each round, and logs each run as a line of JSON, then `placesbench done`. It needs neither the vault nor its key,
++ *   and does nothing else;
+  *
+  * - `--es profile lock|unlock` locks or unlocks those keys in the running Gecko, and leaves the vault as it is;
+  * - `--ei bench <MiB> --ei rounds <n>` writes n rounds of that many MiB from memory, alternating which goes first,
+@@ -268,6 +270,8 @@ class EncriGateActivity : ComponentActivity() {
+         private const val PLACES_BENCH_SITES = 500
+         private const val PLACES_BENCH_QUERIES = 50
+         private const val PLACES_BENCH_LIMIT = 10
++        private const val PLACES_BENCH_SMALL_PAGE = 8192
++        private const val PLACES_BENCH_HEADER = 18
+ 
+         private val work = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+ 
+@@ -612,9 +616,11 @@ class EncriGateActivity : ComponentActivity() {
+          * that asked.
+          */
+         /**
+-         * Times places in the clear and sealed through obfsvfs (stage 3): each round, on two new databases in the
++         * Times places in the clear and sealed through obfsvfs (stage 3): each round, on three new databases in the
+          * cache, it opens the database, records [visits] visits a transaction each, as browsing does, runs fifty
+-         * autocomplete queries, and reads every visit back.
++         * autocomplete queries, and reads every visit back. Places makes its databases with 32 KiB pages, and a sealed
++         * one has 8 KiB: `plain-8k`, in the clear with 8 KiB pages, tells what the page size changes from what the
++         * cipher costs.
+          */
+         private fun placesBench(
+             context: Context,
+@@ -624,13 +630,25 @@ class EncriGateActivity : ComponentActivity() {
+             Log.i(TAG, "placesbench asked visits=$visits rounds=$rounds")
+             val outcome =
+                 runCatching {
++                    val kinds = listOf("plain", "plain-8k", "sealed")
+                     for (round in 1..rounds) {
+-                        val order = if (round % 2 == 1) listOf(false, true) else listOf(true, false)
+-                        for (sealed in order) {
+-                            val kind = if (sealed) "sealed" else "plain"
++                        for (kind in kinds.drop((round - 1) % kinds.size) + kinds.take((round - 1) % kinds.size)) {
++                            val sealed = kind == "sealed"
+                             val name = "$PLACES_BENCH_PREFIX$kind-$round.sqlite"
+                             val path = File(context.cacheDir, name)
+                             context.cacheDir.listFiles { f: File -> f.name.startsWith(name) }?.forEach { it.delete() }
++                            if (kind == "plain-8k") {
++                                // Made empty, in WAL mode with 8 KiB pages, which places' own pragma then cannot
++                                // change; without Android's own table, so that places takes it for a new database.
++                                SQLiteDatabase.openDatabase(
++                                    path.path,
++                                    null,
++                                    SQLiteDatabase.CREATE_IF_NECESSARY or SQLiteDatabase.NO_LOCALIZED_COLLATORS,
++                                ).use { db ->
++                                    db.execSQL("PRAGMA page_size = $PLACES_BENCH_SMALL_PAGE")
++                                    db.rawQuery("PRAGMA journal_mode = WAL", null).use { it.moveToFirst() }
++                                }
++                            }
+                             val run = JSONObject().put("kind", kind).put("round", round).put("visits", visits)
+                             var at = SystemClock.elapsedRealtime()
+                             fun lap(step: String) {
+@@ -663,6 +681,10 @@ class EncriGateActivity : ComponentActivity() {
+                             lap("scan")
+                             val files = context.cacheDir.listFiles { f: File -> f.name.startsWith(name) }.orEmpty()
+                             run.put("bytes", files.sumOf { it.length() })
++                            // The page size the database was made with, from its header.
++                            val header = ByteArray(PLACES_BENCH_HEADER)
++                            path.inputStream().use { it.read(header) }
++                            run.put("page", (header[16].toInt() and 0xff shl 8) or (header[17].toInt() and 0xff))
+                             api.close()
+                             files.forEach { it.delete() }
+                             Log.i(TAG, "placesbench run $run")
+-- 
+2.47.3
+

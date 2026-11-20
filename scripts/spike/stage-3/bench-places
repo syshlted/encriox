@@ -1,0 +1,52 @@
+#!/bin/sh
+# Times places in the clear and sealed through obfsvfs, on a phone: the gate's `--ei placesbench`, which each round
+# makes three new databases in the app's cache, outside the stores, opens each, records the visits a transaction each,
+# as browsing does, runs fifty autocomplete queries and reads every visit back, in an order that turns each round.
+# `plain` is places as it makes a database, with 32 KiB pages; `plain-8k` is in the clear with a sealed database's
+# 8 KiB pages, which tells the page size's part from the cipher's; `sealed` is through obfsvfs. It needs neither the
+# vault nor its key. Prints each run, then the median of each step by kind, and sealed's over each plain kind's.
+#
+#   scripts/spike/stage-3/bench-places <adb serial> [<visits> [<rounds>]]
+set -eu
+
+serial=${1:?usage: bench-places <adb serial> [<visits> [<rounds>]]}
+visits=${2:-2000}
+rounds=${3:-5}
+package=com.systemhalted.encri.browser.spike
+adb="${ADB:-$HOME/Android/Sdk/platform-tools/adb} -s $serial"
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+
+applog() { $adb logcat -d -s encriox-spike:I | sed 's/^.*encriox-spike: //'; }
+
+$adb shell input keyevent KEYCODE_WAKEUP
+$adb shell am force-stop $package
+$adb logcat -c
+$adb shell am start -n $package/org.mozilla.fenix.encri.EncriGateActivity \
+    --ei placesbench "$visits" --ei rounds "$rounds" >/dev/null
+waited=0
+until applog | grep -qE "placesbench (done|failed)"; do
+    sleep 5
+    waited=$((waited + 5))
+    [ "$waited" -lt 3600 ] || { applog >&2; echo "bench-places: no end in an hour" >&2; exit 1; }
+done
+applog | grep -E "placesbench (failed|asked)" | sed 's/^/  /'
+applog | grep -q "placesbench done" || exit 1
+applog | sed -n 's/^placesbench run //p' > "$work/runs"
+sed 's/^/  /' "$work/runs"
+python3 -I - "$work/runs" <<'SUMMARY'
+import json, statistics, sys
+
+runs = [json.loads(line) for line in open(sys.argv[1])]
+kinds = [k for k in ("plain", "plain-8k", "sealed") if any(r["kind"] == k for r in runs)]
+steps = ["open_ms", "visits_ms", "autocomplete_ms", "scan_ms", "bytes"]
+median = {kind: {s: statistics.median(r[s] for r in runs if r["kind"] == kind) for s in steps} for kind in kinds}
+pages = {kind: sorted({r.get("page") for r in runs if r["kind"] == kind}) for kind in kinds}
+print(f"  medians of {len(runs) // len(kinds)} rounds, {runs[0]['visits']} visits; pages: {pages}")
+print("    " + f"{'':16}" + "".join(f"{k:>12}" for k in kinds) + "".join(f"  sealed/{k}" for k in kinds[:-1]))
+for s in steps:
+    row = "".join(f"{median[k][s]:>12}" for k in kinds)
+    ratios = "".join(f"  {median['sealed'][s] / median[k][s]:>{7 + len(k)}.2f}" if median[k][s] else "  -"
+                     for k in kinds[:-1])
+    print(f"    {s:16}{row}{ratios}")
+SUMMARY

@@ -1,0 +1,159 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jeremy Melanson <1080872+zish@users.noreply.github.com>
+Date: Fri, 20 Nov 2026 08:34:34 +0000
+Subject: [PATCH] fix: hand obfsvfs a database's key by handle, never in its
+ name
+
+A sealed name carried the key in its URI, and rusqlite puts the name it
+was given into the message of an open that fails: a sealed open of a
+database in the clear, refused, would have told the key to the error
+reporter and the log. The name now carries a handle to the key, which
+obfsvfs keeps for the process's life, and a handle it was not given is
+refused.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+---
+ .../components/support/sql/src/obfsvfs.rs     | 82 +++++++++++--------
+ 1 file changed, 46 insertions(+), 36 deletions(-)
+
+diff --git a/third_party/application-services/components/support/sql/src/obfsvfs.rs b/third_party/application-services/components/support/sql/src/obfsvfs.rs
+index a510458eb5..16e641e7d8 100644
+--- a/third_party/application-services/components/support/sql/src/obfsvfs.rs
++++ b/third_party/application-services/components/support/sql/src/obfsvfs.rs
+@@ -10,8 +10,9 @@
+ //! demo), which seals Gecko's own profile databases, brought to application-services' SQLite, with AES-256-GCM from
+ //! NSS in place of Gecko's cipher strategy:
+ //!
+-//! - A database is opened sealed by a `file:` URI that names this VFS and carries the key, `key=` and 64 hex digits,
+-//!   as [`sealed_name`] makes it. Its write-ahead log and its journal are sealed under the same key.
++//! - A database is opened sealed by a `file:` URI that names this VFS and a key [`sealed_name`] was given, by a
++//!   handle: the key itself is never in a name, which SQLite and rusqlite put into the message of an open that
++//!   fails. Its write-ahead log and its journal are sealed under the same key.
+ //! - Each page is [`PAGE_SIZE`] bytes, of which the last 32 are reserved: the tag, then the nonce. Page 1's first 32
+ //!   bytes, the start of SQLite's header, stay in the clear, so that SQLite can read the page size and the reserved
+ //!   bytes before it reads any page. A `PRAGMA page_size` is ignored.
+@@ -31,7 +32,9 @@ use rusqlite::ffi;
+ use std::ffi::{c_char, c_int, c_void, CStr};
+ use std::io::Read;
+ use std::path::{Path, PathBuf};
+-use std::sync::OnceLock;
++use std::collections::HashMap;
++use std::sync::atomic::{AtomicU64, Ordering};
++use std::sync::{Mutex, OnceLock};
+ use std::{mem, ptr, slice};
+ use url::Url;
+ 
+@@ -81,25 +84,27 @@ pub enum Error {
+     RelativePath(PathBuf),
+ }
+ 
+-/// The name to open the database at `path` by, sealed under `key`: a `file:` URI naming this VFS and carrying the
+-/// key. Open it with `SQLITE_OPEN_URI`. Its query holds the key, so it is never logged.
++/// The keys [`sealed_name`] was given, by the handle each name carries in its place. Kept for the process's life,
++/// as the connections opened by each name are.
++fn keys() -> &'static Mutex<HashMap<u64, [u8; KEY_BYTES]>> {
++    static KEYS: OnceLock<Mutex<HashMap<u64, [u8; KEY_BYTES]>>> = OnceLock::new();
++    KEYS.get_or_init(Default::default)
++}
++
++/// The name to open the database at `path` by, sealed under `key`: a `file:` URI naming this VFS and a handle to the
++/// key, which this keeps. Open it with `SQLITE_OPEN_URI`.
+ pub fn sealed_name(path: &Path, key: &[u8]) -> Result<PathBuf, Error> {
+-    if key.len() != KEY_BYTES {
+-        return Err(Error::KeyLength(key.len()));
+-    }
++    static NEXT: AtomicU64 = AtomicU64::new(1);
++    let key: [u8; KEY_BYTES] = key.try_into().map_err(|_| Error::KeyLength(key.len()))?;
+     // Named in the URI, an unregistered VFS fails the open; a key alone would be ignored, and the database made in
+     // the clear.
+     if !ensure_registered() {
+         return Err(Error::NotRegistered);
+     }
+     let mut url = Url::from_file_path(path).map_err(|_| Error::RelativePath(path.to_owned()))?;
+-    let mut query = format!("vfs={}&key=", NAME.to_str().expect("ASCII"));
+-    for b in key {
+-        query.push_str(&format!("{b:02x}"));
+-    }
+-    url.set_query(Some(&query));
+-    // SAFETY: zeroes are UTF-8.
+-    unsafe { query.as_bytes_mut() }.fill(0);
++    let handle = NEXT.fetch_add(1, Ordering::Relaxed);
++    keys().lock().unwrap_or_else(|e| e.into_inner()).insert(handle, key);
++    url.set_query(Some(&format!("vfs={}&sealed={handle}", NAME.to_str().expect("ASCII"))));
+     Ok(PathBuf::from(String::from(url)))
+ }
+ 
+@@ -495,29 +500,19 @@ fn on_disk(path: &CStr) -> OnDisk {
+     }
+ }
+ 
+-/// The key in a file's name, which a log's and a journal's name carry too: None if it has none, Err if it is not
+-/// 64 hex digits.
++/// The key a file's name hands over, which a log's and a journal's name carry too: None if it names none, Err if it
++/// names one that [`sealed_name`] was not given.
+ unsafe fn key_in(name: *const c_char) -> Option<Result<[u8; KEY_BYTES], ()>> {
+-    let value = ffi::sqlite3_uri_parameter(name, c"key".as_ptr());
++    let value = ffi::sqlite3_uri_parameter(name, c"sealed".as_ptr());
+     if value.is_null() {
+         return None;
+     }
+-    let hex = CStr::from_ptr(value).to_bytes();
+-    if hex.len() != KEY_BYTES * 2 {
+-        return Some(Err(()));
+-    }
+-    let mut key = [0u8; KEY_BYTES];
+-    for (i, pair) in hex.chunks(2).enumerate() {
+-        let digit = |c: u8| (c as char).to_digit(16);
+-        match (digit(pair[0]), digit(pair[1])) {
+-            (Some(high), Some(low)) => key[i] = (high << 4 | low) as u8,
+-            _ => {
+-                key.fill(0);
+-                return Some(Err(()));
+-            }
+-        }
+-    }
+-    Some(Ok(key))
++    let key = CStr::from_ptr(value)
++        .to_str()
++        .ok()
++        .and_then(|handle| handle.parse::<u64>().ok())
++        .and_then(|handle| keys().lock().unwrap_or_else(|e| e.into_inner()).get(&handle).copied());
++    Some(key.ok_or(()))
+ }
+ 
+ unsafe extern "C" fn obfs_open(
+@@ -547,7 +542,7 @@ unsafe extern "C" fn obfs_open(
+     let key = match key_in(name) {
+         Some(Ok(key)) => Some(key),
+         Some(Err(())) => {
+-            warn!("obfsvfs: a key that is not {} hex digits is refused", KEY_BYTES * 2);
++            warn!("obfsvfs: a sealed name whose key is not kept here is refused");
+             return ffi::SQLITE_CANTOPEN;
+         }
+         // A log's or a journal's name carries its database's key; its database is asked too.
+@@ -936,6 +931,21 @@ mod test {
+         assert!(matches!(sealed_name(Path::new("x.db"), &KEY), Err(Error::RelativePath(_))));
+         let name = sealed_name(Path::new("/data/a b/places.sqlite"), &KEY).unwrap();
+         let name = name.to_str().unwrap();
+-        assert!(name.starts_with("file:///data/a%20b/places.sqlite?vfs=appservices-obfsvfs&key=0707"), "{name}");
++        assert!(name.starts_with("file:///data/a%20b/places.sqlite?vfs=appservices-obfsvfs&sealed="), "{name}");
++    }
++
++    #[test]
++    fn test_a_failed_sealed_open_does_not_tell_the_key() {
++        let dir = tempfile::tempdir().unwrap();
++        let path = dir.path().join("places.sqlite");
++        Connection::open(&path).unwrap().execute_batch("CREATE TABLE t (v)").unwrap();
++        // A database in the clear, opened sealed, fails as it opens, when rusqlite puts the name into the message.
++        let e = open_sealed(&path, &[0xab; KEY_BYTES]).unwrap_err().to_string();
++        assert!(e.contains("places.sqlite"), "{e}");
++        assert!(!e.to_lowercase().contains(&"ab".repeat(8)), "the message tells the key: {e}");
++        // A name that hands over a key it was not given is refused.
++        let made_up = format!("file://{}?vfs=appservices-obfsvfs&sealed=999999999", path.display());
++        let e = Connection::open_with_flags(made_up, flags()).unwrap_err();
++        assert_eq!(code(&e).unwrap().0, ErrorCode::CannotOpen, "{e}");
+     }
+ }
+-- 
+2.47.3
+
