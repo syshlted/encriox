@@ -1,8 +1,13 @@
 # History and bookmarks in a sealed store: a plan
 
 *2026-11-20 · a study, drafted at the user's word ("Let's work on this next"), after the spikes' three bugs (W17's
-amendment). Nothing in it is decided. Every fact below was read in the source at Firefox 160 and application-services
-v160.0 on 2026-11-20, unless it says *unmeasured* or *unverified*.*
+amendment). Every fact below was read in the source at Firefox 160 and application-services v160.0 on 2026-11-20,
+unless it says *unmeasured* or *unverified*.*
+
+> **Decided and built the same day (W21).** The user took decisions 1 and 2 as recommended, and had the first usable
+> build wait for both (decision 3). Built as the spike's stage 3 and measured on the A20 and the S9: see W21 and
+> `scripts/spike/stage-3/README.md`. One thing below proved otherwise: Firefox's tree carries application-services and
+> builds its megazord in tree, so way 1 is not a second fork, but six patches in Firefox's series (*What way 1 costs*).
 
 ## What it is for
 
@@ -53,6 +58,9 @@ kept is readable on disk without the vault.
 
 ## What way 1 costs
 
+*As planned. Built, it cost less (W21): Firefox's tree has application-services in it, and
+`--enable-appservices-in-tree` builds the megazord with Gecko's NSS, so the first two points below did not arise.*
+
 - **A second fork to carry.** application-services tags a release for each Firefox release (`v160.0` for 160, the
   version Fenix pins), so its patches follow the same series as Firefox's (W9). About four, from the outline: the
   obfsvfs crate and its registration, places' key, the logins' and autofill's keys, and the build's own settings.
@@ -61,24 +69,25 @@ kept is readable on disk without the vault.
 - **A port of obfsvfs out of Gecko.** About 1,000 lines of C++, with Lockstore's own key derivation taken out, and
   NSS's cipher strategy beside it, about 170. Gecko's copy stays as it is.
 
-## Decisions it needs first
+## Decisions it needed first, all taken (W21)
 
-1. **The way.** Recommended: **1, obfsvfs in application-services' SQLite.**
+1. **The way.** Recommended: **1, obfsvfs in application-services' SQLite.** *Taken.*
 2. **What it seals.** Recommended: **places, logins and autofill**, all three of application-services' databases
    that hold the user's own data. Remote tabs, Suggest's and Remote Settings' caches hold none of it while sync and
-   Suggest are off (W17), and stay as they are.
+   Suggest are off (W17), and stay as they are. *Taken.*
 3. **Whether the first usable build waits for it** (W17's amendment). Recommended: **it waits for the spike round
    below, and carries history and bookmarks only if that round holds** on the A20 and the S9. Otherwise the first build
-   goes without them, as W17 has it, and they come in a later build.
+   goes without them, as W17 has it, and they come in a later build. *The user's word: it waits for 1 and 2. The round
+   held on both phones, so the first build carries them.*
 
 ## The work, in order
 
-1. **A spike round, stage 3, before writing any of it**: application-services at `v160.0`, built for arm64 on the
-   drive for large builds, with obfsvfs and places' key, and stage 2's Fenix built against it. Measured: the build's
-   time and disk; a session's marker absent from `places.sqlite`, its WAL and its journal; history and bookmarks read
-   back at the next start; what a start without the key does, which must raze nothing (W14's rule); and what obfsvfs
-   costs places, against a plain build. M to L.
-2. **The same for logins and autofill**, with `check-keys`. S.
+1. ~~**A spike round, stage 3, before writing any of it**~~ *Done (W21), in tree rather than on a fork*:
+   application-services at `v160.0`, built for arm64 on the drive for large builds, with obfsvfs and places' key, and
+   stage 2's Fenix built against it. Measured: the build's time and disk; a session's marker absent from
+   `places.sqlite`, its WAL and its journal; history and bookmarks read back at the next start; what a start without the
+   key does, which must raze nothing (W14's rule); and what obfsvfs costs places, against a plain build. M to L.
+2. ~~**The same for logins and autofill**, with `check-keys`. S.~~ *Done (W21), in the same round.*
 3. **History and bookmarks on in Fenix's menus again**, and Fenix's history delegate set (`Core.kt`). S.
 4. **The patches carried into encriox's repository** beside Gecko's, and its release script building the megazord
    too (W9). M.

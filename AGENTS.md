@@ -14,8 +14,10 @@ built yet.** The stage 1 spike, a throwaway, is built and measured on three phon
 the stage 2 spike's first round ran on its build, with prefs alone (`scripts/spike/stage-2/`, W12), and stage 2 now
 builds its own Gecko, on which all three of Lockstore's switches work (W13) and the profile's keys are kept under a
 secret from the vault's key (W14), which does not start without the vault (W15), and whose encryption of SQLite was
-measured (W16), and which closes at a lock, letting Gecko write what it holds first (W20). encriox's first usable
-build is planned and accepted (W17; `ROADMAP.md`, item 6).
+measured (W16), and which closes at a lock, letting Gecko write what it holds first (W20). Stage 3 builds
+application-services in Firefox's tree on stage 2's, and seals places', the logins' and autofill's databases with keys
+from the vault's (`scripts/spike/stage-3/`, W21). encriox's first usable build is planned and accepted (W17;
+`ROADMAP.md`, item 6), and carries them.
 
 ## Relationship to the other repositories
 
@@ -49,7 +51,7 @@ what is next.
 
 | Brief | Covers |
 |---|---|
-| `spike.md` | the spikes, stages 1 and 2, `scripts/spike/**`, and `LICENSE` until encriox's own build has a brief |
+| `spike.md` | the spikes, stages 1 to 3, `scripts/spike/**`, and `LICENSE` until encriox's own build has a brief |
 
 ## Hard constraints
 

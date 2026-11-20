@@ -26,7 +26,8 @@
 #    apps, and change nothing of the profile.
 # 5. The vault unlocked again through the gate, and the fourth origin read back at a start with it open.
 #
-# The vault must be open to the spike when it starts, and is left open. A lock the browser does not close at, or a
+# Its pages must be in normal tabs, whose stores are kept, so it turns the spike's private setting off first, and on
+# again at its end. The vault must be open to the spike when it starts, and is left open. A lock the browser does not close at, or a
 # page's local storage the lock lost, is recorded and the run goes on, so that a build without the close shows both;
 # the run then fails, naming each.
 set -eu
@@ -285,6 +286,10 @@ m4=$(marker)
 
 echo "== $serial: 1. the vault open at start"
 "$here/fresh-profile" "$serial"
+# A private tab keeps nothing for the next start to read back, so every read-back below would find nothing.
+gate "gate private=false" 30 --es private false
+# That start started Gecko too, which asks for the secret once: the next start is a new process.
+$adb shell am force-stop $package
 gate "kek withheld=false" 60 --es kek give
 awaitlog "profile secret (given|none)|encri is asked" 60
 said 'profile secret|unlock '
@@ -377,6 +382,8 @@ $adb shell am force-stop $package
 $adb logcat -c
 page /read "$m4" 6 8645
 said 'profile secret|unlock '
+$adb shell am force-stop $package
+gate "gate private=true" 30 --es private true
 $adb shell am force-stop $package
 [ -z "$wrongs" ] || fail "what was wrong:$wrongs"
 echo "== as it should"

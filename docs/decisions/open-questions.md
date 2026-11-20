@@ -7,13 +7,15 @@ The first four were the study's *Open questions*, moved here when W1 was recorde
   bookmark made from one goes into `places.sqlite` like any other, in plaintext: Fenix's menu does not ask which kind
   of tab it was (read in the source, 2026-11-16).~~ In encriox's first build no history is recorded, and bookmarks are
   off (W17); they come back with a sealed store of their own.
-- **application-services.** `places.sqlite` and the login key are outside Lockstore. Fix them in the fork, or wait for
+- ~~**application-services.** `places.sqlite` and the login key are outside Lockstore. Fix them in the fork, or wait for
   Mozilla? The login key is the easier half (read in the source, 2026-11-16): application-services takes the key for
   logins, and the one for addresses and cards, from a key manager the app supplies, and Fenix's keep theirs in
   `SecureAbove22Preferences`, which a release stores in plaintext (`forceInsecure = !Config.channel.isDebug`). A key
   from the vault can take their place in Kotlin alone. `places.sqlite` has no such hook. The spike seals both keys with
   the vault's key now (W6), so `places.sqlite` is what is left. encriox's first build records no history and has no
-  bookmarks (W17), so it waits for after that build.
+  bookmarks (W17), so it waits for after that build.~~ **Fixed in the fork, W21**: places', the logins' and
+  autofill's databases are sealed whole, through an obfsvfs of application-services' own, with keys from the vault's,
+  and the first build carries them.
 - ~~**Logins saved from a private tab.** Gecko offers to save a login from a private tab, because
   `signon.privateBrowsingCapture.enabled` is on by default, and nothing found in Android Components' prompts or its
   login delegate skips one. So with every tab private, a saved login still reaches the logins database (read in the

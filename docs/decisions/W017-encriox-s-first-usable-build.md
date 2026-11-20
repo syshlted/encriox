@@ -15,13 +15,15 @@ The plan's recommendation on each of its seven decisions, whole:
    tabs. It ends the two bugs a lock has now: the logins' and the cards' keys left in memory (W6, flag 3), and local
    storage lost when a page wrote it just before (W15). Whether Gecko's shutdown writes that local storage before it
    ends is measured as part of the work.
-2. **Fenix's own records of pages are sealed with the vault's key, or kept in memory, and history and bookmarks are
-   off in the first build.** Open tabs saved for the next start and recently closed tabs are sealed; thumbnails, site
-   icons and the downloads list are kept in memory; no history is recorded, as Fenix's history delegate is not set;
+2. **Fenix's own records of pages are sealed with the vault's key, or kept in memory, ~~and history and bookmarks are
+   off in the first build~~** *(amended: history, bookmarks, logins and cards in sealed databases, W21)*. Open tabs
+   saved for the next start and recently closed tabs are sealed; thumbnails, site icons and the downloads list are
+   kept in memory; no history is recorded, as Fenix's history delegate is not set;
    bookmarks, collections and pinned top sites are off in the menus; Gecko's list of service workers is kept in
-   memory or under Lockstore, whichever reading Gecko's source shows to be sound; and the logins' origins, plain
+   memory or under Lockstore, whichever reading Gecko's source shows to be sound; ~~and the logins' origins, plain
    columns of application-services' database, are disclosed now and sealed later. History and bookmarks return with
-   a sealed store of their own, after the first build: `places.sqlite` has no hook for a key.
+   a sealed store of their own, after the first build: `places.sqlite` has no hook for a key.~~ and history,
+   bookmarks and the logins' origins are sealed with application-services' databases (W21).
 3. **Mozilla's services are off, but for what keeps the browser safe.** Off: telemetry, experiments, sponsored tiles
    and stories, crash reports to Mozilla, Firefox accounts and Sync, attribution, and push through Firebase. Kept:
    Remote Settings' lists, certificate revocation, blocked add-ons and the search engines among them, and Safe
@@ -96,5 +98,9 @@ encriox, and again only if encriox's key is ever rotated.
   if they are not fixed yet", and of history and bookmarks in a sealed store, "Let's work on this next"): the three
   bugs come first, fixed in the spikes, then history and bookmarks in a sealed store, then the rest of item 6. W17 has
   the first usable build go without history and bookmarks; whether it waits for them now is the user's to say.
+- **W17's first build** (2026-11-20, W21, the user's word: "Let's wait for 1 and 2 before calling the first usable
+  build"): it waits for history and bookmarks, the logins and the cards in sealed databases, and carries them.
+  History is recorded and bookmarks are on in its menus; the logins' origins are sealed with the rest of their
+  database, not disclosed. Collections and pinned top sites, which are not application-services', stay off.
 
 <!-- /amendments -->

@@ -50,3 +50,12 @@ Each entry corrects a record. Its bold lead names the record possessively ("W1's
   runs with the lock at most 1.5 s after the write kept it every time, on an origin with all its stores and on one
   with local storage alone; what lost it once is unknown, in a Gecko running on with its keys locked, which no longer
   happens.
+- **W17's first build** (2026-11-20, W21, the user's word: "Let's wait for 1 and 2 before calling the first usable
+  build"): it waits for history and bookmarks, the logins and the cards in sealed databases, and carries them.
+  History is recorded and bookmarks are on in its menus; the logins' origins are sealed with the rest of their
+  database, not disclosed. Collections and pinned top sites, which are not application-services', stay off.
+- **W16's reading of obfsvfs's header** (2026-11-20, W21): page 1's first 32 bytes stay in the clear, not 24
+  (`kClearTextPrefixBytesOnFirstPage` in `storage/ObfuscatingVFS.cpp`): SQLite's 16-byte magic, the page size and the
+  reserved bytes, and the change counter and page count after them.
+- **W6's logins' origins** (2026-11-20, W21): each login's origin and times, which W6 left as plain columns of the
+  logins' database, are sealed with the database now, under a key of their own from the vault's.

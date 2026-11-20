@@ -4,6 +4,20 @@ What happened, newest first. Why is in `docs/decisions/`, and what is next is in
 
 ## Unreleased
 
+### History, bookmarks, logins and cards are sealed (2026-11-20)
+
+**Decided, built and measured** in the spike's stage 3, on the user's word that the first usable build waits for it
+(W21). Firefox 160's tree carries application-services and builds its megazord in tree, so stage 3 is six patches on
+stage 2's, not a fork: sql-support gains an obfsvfs of its own, after Gecko's, sealing each page, its log's and its
+journal's, with AES-256-GCM from NSS; places, the logins and autofill open their databases sealed; Android Components'
+stores take a database key and wait for it; and the spike's Fenix derives one for each from the vault's key. On the A20
+and the S9 the marker is in no file of the app's, all four records read back in a new process, an open without the key
+is refused and changes nothing, and logins asked for before the vault opens wait for it. The cipher costs 4–10% of a
+visit's write and nothing to read; with smaller pages than places' own, sealed places writes faster than places as
+Mozilla makes it, in half the disk. Found and fixed on the way: a sealed database's key carried in its name would have
+reached the log and the error reporter in the message of a failed open, and a component given no key could have
+deleted a sealed database. Six points are flagged for veto. The first usable build carries history and bookmarks.
+
 ### A plan for history and bookmarks in a sealed store (2026-11-20)
 
 At the user's word that it comes next, `docs/sealed-history.md` weighs how to give back history and bookmarks sealed
@@ -11,7 +25,7 @@ with the vault's key. Places keeps them in application-services' own SQLite, whi
 URI's query before it opens. Five ways are weighed; the plan recommends Gecko's obfsvfs, ported into
 application-services' SQLite, keyed from the vault's key, for places and for the logins' and the cards' databases too,
 whose origins and dates are plain columns. It asks the user three things first, and starts with a spike round that
-builds application-services itself. Nothing is decided.
+builds application-services itself. ~~Nothing is decided.~~ Decided and built the same day (above).
 
 ### encriox closes at a lock (2026-11-20)
 

@@ -105,7 +105,8 @@ sources are there, and are not repeated here:
 6. **The first usable build** (W17; `docs/first-usable-build.md`): encriox itself, built from this repository, signed
    with its own key and used every day on the user's phones, before anything is published. The user accepted the
    plan's seven recommendations: encriox closes at a lock; Fenix's own records of pages are sealed with the vault's
-   key or kept in memory, with no history and no bookmarks in the first build; Mozilla's services are off but for
+   key or kept in memory, ~~with no history and no bookmarks in the first build~~ and history, bookmarks, logins and
+   cards in sealed databases (W21); Mozilla's services are off but for
    Remote Settings' lists and Safe Browsing; encriox's key comes first; its version is the Firefox release and its own
    count; a key that does not open the profile stops it; and its checks run on the S24. In order, sized as the plan
    sizes them (S, M, L), with the first two on the user's word of 2026-11-20 (W17's amendment):
@@ -113,10 +114,15 @@ sources are there, and are not repeated here:
      into the vault shows as stopped (W19, stage 1's patch 0020); and the browser closes at a lock (W20, stage 2's
      patch 0012), with what Gecko's shutdown writes measured, which ends S3. S1 was not seen again, and the state it
      was seen in is gone. Measured on the A20; the G6 and the S9 are owed.
-   - **History and bookmarks in a sealed store**, next: `places.sqlite` has no hook for a key (`open-questions.md`,
-     *application-services*). `docs/sealed-history.md` weighs five ways and recommends Gecko's obfsvfs, ported into
-     application-services' own SQLite, for places, logins and autofill, with a spike round first, L. It asks the user
-     three things. W17 has the first usable build go without them; whether it waits for them now is the user's to say.
+   - ~~**History and bookmarks in a sealed store**, next~~ **Decided and built in the spike 2026-11-20 (W21)**, on the
+     user's word: Gecko's obfsvfs, ported into application-services' own SQLite, seals places', the logins' and
+     autofill's databases with keys from the vault's, and the first usable build waits for it and carries it. Firefox's
+     tree builds application-services in tree, so it is stage 3's six patches on stage 2's, in one series, not a fork.
+     Measured on the A20 and the S9: the marker in no file, all four read back, a keyless open refused with nothing
+     changed, and sealed places faster to write than plain. Six points flagged for veto. Owed here: the G6 and the S24;
+     pages over TLS with the megazord on Gecko's NSS; `check-unlock` with the databases watched.
+   - **History and bookmarks on in encriox's menus**, which W17 had off, and Fenix's history delegate set, S; and the
+     stage 3 patches carried into encriox's series with the in-tree build in its mozconfig, S.
    - **The repository and the build**: `patches/`, `scripts/` and the file naming the Firefox release (W9), S; the
      series moved onto the newest release tag, the first measure of a rebase's cost, M; a build type of encriox's
      own, minified, Gecko optimised, without Fenix's `sharedUserId`, with a `.debug` type beside it, M; the branding,
@@ -154,7 +160,7 @@ sources are there, and are not repeated here:
   encri is (encri D142), with each release's source on the public remote, as MPL-2.0 asks, and the Play listing and the
   About screen saying where. Two points flagged for veto: no APK on GitHub's releases, and a tag for each release.
 - ~~**History and bookmarks in a sealed store**, which the first build goes without (W17)~~ **Moved into item 6,
-  next after the bugs** (W17's amendment, 2026-11-20).
+  next after the bugs** (W17's amendment, 2026-11-20), **and built in the spike (W21)**: the first build carries them.
 - ~~**A trademark search for encriox**, in the US, EU, international and Japanese registers (W3).~~ **A knock-out
   search, 2026-11-17** (`docs/trademark-search.md`): no ENCRIOX in TMview, which holds those registers' records, or in
   Trademarkia's US data; no use found; and `.com`, `.net`, `.org` and `.app` unregistered. The offices' own searches

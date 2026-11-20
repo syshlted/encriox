@@ -124,5 +124,7 @@ run stops with a message; on the A20 with its screen locked it stopped after 166
 
 - **W6's third flag** (2026-11-20, W20): a lock no longer leaves the stores' keys in memory. The browser closes at a
   lock, and its process ends with every key it held.
+- **W6's logins' origins** (2026-11-20, W21): each login's origin and times, which W6 left as plain columns of the
+  logins' database, are sealed with the database now, under a key of their own from the vault's.
 
 <!-- /amendments -->
