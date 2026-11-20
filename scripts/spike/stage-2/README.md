@@ -85,7 +85,9 @@ starts Gecko with the profile's keys locked, or makes a profile in the clear.
   browser, every process of the session, and keep the page's local storage;
   a lock in a session, with what the close wrote, then a start with the vault locked, unlocked; one where the unlock
   is refused, which must stop the app and leave the profile as it was; and the vault left open. A lock the browser
-  does not close at, or local storage it lost, fails the run at its end. It types the passphrase on file into
+  does not close at, or local storage it lost, fails the run at its end. It turns the spike's private setting off
+  first, so that its pages' stores are kept, and on at its end. `WATCHED` names the app's directories it compares,
+  `files/mozilla cache` by default; stage 3's run adds application-services' databases with `files databases cache`. It types the passphrase on file into
   encri's screen, never printing it, so it is for a test vault whose passphrase is on file; the G6's would not open.
 - `check-obfsvfs <serial>`: the third round (W16), in two parts (its header). Gecko's SQLite, plain and through
   obfsvfs, timed by the gate's `--ei sqlbench <rows> --ei rounds <n>`; then IndexedDB, as a site uses it, on a page
