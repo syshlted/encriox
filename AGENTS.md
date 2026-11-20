@@ -14,7 +14,8 @@ built yet.** The stage 1 spike, a throwaway, is built and measured on three phon
 the stage 2 spike's first round ran on its build, with prefs alone (`scripts/spike/stage-2/`, W12), and stage 2 now
 builds its own Gecko, on which all three of Lockstore's switches work (W13) and the profile's keys are kept under a
 secret from the vault's key (W14), which does not start without the vault (W15), and whose encryption of SQLite was
-measured (W16). encriox's first usable build is planned and accepted (W17; `ROADMAP.md`, item 6).
+measured (W16), and which closes at a lock, letting Gecko write what it holds first (W20). encriox's first usable
+build is planned and accepted (W17; `ROADMAP.md`, item 6).
 
 ## Relationship to the other repositories
 
