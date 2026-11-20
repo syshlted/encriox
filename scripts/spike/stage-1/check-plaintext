@@ -107,8 +107,8 @@ for store in $stores; do
     echo "  $store: ${line:-no report}"
 done
 echo "== files holding the marker, as ASCII or UTF-16"
-mkdir "$work/data" "$work/external"
-$adb exec-out run-as $package tar -cf - . 2>/dev/null | tar -xf - -C "$work/data" 2>/dev/null || true
+mkdir "$work/external"
+"$here/copy-data" "$serial" "$work/data"
 $adb pull /sdcard/Android/data/$package "$work/external" >/dev/null 2>&1 || true
 python3 -I - "$work" "$marker" <<'SEARCH'
 import os, sys

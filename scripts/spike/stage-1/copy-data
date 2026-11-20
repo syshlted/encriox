@@ -1,0 +1,37 @@
+#!/bin/sh
+# Copies the spike's data directory off a phone, or the paths given in it, through `run-as` and the phone's own tar.
+# A copy that did not finish fails, loudly: a check that searches a copy for its marker would read one cut short as
+# one with no marker in it. Through `adb shell -T`, not `exec-out`, whose one stream carried tar's errors into the
+# archive and lost tar's exit status: on the S24, WorkManager started the app during a copy, a file went from under
+# tar, and the copy ended before `shared_prefs/` with nothing said (2026-11-20). A file that goes while tar runs, as
+# an app still running deletes its own, is named and left out; anything else tar or adb says fails the copy.
+#
+#   scripts/spike/stage-1/copy-data <adb serial> <dir> [<path in the app's data>...]
+#
+# The paths are the phone's shell's, so `files/places.sqlite*` is expanded there; one that matches nothing is named
+# as gone, as a file that went is.
+set -eu
+
+serial=${1:?usage: copy-data <adb serial> <dir> [<path>...]}
+dir=${2:?usage: copy-data <adb serial> <dir> [<path>...]}
+shift 2
+package=com.systemhalted.encri.browser.spike
+adb="${ADB:-$HOME/Android/Sdk/platform-tools/adb} -s $serial"
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+
+status=0
+$adb shell -T "run-as $package sh -c 'tar -cf - ${*:-.}'" > "$work/data.tar" 2> "$work/errors" || status=$?
+gone=$(sed -n 's/^tar: \(.*\): No such file or directory$/\1/p' "$work/errors")
+other=$(grep -v ': No such file or directory$' "$work/errors" || true)
+# tar says 1 where a file went and it carried on; anything else, or 1 for any other reason, is a copy cut short.
+if [ "$status" -ne 0 ] && { [ "$status" -ne 1 ] || [ -z "$gone" ] || [ -n "$other" ]; }; then
+    echo "copy-data: the copy off $serial did not finish, status $status:" >&2
+    sed 's/^/  /' "$work/errors" >&2
+    exit 1
+fi
+mkdir -p "$dir"
+tar -xf "$work/data.tar" -C "$dir"
+for path in $gone; do
+    echo "copy-data: gone as it was copied, or never there: $path" >&2
+done

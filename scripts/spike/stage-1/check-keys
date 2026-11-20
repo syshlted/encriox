@@ -12,6 +12,8 @@
 # end. The key itself stays in the vault, as `encriox.key` in the folder the spike was allowed.
 set -eu
 
+here=$(cd "$(dirname "$0")" && pwd)
+
 serial=${1:?usage: check-keys <adb serial>}
 package=com.systemhalted.encri.browser.spike
 adb="${ADB:-$HOME/Android/Sdk/platform-tools/adb} -s $serial"
@@ -55,8 +57,9 @@ said 'card kept' | grep -q . || { echo "check-keys: the card was not saved" >&2;
 $adb shell am force-stop $package
 
 echo "== files holding a marker or a key in the clear, as ASCII or UTF-16"
-mkdir "$work/data"
-$adb exec-out run-as $package tar -cf - . 2>/dev/null | tar -xf - -C "$work/data" 2>/dev/null || true
+# Stopped again, as WorkManager may have started it since.
+$adb shell am force-stop $package
+"$here/copy-data" "$serial" "$work/data"
 python3 -I - "$work/data" "$marker" "$number" <<'SEARCH'
 import os, sys
 top, marker, number = sys.argv[1:]
@@ -82,16 +85,24 @@ for prefs in "$work"/data/shared_prefs/core_prefs*.xml "$work/data/shared_prefs/
 done
 
 echo "== a new process, asking for the logins before the vault is open"
+# Stopped just before: WorkManager starts the app by itself, and a process it started may hold the key already.
+$adb shell am force-stop $package
 gate "kept logins=" 120 --ez early true --ez kept true
 for _ in $(seq 30); do
     log | grep -qE "early (logins|failed)" && break
     sleep 1
 done
 log | grep -E " key |early |kept " | sed 's/^.*encriox-spike: /  /'
-# Asked first, the logins must arrive after the key, and hold the login just saved.
-key_at=$(log | grep -nE " key (made|read|held)$" | head -1 | cut -d: -f1)
+# Asked first, the logins must arrive after their key, read in this process, and hold the login just saved: the
+# vault's key, or with stage 3's sealed databases the logins' database's, which the app's own start asks for before
+# the gate does, so that the gate then says its key is held. A process that held the key before the log began, as
+# one WorkManager started would, read neither in it, and asked nothing before it.
+key_at=$(log | grep -nE " key (made|read)$|database key given: logins " | head -1 | cut -d: -f1)
+[ -n "$key_at" ] ||
+    { echo "check-keys: no key was read in this process: it held one already, so nothing was asked before it" >&2
+      exit 1; }
 early_at=$(log | grep -nE "early logins=[1-9]" | head -1 | cut -d: -f1)
-[ -n "$key_at" ] && [ -n "$early_at" ] && [ "$early_at" -gt "$key_at" ] ||
+[ -n "$early_at" ] && [ "$early_at" -gt "$key_at" ] ||
     { echo "check-keys: the logins did not wait for the vault's key" >&2; exit 1; }
 said "kept login username=$marker password=$marker\$" | grep -q . ||
     { echo "check-keys: the login did not come back" >&2; exit 1; }

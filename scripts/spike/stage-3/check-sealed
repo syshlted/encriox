@@ -23,6 +23,7 @@ set -eu
 export LC_ALL=C
 
 here=$(cd "$(dirname "$0")" && pwd)
+stage1=$(cd "$here/../stage-1" && pwd)
 stage2=$(cd "$here/../stage-2" && pwd)
 serial=${1:?usage: check-sealed <adb serial> [sealed|unsealed]}
 mode=${2:-sealed}
@@ -63,12 +64,11 @@ gate() {
     fail "the gate did not log /$want/ within ${wait}s"
 }
 
-# The three databases' files, each with its log, journal and log index, copied off the phone into $1.
+# The three databases' files, each with its log, journal and log index, copied off the phone into $1. A file that
+# is not there is no news: a database may have no journal, nor yet a log.
 pull() {
-    mkdir -p "$1"
-    # adb joins its arguments into one line for the phone's shell, which then reads the quotes.
-    $adb exec-out "run-as $package sh -c 'tar -cf - files/places.sqlite* databases/logins2.sqlite* \
-databases/autofill.sqlite* 2>/dev/null'" | tar -xf - -C "$1" 2>/dev/null || true
+    "$stage1/copy-data" "$serial" "$1" 'files/places.sqlite*' 'databases/logins2.sqlite*' \
+        'databases/autofill.sqlite*' 2> "$work/pull-errors" || { cat "$work/pull-errors" >&2; exit 1; }
 }
 
 marker="ENCRIOX$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')"
@@ -91,8 +91,7 @@ applog | grep -q "seal read visits=1 bookmarks=1 logins=1 cards=1$" || wrong "th
 $adb shell am force-stop $package
 
 echo "== 2. where the marker is, and what each database's header says"
-mkdir "$work/data"
-$adb exec-out run-as $package tar -cf - . 2>/dev/null | tar -xf - -C "$work/data" 2>/dev/null || true
+"$stage1/copy-data" "$serial" "$work/data"
 python3 -I - "$work/data" "$marker" > "$work/found" <<'SEARCH'
 import os, sys
 
