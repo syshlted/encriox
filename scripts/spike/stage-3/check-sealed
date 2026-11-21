@@ -14,7 +14,9 @@
 #    read: their page size and reserved bytes say whether they are sealed.
 # 3. A new process reads the four back.
 # 4. Sealed only: each database opened without its key, as a component given none would. Each open must be refused,
-#    and no file of the three databases changed.
+#    and no database or log of the three changed. Fenix warms its stores up at every start, each opening its database
+#    under its own key, which rebuilds a log's index, `-shm`, after the app was stopped; a refused open never reaches
+#    it, so an index that changed is named, and is not counted.
 # 5. The four deleted. The control run then deletes the three databases it kept in the clear, and turns sealing on.
 #
 # The vault must be open to the spike. A step that does not hold is recorded and the run goes on; it then fails,
@@ -161,11 +163,15 @@ if [ "$mode" = sealed ]; then
         applog | grep "seal plain" | grep -qE "$db=failed: " || wrong "$db opened without its key"
     done
     pull "$work/after"
-    if diff -r "$work/before" "$work/after" >/dev/null; then
-        echo "  no file of the three databases changed: $(cd "$work/after" && find . -type f | sort | tr '\n' ' ')"
+    changed=$(diff -rq "$work/before" "$work/after" || true)
+    data=$(printf '%s\n' "$changed" | grep -v -- '-shm\( \|$\)' | grep . || true)
+    if [ -z "$data" ]; then
+        echo "  no database or log of the three changed:" \
+            "$(cd "$work/after" && find . -type f ! -name '*-shm' | sort | tr '\n' ' ')"
     else
-        wrong "an open without the key changed a file: $(diff -rq "$work/before" "$work/after" | tr '\n' ' ')"
+        wrong "an open without the key changed a database or a log: $(printf '%s' "$data" | tr '\n' ' ')"
     fi
+    printf '%s\n' "$changed" | grep -- '-shm\( \|$\)' | sed 's/^/  a log index the stores\x27 own opens rebuilt: /' || true
 fi
 
 echo "== 5. the four deleted"
