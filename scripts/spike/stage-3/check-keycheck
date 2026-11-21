@@ -1,0 +1,271 @@
+#!/bin/sh
+# Checks the key check in stage 3's sealed pages (W22's amendment; patch 0008): each page carries a check of its
+# database's key in its last 4 reserved bytes, so that a wrong key is told from a damaged file. On a phone, through
+# the build's own NSS and places:
+#
+#   scripts/spike/stage-3/check-keycheck <adb serial>
+#
+# 1. A fresh start, as check-sealed's: the visit, the bookmark, the login and the card written into the stores' three
+#    databases, sealed, and read back.
+# 2. Every page of the three databases and of their logs carries one check, not zero, and each database its own.
+# 3. Each database opened under another's key: refused as not its own, never as damage, and no database or log of
+#    the three changed. Fenix warms its four stores up at every start, each opening its database under its own key, and
+#    an open after the app was stopped rebuilds the log's index, `-shm`, from the log; a refused open never reaches it,
+#    so an index that changed is named, and is not counted.
+# 4. The gate's own sealed places database: visits closed into the database, then more left in its log, and the app
+#    stopped, as a crash stops it. It is read back as it is; then, put back each time with one thing changed, with its
+#    log's last frame torn, which must lose that commit alone; with its log's first frame torn, which must lose the log
+#    and open; without its log, which must read the database alone; and with its page 1, then every other page, damaged
+#    without its log, each of which must fail as damage, never as the wrong key, and leave the database as it was. A
+#    frame is torn as a write cut short at a log's end leaves it: its page's second half zeros, its check among them.
+# 5. The four and the gate's database deleted.
+#
+# The vault must be open to the spike. A step that does not hold is recorded and the run goes on; it then fails,
+# naming each.
+set -eu
+export LC_ALL=C
+
+here=$(cd "$(dirname "$0")" && pwd)
+stage1=$(cd "$here/../stage-1" && pwd)
+stage2=$(cd "$here/../stage-2" && pwd)
+serial=${1:?usage: check-keycheck <adb serial>}
+package=com.systemhalted.encri.browser.spike
+adb="${ADB:-$HOME/Android/Sdk/platform-tools/adb} -s $serial"
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+db=cache/encriox-keycheck.sqlite
+visits=200
+more=5
+# SQLite's messages for obfsvfs's two answers: SQLITE_AUTH for a key not the database's own, and SQLITE_IOERR_DATA
+# for a page that does not open under its own.
+wrong_key="authorization denied"
+damage="disk I/O error"
+
+fail() {
+    echo "check-keycheck: $*" >&2
+    exit 1
+}
+
+wrongs=
+wrong() {
+    echo "  WRONG: $*"
+    wrongs="$wrongs
+  $*"
+}
+
+applog() { $adb logcat -d -s encriox-spike:I | sed 's/^.*encriox-spike: //'; }
+said() { applog | grep -E "$1" | sed 's/^/    /' || true; }
+
+# Starts the gate with the extras after the first two arguments, and waits up to $2 seconds for a line matching $1.
+gate() {
+    want=$1
+    wait=$2
+    shift 2
+    $adb logcat -c
+    # Not `am start -W`: the gate finishes without drawing, and -W would wait for it forever.
+    $adb shell am start -n $package/org.mozilla.fenix.encri.EncriGateActivity "$@" >/dev/null
+    for _ in $(seq "$wait"); do
+        applog | grep -qE "$want" && return 0
+        sleep 1
+    done
+    applog >&2
+    fail "the gate did not log /$want/ within ${wait}s"
+}
+
+# The three databases' files, each with its log, journal and log index, copied off the phone into $1.
+pull() {
+    "$stage1/copy-data" "$serial" "$1" 'files/places.sqlite*' 'databases/logins2.sqlite*' \
+        'databases/autofill.sqlite*' 2> "$work/pull-errors" || { cat "$work/pull-errors" >&2; exit 1; }
+}
+
+# Puts the files in $1, named as on the phone, in place of the gate's database, its log and its log's index, as a
+# new process finds them after a crash; each is read back whole, or the run fails.
+put() {
+    $adb shell "run-as $package sh -c 'rm -f $db $db-wal $db-shm $db-journal'"
+    for file in "$1"/*; do
+        name=$(basename "$file")
+        $adb push "$file" "/data/local/tmp/$package-keycheck" >/dev/null
+        $adb shell chmod 644 "/data/local/tmp/$package-keycheck"
+        $adb shell "run-as $package sh -c 'cat /data/local/tmp/$package-keycheck > cache/$name'"
+        $adb shell rm -f "/data/local/tmp/$package-keycheck"
+        [ "$($adb shell "run-as $package md5sum cache/$name" | cut -d' ' -f1)" = "$(md5sum < "$file" | cut -d' ' -f1)" ] ||
+            fail "cache/$name did not reach the phone whole"
+    done
+}
+
+marker="ENCRIOX$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')"
+echo "== $serial, marker $marker"
+
+echo "== 1. a fresh start: the visit, the bookmark, the login and the card written sealed, and read back"
+"$stage2/fresh-profile" "$serial" >/dev/null
+$adb shell "run-as $package sh -c 'rm -f files/places.sqlite* databases/logins2.sqlite* databases/autofill.sqlite*'"
+$adb push "$stage2/geckoview-config.yaml" /data/local/tmp/$package-geckoview-config.yaml >/dev/null
+gate "sealing unsealed=" 30 --es sealing on
+$adb shell am force-stop $package
+gate "seal wrote" 120 --es seal write --es marker "$marker"
+said "gate open|key (made|read|held)|seal wrote"
+applog | grep -q "gate open" || fail "the vault is not open to the spike"
+applog | grep -E "seal wrote" | grep -q "failed" && wrong "the gate could not write all four"
+gate "seal read" 60 --es seal read --es marker "$marker"
+said "seal read"
+applog | grep -q "seal read visits=1 bookmarks=1 logins=1 cards=1$" || wrong "the session did not read all four back"
+$adb shell am force-stop $package
+
+# Every page's check in each database and its log: `CHECKS <file> <pages> <checks>`, the checks as hex, each once.
+checks() {
+    python3 -I - "$@" <<'CHECKS'
+import os, sys
+
+PAGE = 8192
+for path in sys.argv[1:]:
+    for suffix in ("", "-wal"):
+        full = path + suffix
+        if not os.path.exists(full):
+            continue
+        with open(full, "rb") as f:
+            body = f.read()
+        if suffix == "":
+            pages = [body[i:i + PAGE] for i in range(0, len(body) - PAGE + 1, PAGE)]
+        else:
+            if len(body) < 32 or int.from_bytes(body[8:12], "big") != PAGE:
+                print(f"CHECKS {os.path.basename(full)} 0 -")
+                continue
+            pages = [body[i + 24:i + 24 + PAGE] for i in range(32, len(body) - 24 - PAGE + 1, 24 + PAGE)]
+        found = sorted({p[-4:].hex() for p in pages})
+        print(f"CHECKS {os.path.basename(full)} {len(pages)} {' '.join(found) or '-'}")
+CHECKS
+}
+
+echo "== 2. the check in every page of the three databases and of their logs"
+pull "$work/stores"
+checks "$work/stores/files/places.sqlite" "$work/stores/databases/logins2.sqlite" \
+    "$work/stores/databases/autofill.sqlite" > "$work/checks"
+sed 's/^CHECKS /  /' "$work/checks"
+for name in places.sqlite logins2.sqlite autofill.sqlite; do
+    # An empty log, as a checkpoint leaves one, has no pages, and says nothing.
+    mine=$(awk -v n="$name" '$2 == n || $2 == n "-wal" { for (i = 4; i <= NF; i++) if ($i != "-") print $i }' \
+        "$work/checks" | sort -u)
+    [ -n "$mine" ] || wrong "$name has no pages"
+    [ "$(printf '%s\n' "$mine" | grep -c .)" -le 1 ] || wrong "$name and its log carry more than one check: $mine"
+    [ "$mine" = 00000000 ] && wrong "$name carries no check"
+    echo "$mine" >> "$work/each"
+done
+[ "$(sort -u "$work/each" | grep -c .)" = 3 ] || wrong "the three databases do not each carry a check of their own"
+
+echo "== 3. each database opened under another's key"
+gate "seal wrong" 120 --es seal wrong
+said "database key|seal wrong"
+$adb shell am force-stop $package
+line=$(applog | grep "seal wrong" | tail -1)
+for store in places logins autofill; do
+    opened=${line#*" $store="}
+    opened=${opened%%" logins="*}
+    opened=${opened%%" autofill="*}
+    case $opened in
+        *"$wrong_key"*) ;;
+        *"$damage"*) wrong "$store under another's key was taken for damage: $opened" ;;
+        *) wrong "$store under another's key was not refused as not its own: $opened" ;;
+    esac
+done
+pull "$work/after-wrong"
+changed=$(diff -rq "$work/stores" "$work/after-wrong" || true)
+data=$(printf '%s\n' "$changed" | grep -v -- '-shm\( \|$\)' | grep . || true)
+if [ -z "$data" ]; then
+    echo "  no database or log of the three changed:" \
+        "$(cd "$work/after-wrong" && find . -type f ! -name '*-shm' | sort | tr '\n' ' ')"
+else
+    wrong "an open under another's key changed a database or a log: $(printf '%s' "$data" | tr '\n' ' ')"
+fi
+printf '%s\n' "$changed" | grep -- '-shm\( \|$\)' | sed 's/^/  a log index the stores\x27 own opens rebuilt: /' || true
+
+echo "== 4. the gate's own database: a log torn, and pages damaged"
+gate "keycheck made" 180 --es keycheck make --ei visits $visits --ei more $more
+said "key (made|read|held)|keycheck made"
+applog | grep -q "keycheck made visits=$visits more=$more$" || fail "the gate did not make its database"
+$adb shell am force-stop $package
+"$stage1/copy-data" "$serial" "$work/made" "$db*"
+checks "$work/made/$db" | sed 's/^CHECKS /  /'
+# The variants, each a directory of the files to put back, and what each must read: a count, or a failure.
+python3 -I - "$work/made/$db" "$work/variants" $visits $more <<'VARIANTS'
+import os, sys
+
+PAGE, FRAME = 8192, 24 + 8192
+db, out, visits, more = sys.argv[1], sys.argv[2], int(sys.argv[3]), int(sys.argv[4])
+name = os.path.basename(db)
+with open(db, "rb") as f:
+    database = f.read()
+with open(db + "-wal", "rb") as f:
+    log = f.read()
+# The log's frames in its current generation: those from the first whose salts are the header's.
+salts = log[16:24]
+frames = []
+for at in range(32, len(log) - FRAME + 1, FRAME):
+    if log[at + 8:at + 16] != salts:
+        break
+    frames.append(at)
+commits = [at for at in frames if int.from_bytes(log[at + 4:at + 8], "big") != 0]
+print(f"  {name}: {len(database) // PAGE} pages; its log {len(frames)} frames, {len(commits)} commits")
+if not commits or frames[-1] != commits[-1]:
+    sys.exit("the log does not end at a commit")
+
+def torn(at):
+    changed = bytearray(log)
+    changed[at + 24 + PAGE // 2:at + 24 + PAGE] = bytes(PAGE // 2)
+    return bytes(changed)
+
+def damaged(pages):
+    changed = bytearray(database)
+    for page in pages:
+        for i in range(page * PAGE + 1000, page * PAGE + 1016):
+            changed[i] ^= 0xFF
+    return bytes(changed)
+
+variants = [
+    ("as-it-is", database, log, str(visits + more)),
+    ("last-frame-torn", database, torn(frames[-1]), str(visits + more - 1)),
+    # The log's generation ends at its first frame, and what is read is the database's alone: every visit but those the
+    # generation committed, one a commit, since a log starts again only once it is all in the database.
+    ("first-frame-torn", database, torn(frames[0]), str(visits + more - len(commits))),
+    ("without-its-log", database, None, str(visits + more - len(commits))),
+    ("page-1-damaged", damaged([0]), None, "damage"),
+    ("other-pages-damaged", damaged(range(1, len(database) // PAGE)), None, "damage"),
+]
+for label, body, wal, want in variants:
+    os.makedirs(os.path.join(out, label))
+    with open(os.path.join(out, label, name), "wb") as f:
+        f.write(body)
+    if wal is not None:
+        with open(os.path.join(out, label, name + "-wal"), "wb") as f:
+            f.write(wal)
+    with open(os.path.join(out, label + ".want"), "w") as f:
+        f.write(want)
+VARIANTS
+for variant in as-it-is last-frame-torn first-frame-torn without-its-log page-1-damaged other-pages-damaged; do
+    expect=$(cat "$work/variants/$variant.want")
+    put "$work/variants/$variant"
+    gate "keycheck read" 120 --es keycheck read
+    $adb shell am force-stop $package
+    got=$(applog | sed -n 's/^keycheck read visits=//p')
+    echo "  $variant: $got"
+    if [ "$expect" = damage ]; then
+        case $got in
+            *"$damage"*) ;;
+            *"$wrong_key"*) wrong "$variant was taken for the wrong key: $got" ;;
+            *) wrong "$variant did not fail as damage: $got" ;;
+        esac
+        [ "$($adb shell "run-as $package md5sum $db" | cut -d' ' -f1)" = \
+            "$(md5sum < "$work/variants/$variant/encriox-keycheck.sqlite" | cut -d' ' -f1)" ] ||
+            wrong "$variant: the database was changed"
+    elif [ "$got" != "$expect" ]; then
+        wrong "$variant read $got visits, not $expect"
+    fi
+done
+
+echo "== 5. the four and the gate's database deleted"
+$adb shell "run-as $package sh -c 'rm -f $db $db-wal $db-shm $db-journal'"
+gate "seal forgot" 120 --es seal forget --es marker "$marker"
+said "seal forgot"
+$adb shell am force-stop $package
+
+[ -z "$wrongs" ] || fail "what was wrong:$wrongs"
+echo "check-keycheck: every step held"

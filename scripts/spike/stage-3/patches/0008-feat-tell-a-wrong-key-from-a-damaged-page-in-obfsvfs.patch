@@ -1,0 +1,518 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jeremy Melanson <1080872+zish@users.noreply.github.com>
+Date: Sat, 21 Nov 2026 00:38:52 +0000
+Subject: [PATCH] feat: tell a wrong key from a damaged page in obfsvfs
+
+Each sealed page now carries, in the 4 reserved bytes after its nonce,
+a check of its database's key: an HMAC-SHA-256 of a label of its own
+under the key, from NSS, with its last bit set so that no check is
+zero, as those bytes are in a page sealed before it. It tells nothing
+of the key, and tells what a tag cannot: why a page does not open.
+
+A database's open reads its pages and its log's as they are on disk,
+before SQLite reads any. Page 1 opening under the key, or any page
+carrying its check, shows the key to be the database's own. Where none
+does and some page carries another check, the key is not the
+database's: the open is refused, SQLITE_AUTH, before anything of it is
+opened or made, and nothing takes that for damage. Under its own key a
+page that does not open stays an I/O error, SQLITE_IOERR_DATA.
+
+Fixed with it: a frame of the log that did not open was passed to
+SQLite as torn only after another frame had opened, so a log whose
+first frame a crash tore, the first commit after a checkpoint, made
+the whole database an I/O error. Under a key shown to be its own, a
+torn frame now ends the log there, as SQLite in the clear does. A
+database sealed before the checks opens as it did.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+---
+ .../components/support/sql/src/obfsvfs.rs     | 347 ++++++++++++++++--
+ .../support/sql/src/obfsvfs_cipher.rs         |  10 +-
+ 2 files changed, 317 insertions(+), 40 deletions(-)
+
+diff --git a/third_party/application-services/components/support/sql/src/obfsvfs.rs b/third_party/application-services/components/support/sql/src/obfsvfs.rs
+index 16e641e7d8..f54c0ccc71 100644
+--- a/third_party/application-services/components/support/sql/src/obfsvfs.rs
++++ b/third_party/application-services/components/support/sql/src/obfsvfs.rs
+@@ -13,11 +13,16 @@
+ //! - A database is opened sealed by a `file:` URI that names this VFS and a key [`sealed_name`] was given, by a
+ //!   handle: the key itself is never in a name, which SQLite and rusqlite put into the message of an open that
+ //!   fails. Its write-ahead log and its journal are sealed under the same key.
+-//! - Each page is [`PAGE_SIZE`] bytes, of which the last 32 are reserved: the tag, then the nonce. Page 1's first 32
+-//!   bytes, the start of SQLite's header, stay in the clear, so that SQLite can read the page size and the reserved
+-//!   bytes before it reads any page. A `PRAGMA page_size` is ignored.
+-//! - A page that does not open under the key is an I/O error, `SQLITE_IOERR_DATA`, never a corrupt database, which
+-//!   application-services' components delete and make again.
++//! - Each page is [`PAGE_SIZE`] bytes, of which the last 32 are reserved: the tag, the nonce, then the key's check, an
++//!   HMAC of a label of its own under the key, which tells nothing of the key. Page 1's first 32 bytes, the start of
++//!   SQLite's header, stay in the clear, so that SQLite can read the page size and the reserved bytes before it reads
++//!   any page. A `PRAGMA page_size` is ignored.
++//! - The check tells a wrong key from a damaged file, which no tag says. A database whose page 1 does not open under
++//!   the key it is opened with, and none of whose pages, nor its log's, carries that key's check, while some carry
++//!   another's, is under another key: its open is refused, `SQLITE_AUTH`, before anything of it is opened or made.
++//! - Under its own key, a page that does not open is damage: an I/O error, `SQLITE_IOERR_DATA`, never a corrupt
++//!   database, which application-services' components delete and make again; and a frame of the log that does not
++//!   open is one a crash tore, or one left from an earlier log, which SQLite's checksum refuses, ending the log there.
+ //! - Registered as SQLite's default, it refuses to open a sealed database without a key, and one in the clear with
+ //!   a key: either would be read as corrupt, and deleted.
+ //! - A checkpoint copies sealed pages from the log into the database as they are.
+@@ -26,11 +31,11 @@
+ //! and only the database, its log and its journal are sealed, so temporary files must stay in memory, as they do on
+ //! Android, where SQLite is built with `SQLITE_TEMP_STORE=3`.
+ 
+-use crate::obfsvfs_cipher::{Cipher, NONCE_BYTES, TAG_BYTES};
++use crate::obfsvfs_cipher::{self, Cipher, NONCE_BYTES, TAG_BYTES};
+ use crate::warn;
+ use rusqlite::ffi;
+ use std::ffi::{c_char, c_int, c_void, CStr};
+-use std::io::Read;
++use std::io::{Read, Seek, SeekFrom};
+ use std::path::{Path, PathBuf};
+ use std::collections::HashMap;
+ use std::sync::atomic::{AtomicU64, Ordering};
+@@ -54,10 +59,15 @@ const MAGIC: &[u8] = b"SQLite format 3\0";
+ // are sealed on disk, so they are served from page 1 opened.
+ const CHANGE_COUNTER_OFFSET: i64 = 24;
+ const CHANGE_COUNTER_BYTES: c_int = 16;
+-// A page's reserved bytes: the tag, which the cipher writes after the sealed payload, then the nonce.
++// A page's reserved bytes: the tag, which the cipher writes after the sealed payload, the nonce, then the key's check.
+ const PAYLOAD_END: usize = PAGE_SIZE - RESERVED_BYTES;
+ const NONCE_START: usize = PAYLOAD_END + TAG_BYTES;
+-const _: () = assert!(TAG_BYTES + NONCE_BYTES <= RESERVED_BYTES);
++const CHECK_START: usize = NONCE_START + NONCE_BYTES;
++const CHECK_BYTES: usize = 4;
++const _: () = assert!(TAG_BYTES + NONCE_BYTES + CHECK_BYTES == RESERVED_BYTES);
++/// What a key's check is a MAC of, under the key, which seals nothing else with it.
++const CHECK_LABEL: &[u8] = b"appservices-obfsvfs key check";
++const WAL_MAGIC: u32 = 0x377f0682;
+ 
+ /// Page 1's header for a file that is still empty, as Gecko's has it: sealed pages, the reserved bytes, WAL mode.
+ /// SQLite takes a new database's page size and reserved bytes from it, and they cannot be changed after.
+@@ -176,10 +186,23 @@ struct ObfsFile {
+     /// The database's log or journal, or the log's or journal's database, while both are open.
+     partner: *mut ObfsFile,
+     key: [u8; KEY_BYTES],
++    /// The key's check, which every page sealed under it carries.
++    check: [u8; CHECK_BYTES],
+     /// In a checkpoint, pages go from the log into the database as they are, sealed.
+     in_checkpoint: bool,
+-    /// Whether a page of this file has opened under its key, which tells a torn frame of the log from a wrong key.
+-    opened_one: bool,
++    /// Whether the key is shown to be the file's own: its database's pages showed it as the database was opened, or a
++    /// page of this file has opened under it. A frame of the log that does not open is then one a crash tore.
++    key_is_its: bool,
++}
++
++/// A key's check: the first bytes of an HMAC-SHA-256 of [`CHECK_LABEL`] under it, with the last bit set, so that no
++/// key's check is zero, as the bytes are in a page sealed before the checks, and in a frame of a log never written.
++fn check_of(key: &[u8; KEY_BYTES]) -> Option<[u8; CHECK_BYTES]> {
++    let mac = obfsvfs_cipher::mac(key, CHECK_LABEL)?;
++    let mut check = [0u8; CHECK_BYTES];
++    check.copy_from_slice(&mac[..CHECK_BYTES]);
++    check[CHECK_BYTES - 1] |= 1;
++    Some(check)
+ }
+ 
+ static IO_METHODS: ffi::sqlite3_io_methods = ffi::sqlite3_io_methods {
+@@ -257,8 +280,8 @@ unsafe fn seal_page(p: &mut ObfsFile, page: &[u8]) -> Option<*const u8> {
+     {
+         return None;
+     }
+-    out[NONCE_START..NONCE_START + NONCE_BYTES].copy_from_slice(&nonce);
+-    out[NONCE_START + NONCE_BYTES..].fill(0);
++    out[NONCE_START..CHECK_START].copy_from_slice(&nonce);
++    out[CHECK_START..].copy_from_slice(&p.check);
+     Some(out.as_ptr())
+ }
+ 
+@@ -322,10 +345,10 @@ unsafe extern "C" fn obfs_read(
+         if (amount == PAGE || amount == PAGE + WAL_FRAME_HEADER_BYTES) && !p.in_checkpoint {
+             let page = slice::from_raw_parts_mut((buf as *mut u8).add((amount - PAGE) as usize), PAGE_SIZE);
+             if open_page(p, page) {
+-                p.opened_one = true;
+-            } else if p.kind == Kind::Log && amount == PAGE + WAL_FRAME_HEADER_BYTES && p.opened_one {
+-                // A frame of the log that does not open under a key that opened one before it: one a crash tore, or
+-                // one left from an earlier log. SQLite's checksum refuses it as it is, and the log ends there.
++                p.key_is_its = true;
++            } else if p.kind == Kind::Log && amount == PAGE + WAL_FRAME_HEADER_BYTES && p.key_is_its {
++                // A frame of the log that does not open under a key shown to be its own: one a crash tore, or one
++                // left from an earlier log. SQLite's checksum refuses it as it is, and the log ends there.
+             } else {
+                 warn!("obfsvfs: a page does not open under its database's key");
+                 return ffi::SQLITE_IOERR_DATA;
+@@ -500,6 +523,82 @@ fn on_disk(path: &CStr) -> OnDisk {
+     }
+ }
+ 
++/// Whose key a database's pages on disk are sealed under, as its open finds them, before SQLite reads any.
++#[derive(Clone, Copy, PartialEq, Eq, Debug)]
++enum Verdict {
++    /// Page 1 opens under the key, or a page of the database or of its log carries the key's check.
++    Its,
++    /// None does, and some page carries a check of another key: the wrong key.
++    NotIts,
++    /// No page carries a check, as none did before the checks: a new database, or one sealed before them.
++    Unknown,
++}
++
++/// Reads the database at `path` and its log as they are on disk, for `p`'s key: page 1, then each page's check, the
++/// database's and then the log's, until one is the key's. Under its own key that is page 1 alone; a page 1 damaged,
++/// even through its check, is told by the next.
++unsafe fn judge(p: &mut ObfsFile, path: &CStr) -> Verdict {
++    let Ok(path) = path.to_str() else {
++        return Verdict::Unknown;
++    };
++    let mut other = false;
++    if let Ok(mut file) = std::fs::File::open(path) {
++        let mut first = [0u8; PAGE_SIZE];
++        if file.read_exact(&mut first).is_ok() && first.starts_with(MAGIC) {
++            let opened = open_page(p, &mut first);
++            first.fill(0);
++            if opened {
++                return Verdict::Its;
++            }
++        }
++        match checks(&mut file, 0, PAGE_SIZE as u64, &p.check) {
++            Some(Verdict::Its) => return Verdict::Its,
++            Some(_) => other = true,
++            None => {}
++        }
++    }
++    // The log's frames, which carry the checks where the database's pages do not: one sealed before the checks, and
++    // written since; or one shorter than a page.
++    if let Ok(mut log) = std::fs::File::open(format!("{path}-wal")) {
++        let mut header = [0u8; WAL_HEADER_BYTES as usize];
++        if log.read_exact(&mut header).is_ok()
++            && u32::from_be_bytes([header[0], header[1], header[2], header[3]]) & !1 == WAL_MAGIC
++            && u32::from_be_bytes([header[8], header[9], header[10], header[11]]) as usize == PAGE_SIZE
++        {
++            let first = (WAL_HEADER_BYTES + WAL_FRAME_HEADER_BYTES) as u64;
++            let frame = (WAL_FRAME_HEADER_BYTES + PAGE) as u64;
++            match checks(&mut log, first, frame, &p.check) {
++                Some(Verdict::Its) => return Verdict::Its,
++                Some(_) => other = true,
++                None => {}
++            }
++        }
++    }
++    if other {
++        Verdict::NotIts
++    } else {
++        Verdict::Unknown
++    }
++}
++
++/// The checks of the pages in `file`, the first starting at `first` and each `stride` after the last: Its at the
++/// first that is `check`, NotIts if none is and another is not zero, None if every one is zero, or there are none.
++fn checks(file: &mut std::fs::File, first: u64, stride: u64, check: &[u8; CHECK_BYTES]) -> Option<Verdict> {
++    let mut found = None;
++    let mut at = first + CHECK_START as u64;
++    let mut read = [0u8; CHECK_BYTES];
++    while file.seek(SeekFrom::Start(at)).is_ok() && file.read_exact(&mut read).is_ok() {
++        if read == *check {
++            return Some(Verdict::Its);
++        }
++        if read != [0; CHECK_BYTES] {
++            found = Some(Verdict::NotIts);
++        }
++        at += stride;
++    }
++    found
++}
++
+ /// The key a file's name hands over, which a log's and a journal's name carry too: None if it names none, Err if it
+ /// names one that [`sealed_name`] was not given.
+ unsafe fn key_in(name: *const c_char) -> Option<Result<[u8; KEY_BYTES], ()>> {
+@@ -569,7 +668,7 @@ unsafe extern "C" fn obfs_open(
+     let Some(mut key) = key else {
+         return below_vfs_call!(vfs, xOpen, ffi::SQLITE_CANTOPEN, name, file, flags, out_flags);
+     };
+-    let Some(cipher) = Cipher::new(&key) else {
++    let (Some(cipher), Some(check)) = (Cipher::new(&key), check_of(&key)) else {
+         key.fill(0);
+         warn!("obfsvfs: the cipher could not take the key");
+         return ffi::SQLITE_CANTOPEN;
+@@ -584,18 +683,26 @@ unsafe extern "C" fn obfs_open(
+             scratch: Box::into_raw(Box::new([0u8; PAGE_SIZE])),
+             partner: ptr::null_mut(),
+             key,
++            check,
+             in_checkpoint: false,
+-            opened_one: false,
++            // A log or a journal opens once its database has.
++            key_is_its: is_ours(database) && (*(database as *mut ObfsFile)).key_is_its,
+         },
+     );
+     key.fill(0);
++    if kind == Kind::Database {
++        match judge(&mut *p, CStr::from_ptr(name)) {
++            Verdict::NotIts => {
++                warn!("obfsvfs: a sealed database opened under a key that is not its own is refused");
++                unmake(file);
++                return ffi::SQLITE_AUTH;
++            }
++            verdict => (*p).key_is_its = verdict == Verdict::Its,
++        }
++    }
+     let rc = below_vfs_call!(vfs, xOpen, ffi::SQLITE_CANTOPEN, name, below(file), flags, out_flags);
+     if rc != ffi::SQLITE_OK {
+-        // SQLite does not close a file whose open failed.
+-        drop(Box::from_raw((*p).cipher));
+-        drop(Box::from_raw((*p).scratch));
+-        (*p).key.fill(0);
+-        (*file).pMethods = ptr::null();
++        unmake(file);
+         return rc;
+     }
+     if is_ours(database) {
+@@ -606,6 +713,15 @@ unsafe extern "C" fn obfs_open(
+     ffi::SQLITE_OK
+ }
+ 
++/// Frees what [`obfs_open`] made of a file whose open then failed, which SQLite does not close.
++unsafe fn unmake(file: *mut ffi::sqlite3_file) {
++    let p = file as *mut ObfsFile;
++    drop(Box::from_raw((*p).cipher));
++    drop(Box::from_raw((*p).scratch));
++    (*p).key.fill(0);
++    (*file).pMethods = ptr::null();
++}
++
+ unsafe extern "C" fn obfs_delete(vfs: *mut ffi::sqlite3_vfs, name: *const c_char, sync_dir: c_int) -> c_int {
+     below_vfs_call!(vfs, xDelete, ffi::SQLITE_IOERR_DELETE, name, sync_dir)
+ }
+@@ -849,8 +965,57 @@ mod test {
+         assert_eq!(files(dir.path()), before, "an open without the key changed a file");
+     }
+ 
++    // The database and its log, as a new process finds them, copied into a directory of their own.
++    fn copied(from: &Path, names: &[&str]) -> tempfile::TempDir {
++        let copy = tempfile::tempdir().unwrap();
++        for name in names {
++            std::fs::copy(from.join(name), copy.path().join(name)).unwrap();
++        }
++        copy
++    }
++
++    // Where each frame's page is in a log.
++    fn frame_pages(log: &[u8]) -> Vec<usize> {
++        let frame = WAL_FRAME_HEADER_BYTES as usize + PAGE_SIZE;
++        let first = WAL_HEADER_BYTES as usize + WAL_FRAME_HEADER_BYTES as usize;
++        (first..=log.len().saturating_sub(PAGE_SIZE)).step_by(frame).collect()
++    }
++
++    fn is_wrong_key(e: &rusqlite::Error) -> bool {
++        code(e) == Some((ErrorCode::AuthorizationForStatementDenied, ffi::SQLITE_AUTH))
++    }
++
++    fn is_damage(e: &rusqlite::Error) -> bool {
++        code(e) == Some((ErrorCode::SystemIoFailure, ffi::SQLITE_IOERR_DATA))
++    }
++
++    #[test]
++    fn test_every_page_carries_its_key_s_check() {
++        let dir = tempfile::tempdir().unwrap();
++        let path = dir.path().join("places.sqlite");
++        let conn = open_sealed(&path, &KEY).unwrap();
++        conn.execute_batch("PRAGMA wal_autocheckpoint = 0").unwrap();
++        fill(&conn, 300);
++        conn.execute_batch("PRAGMA wal_checkpoint(PASSIVE)").unwrap();
++        fill(&conn, 300);
++        let check = check_of(&KEY).unwrap();
++        assert_ne!(check, check_of(&OTHER_KEY).unwrap());
++        assert_ne!(check, [0; CHECK_BYTES]);
++        let db = std::fs::read(&path).unwrap();
++        assert!(db.len() > 2 * PAGE_SIZE);
++        for (i, page) in db.chunks(PAGE_SIZE).enumerate() {
++            assert_eq!(page[CHECK_START..], check, "page {}", i + 1);
++        }
++        let log = std::fs::read(dir.path().join("places.sqlite-wal")).unwrap();
++        let frames = frame_pages(&log);
++        assert!(frames.len() > 2);
++        for (i, at) in frames.into_iter().enumerate() {
++            assert_eq!(log[at + CHECK_START..at + PAGE_SIZE], check, "frame {}", i + 1);
++        }
++    }
++
+     #[test]
+-    fn test_under_another_key_a_sealed_database_is_an_io_error_and_left_as_it_was() {
++    fn test_under_another_key_a_sealed_database_is_refused_and_left_as_it_was() {
+         let dir = tempfile::tempdir().unwrap();
+         let path = dir.path().join("places.sqlite");
+         {
+@@ -861,26 +1026,130 @@ mod test {
+             fill(&conn, 300);
+             std::mem::forget(conn);
+         }
+-        // The database and its log as a new process finds them.
+-        let copy = tempfile::tempdir().unwrap();
+-        for name in ["places.sqlite", "places.sqlite-wal"] {
+-            std::fs::copy(dir.path().join(name), copy.path().join(name)).unwrap();
+-        }
++        let copy = copied(dir.path(), &["places.sqlite", "places.sqlite-wal"]);
+         let path = copy.path().join("places.sqlite");
+-        let shm = copy.path().join("places.sqlite-shm");
+         let before = files(copy.path());
+-        let e = open_sealed(&path, &OTHER_KEY)
+-            .and_then(|c| count(&c))
+-            .unwrap_err();
+-        let (code, extended) = code(&e).unwrap();
+-        assert_eq!(code, ErrorCode::SystemIoFailure, "{e}");
+-        assert_eq!(extended, ffi::SQLITE_IOERR_DATA, "{e}");
+-        let after: Vec<_> = files(copy.path()).into_iter().filter(|(p, _)| *p != shm).collect();
+-        assert_eq!(after, before, "an open under another key changed a file");
++        let e = open_sealed(&path, &OTHER_KEY).and_then(|c| count(&c)).unwrap_err();
++        assert!(is_wrong_key(&e), "{e} {:?}", code(&e));
++        // Nothing opened, not even the log's index.
++        assert_eq!(files(copy.path()), before, "an open under another key changed a file, or made one");
+         let conn = open_sealed(&path, &KEY).unwrap();
+         assert_eq!(count(&conn).unwrap(), 600);
+     }
+ 
++    // A database whose pages were sealed before the checks, as the spike's first builds sealed them: closed, with no log.
++    fn sealed_before_the_checks(path: &Path, rows: usize) {
++        {
++            let conn = open_sealed(path, &KEY).unwrap();
++            fill(&conn, rows);
++            conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)").unwrap();
++        }
++        let mut old = std::fs::read(path).unwrap();
++        for page in old.chunks_mut(PAGE_SIZE) {
++            page[CHECK_START..].fill(0);
++        }
++        std::fs::write(path, old).unwrap();
++    }
++
++    #[test]
++    fn test_under_another_key_a_database_sealed_before_the_checks_is_told_by_its_log() {
++        let dir = tempfile::tempdir().unwrap();
++        let path = dir.path().join("places.sqlite");
++        sealed_before_the_checks(&path, 300);
++        let old = std::fs::read(&path).unwrap();
++        {
++            // Written since, into its log alone.
++            let conn = open_sealed(&path, &KEY).unwrap();
++            conn.execute_batch("PRAGMA wal_autocheckpoint = 0").unwrap();
++            fill(&conn, 100);
++            std::mem::forget(conn);
++        }
++        assert_eq!(std::fs::read(&path).unwrap(), old, "a page reached the database");
++        let copy = copied(dir.path(), &["places.sqlite", "places.sqlite-wal"]);
++        let path = copy.path().join("places.sqlite");
++        let before = files(copy.path());
++        let e = open_sealed(&path, &OTHER_KEY).and_then(|c| count(&c)).unwrap_err();
++        assert!(is_wrong_key(&e), "{e} {:?}", code(&e));
++        assert_eq!(files(copy.path()), before);
++        let conn = open_sealed(&path, &KEY).unwrap();
++        assert_eq!(count(&conn).unwrap(), 400);
++    }
++
++    #[test]
++    fn test_a_torn_first_frame_ends_the_log_there() {
++        let dir = tempfile::tempdir().unwrap();
++        let path = dir.path().join("places.sqlite");
++        {
++            let conn = open_sealed(&path, &KEY).unwrap();
++            conn.execute_batch("PRAGMA wal_autocheckpoint = 0").unwrap();
++            fill(&conn, 200);
++            conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)").unwrap();
++            // The first commit after a checkpoint, whose frames start the log again.
++            fill(&conn, 50);
++            std::mem::forget(conn);
++        }
++        let log = std::fs::read(dir.path().join("places.sqlite-wal")).unwrap();
++        let first = frame_pages(&log)[0];
++        // A write cut short leaves the sectors it never reached as they were, here past the log's end, so zeros; and
++        // a page changed in any other way is torn as surely.
++        for (how, tear) in [("zeroed", 0x00u8), ("changed", 0x5a)] {
++            let mut torn = log.clone();
++            for b in &mut torn[first + PAGE_SIZE / 2..first + PAGE_SIZE] {
++                *b = if tear == 0 { 0 } else { *b ^ tear };
++            }
++            let copy = copied(dir.path(), &["places.sqlite"]);
++            std::fs::write(copy.path().join("places.sqlite-wal"), torn).unwrap();
++            let conn = open_sealed(&copy.path().join("places.sqlite"), &KEY)
++                .unwrap_or_else(|e| panic!("{how}: {e} {:?}", code(&e)));
++            let counted = count(&conn).unwrap_or_else(|e| panic!("{how}: {e} {:?}", code(&e)));
++            assert_eq!(counted, 200, "{how}: not what the database held before the torn commit");
++        }
++    }
++
++    #[test]
++    fn test_a_damaged_page_under_its_key_is_damage_never_the_wrong_key() {
++        let dir = tempfile::tempdir().unwrap();
++        let path = dir.path().join("places.sqlite");
++        {
++            let conn = open_sealed(&path, &KEY).unwrap();
++            fill(&conn, 2000);
++            // Closed, with everything in the database and no log.
++            conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)").unwrap();
++        }
++        let whole = std::fs::read(&path).unwrap();
++        let pages = whole.len() / PAGE_SIZE;
++        // A page of the table, and page 1 past its clear start: each changed in its sealed payload alone, and page 1
++        // through its check too, which the next page's check then tells.
++        let cases = [
++            ("a page of the table", pages / 2, 1000..1016),
++            ("page 1", 0, 1000..1016),
++            ("page 1 whole", 0, CLEAR_PREFIX_BYTES..PAGE_SIZE),
++        ];
++        for (what, page, bytes) in cases {
++            let mut damaged = whole.clone();
++            for b in &mut damaged[page * PAGE_SIZE + bytes.start..page * PAGE_SIZE + bytes.end] {
++                *b ^= 0xff;
++            }
++            let copy = tempfile::tempdir().unwrap();
++            let path = copy.path().join("places.sqlite");
++            std::fs::write(&path, &damaged).unwrap();
++            let e = open_sealed(&path, &KEY).and_then(|c| count(&c)).unwrap_err();
++            assert!(is_damage(&e), "{what}: {e} {:?}", code(&e));
++            assert_eq!(std::fs::read(&path).unwrap(), damaged, "{what}: the database was changed");
++        }
++    }
++
++    #[test]
++    fn test_a_database_sealed_before_the_checks_opens_as_it_did() {
++        let dir = tempfile::tempdir().unwrap();
++        let path = dir.path().join("places.sqlite");
++        sealed_before_the_checks(&path, 300);
++        assert_eq!(count(&open_sealed(&path, &KEY).unwrap()).unwrap(), 300);
++        // Under another key nothing tells, and a page that does not open is an I/O error, as before the checks.
++        let e = open_sealed(&path, &OTHER_KEY).and_then(|c| count(&c)).unwrap_err();
++        assert!(is_damage(&e), "{e} {:?}", code(&e));
++    }
++
+     #[test]
+     fn test_with_a_key_a_database_in_the_clear_is_refused_and_left_as_it_was() {
+         let dir = tempfile::tempdir().unwrap();
+diff --git a/third_party/application-services/components/support/sql/src/obfsvfs_cipher.rs b/third_party/application-services/components/support/sql/src/obfsvfs_cipher.rs
+index 3bfeb5c9e9..6832988f53 100644
+--- a/third_party/application-services/components/support/sql/src/obfsvfs_cipher.rs
++++ b/third_party/application-services/components/support/sql/src/obfsvfs_cipher.rs
+@@ -3,14 +3,22 @@
+  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+ 
+ //! obfsvfs's cipher: AES-256-GCM, from the NSS application-services links, with a key imported once for each open
+-//! file.
++//! file, and HMAC-SHA-256 for the key's check.
+ 
++use nss_as::pk11::context::{hmac_sign, HashAlgorithm};
+ use nss_sys::*;
+ use std::os::raw::{c_int, c_uchar, c_uint};
+ use std::{mem, ptr};
+ 
+ pub(crate) const NONCE_BYTES: usize = 12;
+ pub(crate) const TAG_BYTES: usize = 16;
++pub(crate) const MAC_BYTES: usize = 32;
++
++/// HMAC-SHA-256 of `data` under `key`. None if NSS cannot make it.
++pub(crate) fn mac(key: &[u8; 32], data: &[u8]) -> Option<[u8; MAC_BYTES]> {
++    nss_as::ensure_initialized();
++    hmac_sign(&HashAlgorithm::SHA256, key, data).ok()?.try_into().ok()
++}
+ 
+ pub(crate) struct Cipher {
+     key: *mut PK11SymKey,
+-- 
+2.47.3
+

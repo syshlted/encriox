@@ -14,10 +14,11 @@ Its patches:
 
 - sql-support, which places, the logins and autofill all open their databases through, gains `obfsvfs`: a VFS shim
   after Gecko's obfuscating VFS (`storage/ObfuscatingVFS.cpp`), sealing each 8192-byte page, its write-ahead log's and
-  its journal's, with AES-256-GCM from NSS under a key handed to it by a handle, never in the database's name. A page
-  that does not open under the key is an I/O error, never a corrupt database, which the components delete and make
-  again; on Android it is SQLite's default VFS before any database opens, and refuses a sealed database opened
-  without its key, and one in the clear opened with a key;
+  its journal's, with AES-256-GCM from NSS under a key handed to it by a handle, never in the database's name. Each
+  page carries a check of the key, which tells a wrong key, refused as not the database's own, from a damaged page,
+  an I/O error; neither is a corrupt database, which the components delete and make again. On Android it is SQLite's
+  default VFS before any database opens, and refuses a sealed database opened without its key, and one in the clear
+  opened with a key;
 - places, the logins and autofill each gain a sealed open beside their own, and their Kotlin wrappers and Android
   Components' storages a database key, which a storage asks for, and waits for, when it first opens its database;
 - the spike's Fenix gives each of the three a key of its own, an HMAC of `encriox.key` (`EncriDatabaseKeys`), which
@@ -62,11 +63,17 @@ one to push, over a fresh profile.
   app's data searched for the marker, and each database's header read; the four read back in a new process; each
   database opened without its key, which must be refused and change nothing; and the four deleted. `unsealed` is
   the control run, with the three in the clear, which must find the marker in each.
+- `check-keycheck <serial>`: the key check each sealed page carries (W24). A fresh start with the four written, as
+  `check-sealed`'s; every page of the three databases and their logs carrying one check, each database its own; each
+  opened under another's key, which must be refused as not its own and change nothing; then the gate's own sealed
+  places database, put back with its log's last frame or first frame torn, without its log, and with page 1 or every
+  other page damaged: a torn log must open and lose only what the torn frame held, and a damaged page must fail as
+  damage, never as the wrong key.
 - The gate's controls (`EncriGateActivity`): `--es sealing on|off` for the next start, `--es seal
-  write|read|forget|plain --es marker <text>`, and `--ei placesbench <visits> --ei rounds <n>`, which times places in
-  the clear, in the clear with a sealed database's 8 KiB pages, and sealed, on three new databases each round outside
-  the stores, and logs each run as a line of JSON; `bench-places <serial> [<visits> [<rounds>]]` runs it and prints
-  the medians.
+  write|read|forget|plain|wrong --es marker <text>`, `--es keycheck make|read` with `--ei visits <n> --ei more <m>`
+  for `make`, and `--ei placesbench <visits> --ei rounds <n>`, which times places in the clear, in the clear with a
+  sealed database's 8 KiB pages, and sealed, on three new databases each round outside the stores, and logs each run
+  as a line of JSON; `bench-places <serial> [<visits> [<rounds>]]` runs it and prints the medians.
 
 A database is sealed or not when it is made, and one in the clear is refused by a sealed open: stage 1's and stage
 2's builds keep the three in the clear, so `check-sealed` deletes them first, and going back to an earlier stage

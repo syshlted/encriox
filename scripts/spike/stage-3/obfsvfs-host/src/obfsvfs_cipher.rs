@@ -2,10 +2,25 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
-// A toy stand-in for NSS's AES-256-GCM, for the harness alone: a keystream and a tag from a keyed hash. It seals
-// nothing; it fails to open whatever another key sealed, or whatever was changed, as AES-GCM does.
+// A toy stand-in for NSS's AES-256-GCM and HMAC-SHA-256, for the harness alone: a keystream, a tag and a MAC from a
+// keyed hash. It seals nothing; it fails to open whatever another key sealed, or whatever was changed, as AES-GCM
+// does, and gives each key a MAC of its own.
 pub(crate) const NONCE_BYTES: usize = 12;
 pub(crate) const TAG_BYTES: usize = 16;
+pub(crate) const MAC_BYTES: usize = 32;
+
+pub(crate) fn mac(key: &[u8; 32], data: &[u8]) -> Option<[u8; MAC_BYTES]> {
+    let mut h = 0x84222325cbf29ce4u64;
+    for b in key.iter().chain(data.iter()) {
+        h = mix(h, *b as u64);
+    }
+    let mut out = [0u8; MAC_BYTES];
+    for chunk in out.chunks_mut(8) {
+        h = mix(h, 0x5bd1e995);
+        chunk.copy_from_slice(&h.to_le_bytes());
+    }
+    Some(out)
+}
 
 pub(crate) struct Cipher {
     key: [u8; 32],

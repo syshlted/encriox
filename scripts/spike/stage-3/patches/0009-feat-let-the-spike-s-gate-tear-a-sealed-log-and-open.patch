@@ -1,0 +1,225 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jeremy Melanson <1080872+zish@users.noreply.github.com>
+Date: Sat, 21 Nov 2026 00:38:56 +0000
+Subject: [PATCH] feat: let the spike's gate tear a sealed log, and open under
+ wrong keys
+
+The gate gains stage 3's key check controls: --es seal wrong opens
+places', the logins' and autofill's databases each under another's
+key, and logs what each open did; and --es keycheck make|read keeps a
+sealed places database of its own in the cache, under a key of its own
+from the vault's, with visits closed into the database and more left in
+its log, so that a check can tear its log and damage its pages between
+the two and see what each read does.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+---
+ .../mozilla/fenix/encri/EncriDatabaseKeys.kt  |   3 +
+ .../mozilla/fenix/encri/EncriGateActivity.kt  | 139 +++++++++++++++++-
+ 2 files changed, 137 insertions(+), 5 deletions(-)
+
+diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriDatabaseKeys.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriDatabaseKeys.kt
+index ca9e7d46c9..5b4caa1ee3 100644
+--- a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriDatabaseKeys.kt
++++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriDatabaseKeys.kt
+@@ -29,6 +29,9 @@ object EncriDatabaseKeys {
+     /** autofill.sqlite's: the cards and the addresses. */
+     suspend fun autofill(): ByteArray = derive("autofill")
+ 
++    /** The gate's own sealed database for stage 3's key check, which holds nothing of the user's. */
++    suspend fun keycheck(): ByteArray = derive("keycheck")
++
+     private suspend fun derive(database: String): ByteArray {
+         val asked = SystemClock.elapsedRealtime()
+         val key =
+diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt
+index 7115db014a..bd2a4d72ea 100644
+--- a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt
++++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt
+@@ -26,9 +26,14 @@ import kotlinx.coroutines.launch
+ import kotlinx.coroutines.withTimeoutOrNull
+ import mozilla.appservices.autofill.createAutofillKey
+ import mozilla.appservices.autofill.createAutofillStoreWithStaticKeyManager
++import mozilla.appservices.autofill.createSealedAutofillStoreWithStaticKeyManager
++import mozilla.appservices.db_crypto.createManagedEncdec
++import mozilla.appservices.db_crypto.createStaticKeyManager
++import mozilla.appservices.logins.LoginStore
+ import mozilla.appservices.logins.createLoginStoreWithStaticKeyManager
+ import mozilla.appservices.places.BookmarkRoot
+ import mozilla.appservices.places.PlacesApi
++import mozilla.appservices.places.PlacesWriterConnection
+ import mozilla.appservices.places.uniffi.VisitObservation
+ import mozilla.appservices.places.uniffi.VisitType as PlacesVisitType
+ import mozilla.components.browser.state.state.content.DownloadState
+@@ -91,11 +96,15 @@ import org.mozilla.gecko.util.GeckoBundle
+  *   true` deletes them. With `--ez early true`, the logins are first asked for before the vault is open, and when
+  *   they arrive is logged;
+  * - `--ez clean true` deletes what the two did, in the vault and in Downloads;
+- * - `--es seal write|read|forget|plain --es marker <text>`, stage 3's: `write` records a visit and a bookmark, a login
+- *   and a card, each holding the marker where its database keeps it in a column of its own, which is in the clear
+- *   unless the database is sealed; `read` logs how many of each the stores hold, opened with their keys; `forget`
+- *   deletes them; and `plain` opens each of the three databases without its key, as a component given none would,
+- *   and logs what each open did.
++ * - `--es seal write|read|forget|plain|wrong --es marker <text>`, stage 3's: `write` records a visit and a bookmark, a
++ *   login and a card, each holding the marker where its database keeps it in a column of its own, which is in the
++ *   clear unless the database is sealed; `read` logs how many of each the stores hold, opened with their keys;
++ *   `forget` deletes them; `plain` opens each of the three databases without its key, as a component given none
++ *   would, and `wrong` each under another's key, as a key not its own would, and each logs what each open did;
++ * - `--es keycheck make|read`, stage 3's key check, on a sealed places database of the gate's own in the cache under
++ *   a key of its own: `make --ei visits <n> --ei more <m>` records n visits and closes it, which puts them in the
++ *   database and deletes its log, then m more, which it leaves in a log for the app to be stopped, as a crash stops
++ *   it; `read` opens it and logs how many visits it holds, or what the open or the read did.
+  *
+  * Every result is a line under the tag `encriox-spike`.
+  */
+@@ -204,6 +213,11 @@ class EncriGateActivity : ComponentActivity() {
+             extras.getBoolean("clean") -> work.launch { clean(context) }
+             extras.containsKey("seal") ->
+                 work.launch { seal(context, extras.getString("seal").orEmpty(), extras.getString("marker").orEmpty()) }
++            extras.containsKey("keycheck") ->
++                work.launch {
++                    val how = extras.getString("keycheck").orEmpty()
++                    keycheck(context, how, extras.getInt("visits"), extras.getInt("more"))
++                }
+         }
+     }
+ 
+@@ -272,9 +286,14 @@ class EncriGateActivity : ComponentActivity() {
+         private const val PLACES_BENCH_LIMIT = 10
+         private const val PLACES_BENCH_SMALL_PAGE = 8192
+         private const val PLACES_BENCH_HEADER = 18
++        private const val KEYCHECK_NAME = "encriox-keycheck.sqlite"
++        private const val KEYCHECK_START = 1_763_000_000_000L
+ 
+         private val work = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+ 
++        /** The key check's database, held open for the process's life by `keycheck make` and `read`. */
++        @Volatile private var keycheckOpen: PlacesApi? = null
++
+         private fun defaultWriter(context: android.content.Context) =
+             DefaultDownloadFileWriter(
+                 context = context,
+@@ -555,10 +574,120 @@ class EncriGateActivity : ComponentActivity() {
+                         "seal plain places=${places.said()} logins=${logins.said()} autofill=${autofill.said()}",
+                     )
+                 }
++                "wrong" -> {
++                    // Each under the key of another of the three, which is as wrong as a key can be and still come
++                    // from the vault's; not through Android Components either.
++                    val places =
++                        runCatching {
++                            withKey(EncriDatabaseKeys.logins()) { key ->
++                                PlacesApi(File(context.filesDir, "places.sqlite").canonicalPath, key).close()
++                            }
++                        }
++                    val logins =
++                        runCatching {
++                            withKey(EncriDatabaseKeys.autofill()) { key ->
++                                LoginStore.newSealed(
++                                    context.getDatabasePath("logins2.sqlite").absolutePath,
++                                    key,
++                                    createManagedEncdec(createStaticKeyManager("probe")),
++                                ).destroy()
++                            }
++                        }
++                    val autofill =
++                        runCatching {
++                            withKey(EncriDatabaseKeys.places()) { key ->
++                                createSealedAutofillStoreWithStaticKeyManager(
++                                    context.getDatabasePath("autofill.sqlite").absolutePath,
++                                    key,
++                                    createAutofillKey(),
++                                ).destroy()
++                            }
++                        }
++                    Log.i(
++                        TAG,
++                        "seal wrong places=${places.said()} logins=${logins.said()} autofill=${autofill.said()}",
++                    )
++                }
+                 else -> Log.i(TAG, "seal: no such step: $how")
+             }
+         }
+ 
++        private inline fun <T> withKey(
++            key: ByteArray,
++            use: (ByteArray) -> T,
++        ): T =
++            try {
++                use(key)
++            } finally {
++                key.fill(0)
++            }
++
++        /**
++         * Stage 3's key check, on a sealed places database of the gate's own, [KEYCHECK_NAME] in the cache, under a
++         * key of its own from the vault's: `make` records [visits] visits, a transaction each, and closes it, which
++         * puts them in the database and deletes its log, then [more], which stay in a log while the app is stopped,
++         * as a crash stops it; `read` opens it and logs how many visits it holds, or what the open or the read did.
++         */
++        private suspend fun keycheck(
++            context: Context,
++            how: String,
++            visits: Int,
++            more: Int,
++        ) {
++            val path = File(context.cacheDir, KEYCHECK_NAME)
++            fun Result<*>.said(): String = fold({ it.toString() }, { "failed: $it" })
++            fun record(
++                writer: PlacesWriterConnection,
++                from: Int,
++                count: Int,
++            ) {
++                for (i in from until from + count) {
++                    writer.noteObservation(
++                        VisitObservation(
++                            url = "$SEAL_ORIGIN/keycheck/$i",
++                            title = "Visit $i of the key check",
++                            visitType = PlacesVisitType.LINK,
++                            at = KEYCHECK_START + i,
++                        ),
++                    )
++                }
++            }
++            when (how) {
++                "make" -> {
++                    val made =
++                        runCatching {
++                            context.cacheDir.listFiles { f: File -> f.name.startsWith(KEYCHECK_NAME) }?.forEach {
++                                it.delete()
++                            }
++                            withKey(EncriDatabaseKeys.keycheck()) { key ->
++                                val closed = PlacesApi(path.canonicalPath, key)
++                                val writer = closed.getWriter()
++                                record(writer, 0, visits)
++                                // A writer's own close does nothing while its API is open.
++                                closed.close()
++                                writer.close()
++                                check(!File(path.path + "-wal").exists()) { "its log was not deleted at its close" }
++                                // Held for the process's life: let go, its connection would close at a collection.
++                                keycheckOpen =
++                                    PlacesApi(path.canonicalPath, key).also { record(it.getWriter(), visits, more) }
++                            }
++                            "visits=$visits more=$more"
++                        }
++                    Log.i(TAG, "keycheck made ${made.said()}")
++                }
++                "read" -> {
++                    val read =
++                        runCatching {
++                            withKey(EncriDatabaseKeys.keycheck()) { key ->
++                                PlacesApi(path.canonicalPath, key).also { keycheckOpen = it }
++                            }.getWriter().getVisitInfos(0, Long.MAX_VALUE, emptyList()).size
++                        }
++                    Log.i(TAG, "keycheck read visits=${read.said()}")
++                }
++                else -> Log.i(TAG, "keycheck: no such step: $how")
++            }
++        }
++
+         private suspend fun forgetKept(context: Context) {
+             val core = context.components.core
+             val logins =
+-- 
+2.47.3
+
