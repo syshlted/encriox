@@ -4,6 +4,19 @@ What happened, newest first. Why is in `docs/decisions/`, and what is next is in
 
 ## Unreleased
 
+### A key check in each sealed page (2026-11-21)
+
+On the user's word, each page stage 3 seals now carries, in its 4 spare reserved bytes, a check of its database's
+key, so that a wrong key is told from a damaged file (W24, stage 3's patch 0008). On the G6 and the A20, with the
+build's own NSS: every page of places', the logins' and autofill's databases and their logs carries one check, each
+database its own; each opened under another's key is refused at the open, *authorization denied*, and nothing of the
+three changed; a sealed places database with its log's last frame torn by hand lost that commit alone, and with its
+first frame torn read what the database held; and its page 1, or every other page, damaged failed as *disk I/O
+error*, never as the wrong key, with the database left as it was. Found and fixed: a log whose first frame a crash
+tore, the first commit after a checkpoint, made the whole database an I/O error; and `check-sealed`'s keyless step
+counted the logs' indexes, which Fenix's warm-up of its stores rebuilds at every start. Next is the prompt at start
+for a sealed database that does not open, which tells the two by these answers.
+
 ### The S24 measured, and checks that fail a copy cut short (2026-11-20)
 
 On the user's word, the spike's owed rounds ran on the S24, the user's own phone, Android 17, its vault never locked

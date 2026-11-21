@@ -41,8 +41,9 @@ unlocked its vault, with patch 0007's fix to the bench (below), **and on the S24
     ChaCha20-Poly1305, with the key imported once for each open file;
   - **a page that does not open under its key is an I/O error, `SQLITE_IOERR_DATA`**, where Gecko's copy hands SQLite
     whatever its cipher gave, tag or no tag; never a corrupt database, which places and autofill delete and make
-    again. A frame of the log that does not open, after one that did, is one a crash tore: it is passed to SQLite,
-    whose checksum ends the log there;
+    again. A frame of the log that does not open, ~~after one that did~~ under a key shown to be the database's own
+    (amended by W24), is one a crash tore: it is passed to SQLite, whose checksum ends the log there. A key not the
+    database's is refused at the open, `SQLITE_AUTH`, by the check each page carries (W24);
   - **on Android it is SQLite's default VFS before any database opens**, and refuses a sealed database opened without
     its key, and one in the clear opened with a key, as Gecko's refuses either (Gecko's `PeekOnDiskHeader`);
   - a `PRAGMA page_size` is ignored, a write of anything but a page, or a log's headers, into a sealed database or its
@@ -171,8 +172,9 @@ a change to obfsvfs, 6 minutes; to the spike's Fenix, under 2.
 
 #### Unmeasured
 
-~~The G6, whose vault is locked; the S24, which waits for its owner's word.~~ A log torn by a crash, and a page that
-does not open under the right key, were tested on this machine alone (`check-obfsvfs-host`). On the G6, whether a
+~~The G6, whose vault is locked; the S24, which waits for its owner's word.~~ ~~A log torn by a crash, and a page that
+does not open under the right key, were tested on this machine alone (`check-obfsvfs-host`).~~ **Measured on the G6
+and the A20** (W24), with patch 0008's key check: a torn log opens, and a damaged page is damage. On the G6, whether a
 page's visit reached places: `check-plaintext` lists a file by name and size, and places' log had the same size.
 
 #### Found for the checks
@@ -193,5 +195,12 @@ locking the vault.
 - **W4's, W5's, W6's and W21's private and sealed results** (2026-11-20, W23): they searched copies of the app's data that
   nothing checked were whole. Run again with `copy-data` on the G6, the A20 and the S24, they held; the S9's rest on
   the old copies until it is attached.
+- **W21's torn frame of the log** (2026-11-21, W24): a frame that does not open is taken for torn once the key is
+  shown to be the database's own, by page 1 or by a page's check, and not only once another frame has opened. A log
+  whose first frame a crash tore made its whole database an I/O error. A key not the database's is refused at the
+  open, `SQLITE_AUTH`.
+- **W21's unmeasured torn log and failed page** (2026-11-21, W24): measured on the G6 and the A20, with patch 0008's
+  key check. A torn last frame lost its commit alone, a torn first frame read what the database held, and a damaged
+  page failed as damage, never as the wrong key.
 
 <!-- /amendments -->

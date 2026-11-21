@@ -71,7 +71,9 @@ logins' and autofill's databases through an obfsvfs of application-services' own
   name: rusqlite puts the name into the message of an open that fails, which reaches the log and the error reporter.
   obfsvfs keeps the key, and the name carries a handle.
 - **A sealed page that does not open is an I/O error, never a corrupt database** (W21): places and autofill delete a
-  database SQLite finds corrupt, which is W14's rule broken by another road.
+  database SQLite finds corrupt, which is W14's rule broken by another road. **A key not the database's is refused at
+  the open**, `SQLITE_AUTH`, *authorization denied*, told by the check of its key each page carries, and never taken
+  for damage; under its own key a torn frame ends the log, and a damaged page is *disk I/O error* (W24).
 - **Measure from the phone's own loopback**, never over Wi-Fi: the A20's link ran at 0.4 MB/s (W4, *Rejected*).
 - **A script fails loudly.** A step that did not happen stops the run with a message; it never leaves a line out of
   the results or carries on under the wrong label.
@@ -103,6 +105,11 @@ logins' and autofill's databases through an obfsvfs of application-services' own
 - `am start -W` waits for good while the screen is off behind the lock screen: `check-plaintext` did on the A20 (W6).
   Its lock screen is not secure, so `input keyevent KEYCODE_WAKEUP` then `wm dismiss-keyguard` wakes it.
 - SharedPreferences' XML writes `"` as `&quot;`, so a search for a key in the clear looks for both (`check-keys`).
+- **Fenix warms its four stores up at every start**, the gate's too, each opening its database under its own key, and
+  an open after the app was stopped rebuilds a log's index, `-shm`. A check that a refused open changed nothing
+  compares the databases and their logs, not their indexes (W24).
+- **A places writer's own `close()` does nothing while its `PlacesApi` is open**: close the API, then the writer, and
+  SQLite's last close checkpoints the log into the database and deletes it (W24).
 - **Never lock a vault you cannot open again.** The G6's, locked to measure patch 0010, refused the passphrase on file
   though the keys typed were the file's; it waits for its owner. The A20's is passphrase-only (W5).
 - LG's framework logs every key event on the G6, so a passphrase typed there over adb is in its log until `logcat -c`.
@@ -269,6 +276,11 @@ logins' and autofill's databases through an obfsvfs of application-services' own
   of a visit's write and nothing to read; with its 8 KiB pages, sealed places writes a third (A20) and a sixth (S9)
   faster than places' own 32 KiB, in half the disk. A page over TLS loaded with the megazord on Gecko's NSS. On the
   G6 and the S24 the same (W21, W23); the cipher costs 5% on the G6.
+- **The key check** (W24, patch 0008), on the G6 and the A20: every page of the stores' three databases and their logs
+  carrying one check, each its own; each opened under another's key refused, *authorization denied*, no database or
+  log changed; the gate's sealed places database with its log's last frame torn losing that commit alone, with its
+  first frame torn reading what the database held, and with page 1 or every other page damaged failing as *disk I/O
+  error*, unchanged.
 - **Stage 3's first build took 72 minutes** with mach, Gecko and the megazord, and 9 more for Gradle; a change to
   obfsvfs, 6; to the spike's Fenix, under 2 (W21).
 - **Stage 2's first Gecko build took 76 minutes**, 69 of them `mach build` at 86% of 8 cores, and a change to one pref
@@ -295,6 +307,7 @@ logins' and autofill's databases through an obfsvfs of application-services' own
 | W21 | Stage 3: places', the logins' and autofill's databases sealed through an obfsvfs of application-services' own |
 | W22 | W21's flags stand; a key check in each sealed page, next, and a prompt to delete or repair one that will not open |
 | W23 | Stages 1 and 3 on the S24; a copy of the app's data cut short fails its check (`copy-data`) |
+| W24 | A check of its key in each sealed page: a wrong key refused, a damaged page damage, a torn log ended |
 | encri-api L11, L12 | `write` saves only a finished writer; a writer's failure is told encri's reason |
 | encri D120, D145 | A grant is keyed on the package for good |
 
@@ -308,7 +321,8 @@ logins' and autofill's databases through an obfsvfs of application-services' own
 - Patch 0010's locked path on the G6, which locks its vault, so with its owner there to unlock it (`ROADMAP.md`).
 - W13's three flags, W15's four and W16's three.
 - W17's three flags, and W20's three: the 10 seconds, the crash helper, and S1 closed unreproduced.
-- W22's three flags and W23's two; a lock reaching a browser Android has frozen, on the S24 (`ROADMAP.md`).
+- W22's three flags, W23's two and W24's four; a lock reaching a browser Android has frozen, on the S24
+  (`ROADMAP.md`).
 
 ## Read next
 

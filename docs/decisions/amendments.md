@@ -72,3 +72,13 @@ Each entry corrects a record. Its bold lead names the record possessively ("W1's
 - **W4's, W5's, W6's and W21's private and sealed results** (2026-11-20, W23): they searched copies of the app's data that
   nothing checked were whole. Run again with `copy-data` on the G6, the A20 and the S24, they held; the S9's rest on
   the old copies until it is attached.
+- **W21's torn frame of the log** (2026-11-21, W24): a frame that does not open is taken for torn once the key is
+  shown to be the database's own, by page 1 or by a page's check, and not only once another frame has opened. A log
+  whose first frame a crash tore made its whole database an I/O error. A key not the database's is refused at the
+  open, `SQLITE_AUTH`.
+- **W21's unmeasured torn log and failed page** (2026-11-21, W24): measured on the G6 and the A20, with patch 0008's
+  key check. A torn last frame lost its commit alone, a torn first frame read what the database held, and a damaged
+  page failed as damage, never as the wrong key.
+- **W22's first flag, built** (2026-11-21, W24): as stage 3's patch 0008. A key is refused as not the database's where
+  no page carries its check and some page carries another's, so that a page 1 damaged through its check is told by
+  the next.

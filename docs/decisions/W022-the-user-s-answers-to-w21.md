@@ -66,7 +66,8 @@ After W21, the user answered its six flags:
    zero now, a check derived from the database's key, an HMAC of a label of its own under it, which tells nothing of
    the key. At an open, a check that is not the key's means the wrong key: refused, and never offered for deletion. A
    check that is the key's, with tags that fail, means damage, and the prompt can say how many pages, and offer a
-   third choice: SQLite's recovery copying every row it can still read into a new sealed database.
+   third choice: SQLite's recovery copying every row it can still read into a new sealed database. **Built and
+   measured as W24**: a key is refused as not the database's where no page carries its check and some page another's.
 2. **Changing a key waits until after the first usable build**, and a rotation of `encriox.key` is not planned.
 3. **Sync stays off, as W17 has it, and the user has asked about it**: turning Mozilla's accounts and Sync back on
    would restore a deleted store, but sends the browser's data, sealed with the account's keys, to Mozilla's servers,
@@ -85,5 +86,8 @@ After W21, the user answered its six flags:
 
 - **W22's first flag** (2026-11-20, the user's word: "yes, add the key check next session"): a key check in each
   sealed page tells a wrong key from a damaged file, and the prompt offers a repair beside deleting and keeping.
+- **W22's first flag, built** (2026-11-21, W24): as stage 3's patch 0008. A key is refused as not the database's where
+  no page carries its check and some page carries another's, so that a page 1 damaged through its check is told by
+  the next.
 
 <!-- /amendments -->
