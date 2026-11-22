@@ -1,0 +1,425 @@
+#!/bin/sh
+# Checks the prompt at start for a sealed database that does not open (W22; stage 3's patches 0010 to 0013): which
+# store it is, and the user's answer, each tapped on the phone's screen as a user would.
+#
+#   scripts/spike/stage-3/check-stores <adb serial>
+#
+# 1. A fresh start, as check-sealed's: the visit, the bookmark, the login and the card written sealed and read back,
+#    then places filled with visits that hold no marker, and each database checked as opening.
+# 2. Places' page 1 damaged, in its database and in every frame of its log that holds it: the app's start asks about
+#    the history and bookmarks, offering Repair, Delete and Keep; Keep leaves every file as it was, and the logins and
+#    the card still read.
+# 3. The next start asks again; Repair cannot read a database whose page 1 is lost, and says so, leaving it as it was,
+#    and asks again with Delete and Keep alone.
+# 4. Places as step 1 left it, with one page whose newest copy is the database's damaged, deep in it: Repair keeps
+#    what can be read, says what, and the database then opens, holds no row in the clear, and takes new ones.
+# 5. The logins' page 1 damaged: Delete takes their files, and the store starts again empty.
+# 6. Autofill's database replaced by the logins', sealed under the logins' key: the prompt offers no deletion, only
+#    to go on without them, and nothing changes.
+# 7. The three made in the clear, as stage 1's and stage 2's builds made them: each is asked about as stored
+#    unencrypted, offering Delete and Keep; Delete takes each.
+# 8. The databases deleted.
+#
+# The vault must be open to the spike, and the phone's screen lock a swipe at most. A step that does not hold is
+# recorded and the run goes on; it then fails, naming each.
+set -eu
+export LC_ALL=C
+
+here=$(cd "$(dirname "$0")" && pwd)
+stage1=$(cd "$here/../stage-1" && pwd)
+stage2=$(cd "$here/../stage-2" && pwd)
+serial=${1:?usage: check-stores <adb serial>}
+package=com.systemhalted.encri.browser.spike
+adb="${ADB:-$HOME/Android/Sdk/platform-tools/adb} -s $serial"
+work=$(mktemp -d)
+trap 'rm -rf "$work"; $adb shell rm -f /sdcard/encriox-ui.xml >/dev/null 2>&1 || true' EXIT
+fill=2000
+
+fail() {
+    echo "check-stores: $*" >&2
+    exit 1
+}
+
+wrongs=
+wrong() {
+    echo "  WRONG: $*"
+    wrongs="$wrongs
+  $*"
+}
+
+applog() { $adb logcat -d -s encriox-spike:I | sed 's/^.*encriox-spike: //'; }
+said() { applog | grep -E "$1" | sed 's/^/    /' || true; }
+
+# Waits up to $2 seconds for a line of the app's log matching $1.
+await() {
+    for _ in $(seq "$2"); do
+        applog | grep -qE "$1" && return 0
+        sleep 1
+    done
+    applog | tail -20 >&2
+    fail "the app did not log /$1/ within $2s"
+}
+
+# Starts the gate with the extras after the first two arguments, and waits up to $2 seconds for a line matching $1.
+gate() {
+    want=$1
+    wait=$2
+    shift 2
+    $adb logcat -c
+    # Not `am start -W`: the gate finishes without drawing, and -W would wait for it forever.
+    $adb shell am start -n $package/org.mozilla.fenix.encri.EncriGateActivity "$@" >/dev/null
+    await "$want" "$wait"
+}
+
+wake() {
+    for _ in $(seq 10); do
+        $adb shell input keyevent KEYCODE_WAKEUP
+        $adb shell wm dismiss-keyguard
+        sleep 1
+        $adb shell dumpsys window | grep -m1 mCurrentFocus | grep -qE 'NotificationShade|Keyguard|StatusBar' || return 0
+    done
+    fail "the keyguard would not go"
+}
+
+# The browser started as its launcher starts it, the app stopped first.
+start() {
+    $adb shell am force-stop $package
+    wake
+    $adb logcat -c
+    $adb shell am start -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -n $package/.App >/dev/null
+}
+
+# The alert of the app's own in front, as `title|message|button=x,y;...`, or nothing. The last dump goes first: one
+# that fails, as while the screen moves, leaves no file, where the last would be read as the screen now.
+alert() {
+    $adb shell rm -f /sdcard/encriox-ui.xml
+    $adb shell uiautomator dump /sdcard/encriox-ui.xml >/dev/null 2>&1 || return 0
+    $adb exec-out cat /sdcard/encriox-ui.xml 2>/dev/null | python3 -I -c '
+import html, re, sys
+package = sys.argv[1]
+title = message = None
+buttons = []
+for node in re.findall(r"<node [^>]*>", sys.stdin.read()):
+    a = {k: html.unescape(v) for k, v in re.findall(r"([\w-]+)=\"([^\"]*)\"", node)}
+    if a.get("package") != package:
+        continue
+    rid = a.get("resource-id", "")
+    if rid == "android:id/alertTitle":
+        title = a.get("text", "")
+    elif rid == "android:id/message":
+        message = a.get("text", "").replace("\n", " ")
+    elif re.fullmatch(r"android:id/button[123]", rid) and a.get("text"):
+        x1, y1, x2, y2 = map(int, re.findall(r"\d+", a["bounds"]))
+        text = a["text"]
+        buttons.append(f"{text}={(x1 + x2) // 2},{(y1 + y2) // 2}")
+if title is not None:
+    print(title + "|" + message + "|" + ";".join(sorted(buttons)))
+' "$package"
+}
+
+# Waits up to $1 seconds for an alert of the app's own, and prints it.
+question() {
+    for _ in $(seq "$1"); do
+        shown=$(alert)
+        [ -n "$shown" ] && { echo "$shown"; return 0; }
+        sleep 1
+    done
+    applog | tail -20 >&2
+    fail "no question came within $1s"
+}
+
+# The question shown, as `question` printed it: its title, its buttons' labels in order, and its message.
+title_of() { printf '%s' "$1" | cut -d'|' -f1; }
+message_of() { printf '%s' "$1" | cut -d'|' -f2; }
+buttons_of() { printf '%s' "$1" | cut -d'|' -f3 | tr ';' '\n' | sed 's/=.*//' | tr '[:lower:]' '[:upper:]' | sort | tr '\n' ' '; }
+
+# Answers the question $1 with its button labelled $2, whatever case its theme shows it in, as a user taps it, and
+# waits for the app to log the answer. A tap is lost while the question's window comes up, and its buttons take none
+# for its first second, so it is tapped again while no answer is logged and the same question is in front: never
+# once it has gone, where the next question's button may be.
+tap() {
+    at=$(printf '%s' "$1" | cut -d'|' -f3 | tr ';' '\n' | awk -F= -v want="$2" 'toupper($1) == toupper(want) { print $2 }')
+    [ -n "$at" ] || fail "the question has no $2: $1"
+    before=$(applog | grep -c ' answered=' || true)
+    for _ in 1 2 3 4 5; do
+        $adb shell input tap $(echo "$at" | tr ',' ' ')
+        for _ in 1 2 3 4 5; do
+            sleep 1
+            [ "$(applog | grep -c ' answered=' || true)" -gt "$before" ] && return 0
+        done
+        [ "$(alert)" = "$1" ] || fail "the question went without its answer being logged: $1"
+    done
+    fail "the question did not take $2: $1"
+}
+
+# A store's database, by the name the gate logs it under.
+file_of() {
+    case $1 in
+        places) echo files/places.sqlite ;;
+        logins) echo databases/logins2.sqlite ;;
+        autofill) echo databases/autofill.sqlite ;;
+    esac
+}
+
+# A store's files, with its log, its log's index and its journal, copied off the phone into $2.
+pull() {
+    "$stage1/copy-data" "$serial" "$2" "$(file_of "$1")*" 2> "$work/pull-errors" ||
+        { cat "$work/pull-errors" >&2; exit 1; }
+}
+
+# Puts the files in $2, named as on the phone, in place of store $1's, with no log index, as a new process finds them
+# after a crash; each is read back whole, or the run fails.
+put() {
+    target=$(file_of "$1")
+    $adb shell am force-stop $package
+    $adb shell "run-as $package sh -c 'rm -f $target $target-wal $target-shm $target-journal'"
+    for file in "$2/$(dirname "$target")"/*; do
+        name=$(dirname "$target")/$(basename "$file")
+        case $name in *-shm) continue ;; esac
+        $adb push "$file" "/data/local/tmp/$package-stores" >/dev/null
+        $adb shell chmod 644 "/data/local/tmp/$package-stores"
+        $adb shell "run-as $package sh -c 'cat /data/local/tmp/$package-stores > $name'"
+        $adb shell rm -f "/data/local/tmp/$package-stores"
+        [ "$($adb shell "run-as $package md5sum $name" | cut -d' ' -f1)" = "$(md5sum < "$file" | cut -d' ' -f1)" ] ||
+            fail "$name did not reach the phone whole"
+    done
+}
+
+# Whether store $1's files on the phone are those in $2, but the log's index.
+unchanged() {
+    pull "$1" "$work/now-$1"
+    changed=$(diff -rq "$2" "$work/now-$1" | grep -v -- '-shm\( \|$\)' || true)
+    rm -rf "$work/now-$1"
+    [ -z "$changed" ] || { echo "$changed" | sed 's/^/    /'; return 1; }
+}
+
+# Changes the copy of a store in $1: `page-1` damages page 1 of its database and every frame of its log that holds
+# it; `deep` damages the database's last page that the log holds no copy of, past its first pages; each by XOR over
+# 16 bytes in the page's middle, so that its tag no longer holds. Prints the page.
+damage() {
+    python3 -I - "$1" "$2" <<'DAMAGE'
+import os, sys
+
+PAGE, FRAME = 8192, 24 + 8192
+db, how = sys.argv[1], sys.argv[2]
+with open(db, "rb") as f:
+    database = bytearray(f.read())
+log = bytearray()
+if os.path.exists(db + "-wal"):
+    with open(db + "-wal", "rb") as f:
+        log = bytearray(f.read())
+# The log's frames in its current generation: those from the first whose salts are the header's.
+frames = []
+for at in range(32, len(log) - FRAME + 1, FRAME):
+    if log[at + 8:at + 16] != log[16:24]:
+        break
+    frames.append((at, int.from_bytes(log[at:at + 4], "big")))
+
+def hit(body, start):
+    for i in range(start + 1000, start + 1016):
+        body[i] ^= 0xFF
+
+pages = len(database) // PAGE
+if how == "page-1":
+    page = 1
+    for at, number in frames:
+        if number == 1:
+            hit(log, at + 24)
+else:
+    logged = {number for _, number in frames}
+    candidates = [p for p in range(pages, 8, -1) if p not in logged]
+    if not candidates:
+        sys.exit(f"every page past the first eight of {pages} has a copy in the log")
+    page = candidates[0]
+hit(database, (page - 1) * PAGE)
+with open(db, "wb") as f:
+    f.write(database)
+if log:
+    with open(db + "-wal", "wb") as f:
+        f.write(log)
+print(f"page {page} of {pages}, {len(frames)} frames in the log")
+DAMAGE
+}
+
+marker="ENCRIOX$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')"
+echo "== $serial, marker $marker"
+
+echo "== 1. a fresh start: the four written sealed and read back, places filled, each database opening"
+"$stage2/fresh-profile" "$serial" >/dev/null
+$adb shell "run-as $package sh -c 'rm -f files/places.sqlite* databases/logins2.sqlite* databases/autofill.sqlite*'"
+$adb push "$stage2/geckoview-config.yaml" /data/local/tmp/$package-geckoview-config.yaml >/dev/null
+gate "sealing unsealed=" 30 --es sealing on
+$adb shell am force-stop $package
+gate "seal wrote" 120 --es seal write --es marker "$marker"
+said "gate open|key (made|read|held)|seal wrote"
+applog | grep -q "gate open" || fail "the vault is not open to the spike"
+applog | grep -E "seal wrote" | grep -q "failed" && wrong "the gate could not write all four"
+gate "seal filled" 300 --es seal fill --ei visits $fill
+said "seal filled"
+applog | grep -q "seal filled visits=$fill$" || wrong "the gate did not fill places"
+gate "seal read" 60 --es seal read --es marker "$marker"
+said "seal read"
+applog | grep -q "seal read visits=1 bookmarks=1 logins=1 cards=1$" || wrong "the session did not read all four back"
+gate "stores check" 60 --es stores check
+said "stores (check|.* checked in)"
+applog | grep -q "stores check places=OPENS logins=OPENS autofill=OPENS$" || wrong "the three did not check as opening"
+$adb shell am force-stop $package
+for store in places logins autofill; do pull $store "$work/made-$store"; done
+
+echo "== 2. places' page 1 damaged: asked at the start, and Keep changes nothing"
+cp -r "$work/made-places" "$work/places-1"
+echo "  $(damage "$work/places-1/files/places.sqlite" page-1)"
+put places "$work/places-1"
+start
+shown=$(question 90)
+echo "  asked: $shown"
+[ "$(title_of "$shown")" = "History and bookmarks" ] || wrong "the question did not name the history and bookmarks"
+[ "$(buttons_of "$shown")" = "DELETE KEEP REPAIR " ] || wrong "the question did not offer Repair, Delete and Keep"
+case $(message_of "$shown") in *"nothing deleted or lost comes back"*) ;; *) wrong "the question did not say Sync is off" ;; esac
+said "stores places (state|asks)"
+applog | grep -q "stores places state=DAMAGED$" || wrong "places was not found damaged"
+tap "$shown" Keep
+await "stores places kept" 30
+gate "seal read" 60 --es seal read --es marker "$marker"
+said "seal read"
+# Places' storage answers a failed open with no visits, and a failed bookmarks' read as failed.
+applog | grep -qE "seal read visits=0 bookmarks=(0|failed: .*kept as it is.*) logins=1 cards=1$" ||
+    wrong "with places kept, the logins and the card did not read, or places opened"
+$adb shell am force-stop $package
+unchanged places "$work/places-1" || wrong "Keep changed places' files"
+
+echo "== 3. asked again at the next start; Repair cannot read a lost page 1, and says so"
+start
+shown=$(question 90)
+echo "  asked: $shown"
+[ "$(buttons_of "$shown")" = "DELETE KEEP REPAIR " ] || wrong "the next start did not ask again"
+tap "$shown" Repair
+await "stores places (repaired|repair failed)" 120
+said "stores places (answered|repair)"
+applog | grep -q "stores places repair failed" || wrong "a repair of a database without its page 1 did not fail"
+shown=$(question 30)
+echo "  asked: $shown"
+[ "$(buttons_of "$shown")" = "DELETE KEEP " ] || wrong "after a failed repair, the question did not offer Delete and Keep alone"
+case $(message_of "$shown") in *"could not be repaired"*) ;; *) wrong "the question did not say the repair failed" ;; esac
+tap "$shown" Keep
+await "stores places kept" 30
+$adb shell am force-stop $package
+unchanged places "$work/places-1" || wrong "a failed repair changed places' files"
+
+echo "== 4. a page deep in places damaged: Repair keeps what can be read"
+cp -r "$work/made-places" "$work/places-deep"
+echo "  $(damage "$work/places-deep/files/places.sqlite" deep)"
+put places "$work/places-deep"
+start
+shown=$(question 90)
+echo "  asked: $shown"
+[ "$(buttons_of "$shown")" = "DELETE KEEP REPAIR " ] || wrong "a page deep in places damaged was not asked about"
+tap "$shown" Repair
+await "stores places (repaired|repair failed)" 120
+said "stores places (state|answered|repair)"
+repaired=$(applog | sed -n 's/^stores places repaired //p')
+[ -n "$repaired" ] || wrong "places was not repaired"
+case $repaired in *" unreadable=1 dangling="*) ;; *) wrong "the repair did not find the one damaged page: $repaired" ;; esac
+shown=$(question 30)
+echo "  told: $shown"
+case $(message_of "$shown") in *"are repaired"*) ;; *) wrong "the repair's result was not told" ;; esac
+tap "$shown" OK
+gate "stores check" 60 --es stores check
+said "stores check"
+applog | grep -q "stores check places=OPENS" || wrong "the repaired places did not check as opening"
+gate "seal read" 60 --es seal read --es marker "$marker"
+said "seal read"
+applog | grep -q "seal read visits=[01] bookmarks=[01] logins=1 cards=1$" || wrong "after the repair, the session did not read"
+again="${marker}R"
+gate "seal wrote" 120 --es seal write --es marker "$again"
+gate "seal read" 60 --es seal read --es marker "$again"
+said "seal read"
+applog | grep -q "seal read visits=1 bookmarks=1 logins=1 cards=1$" || wrong "the repaired places did not take new rows"
+$adb shell am force-stop $package
+pull places "$work/repaired"
+ls "$work/repaired/files" | sed 's/^/    /'
+[ -e "$work/repaired/files/places.sqlite.repair" ] && wrong "the repair left its copy beside places"
+if grep -rlaF -e "$marker" -e "$again" "$work/repaired" > "$work/clear"; then
+    wrong "a marker is in the clear in: $(tr '\n' ' ' < "$work/clear")"
+fi
+
+echo "== 5. the logins' page 1 damaged: Delete takes them, and their store starts again empty"
+cp -r "$work/made-logins" "$work/logins-1"
+echo "  $(damage "$work/logins-1/databases/logins2.sqlite" page-1)"
+put logins "$work/logins-1"
+start
+shown=$(question 90)
+echo "  asked: $shown"
+[ "$(title_of "$shown")" = "Saved logins" ] || wrong "the question did not name the saved logins"
+[ "$(buttons_of "$shown")" = "DELETE KEEP REPAIR " ] || wrong "the question did not offer Repair, Delete and Keep"
+tap "$shown" Delete
+await "stores logins deleted" 30
+gate "seal read" 60 --es seal read --es marker "$again"
+said "seal read"
+applog | grep -q "seal read visits=1 bookmarks=1 logins=0 cards=1$" || wrong "Delete did not take the logins alone"
+third="${marker}D"
+gate "seal wrote" 120 --es seal write --es marker "$third"
+gate "seal read" 60 --es seal read --es marker "$third"
+said "seal read"
+applog | grep -q "seal read visits=1 bookmarks=1 logins=1 cards=1$" || wrong "the logins' new store did not take a login"
+$adb shell am force-stop $package
+
+echo "== 6. autofill's database sealed under the logins' key: no deletion offered, and nothing changes"
+mkdir -p "$work/autofill-wrong/databases"
+for file in "$work/made-logins/databases"/logins2.sqlite*; do
+    case $file in *-shm) continue ;; esac
+    cp "$file" "$work/autofill-wrong/databases/autofill.sqlite${file#*logins2.sqlite}"
+done
+put autofill "$work/autofill-wrong"
+start
+shown=$(question 90)
+echo "  asked: $shown"
+[ "$(title_of "$shown")" = "Saved cards and addresses" ] || wrong "the question did not name the cards and addresses"
+[ "$(buttons_of "$shown")" = "GO ON WITHOUT THEM " ] || wrong "under another key, the question offered more than to go on"
+said "stores autofill state"
+applog | grep -q "stores autofill state=WRONG_KEY$" || wrong "autofill was not found under another key"
+tap "$shown" "Go on without them"
+await "stores autofill kept" 30
+gate "stores check" 60 --es stores check
+said "stores check"
+applog | grep -q "autofill=WRONG_KEY$" || wrong "autofill did not still check as under another key"
+$adb shell am force-stop $package
+unchanged autofill "$work/autofill-wrong" || wrong "autofill's files changed under another key"
+
+echo "== 7. the three in the clear: each asked about as unencrypted, and Delete takes each"
+$adb shell "run-as $package sh -c 'rm -f files/places.sqlite* databases/logins2.sqlite* databases/autofill.sqlite*'"
+gate "sealing unsealed=" 30 --es sealing off
+$adb shell am force-stop $package
+clear="${marker}C"
+gate "seal wrote" 120 --es seal write --es marker "$clear"
+gate "seal read" 60 --es seal read --es marker "$clear"
+said "seal read"
+applog | grep -q "seal read visits=1 bookmarks=1 logins=1 cards=1$" || wrong "the three were not written in the clear"
+$adb shell am force-stop $package
+gate "sealing unsealed=" 30 --es sealing on
+start
+asked=
+for _ in 1 2 3; do
+    shown=$(question 90)
+    echo "  asked: $shown"
+    asked="$asked$(title_of "$shown");"
+    [ "$(buttons_of "$shown")" = "DELETE KEEP " ] || wrong "a database in the clear was not offered Delete and Keep"
+    case $(message_of "$shown") in *unencrypted*) ;; *) wrong "the question did not say the database is unencrypted" ;; esac
+    tap "$shown" Delete
+    sleep 2
+done
+said "stores .*(state|deleted)"
+for store in places logins autofill; do
+    applog | grep -q "stores $store state=IN_THE_CLEAR$" || wrong "$store was not found in the clear"
+    applog | grep -q "stores $store deleted$" || wrong "$store in the clear was not deleted"
+done
+gate "seal read" 60 --es seal read --es marker "$clear"
+said "seal read"
+applog | grep -q "seal read visits=0 bookmarks=0 logins=0 cards=0$" || wrong "what was in the clear was still read"
+$adb shell am force-stop $package
+
+echo "== 8. the databases deleted"
+$adb shell "run-as $package sh -c 'rm -f files/places.sqlite* databases/logins2.sqlite* databases/autofill.sqlite*'"
+
+[ -z "$wrongs" ] || fail "what was wrong:$wrongs"
+echo "check-stores: every step held"

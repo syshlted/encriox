@@ -1,0 +1,100 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jeremy Melanson <1080872+zish@users.noreply.github.com>
+Date: Sun, 22 Nov 2026 23:47:08 +0000
+Subject: [PATCH] fix: let a store's question take no tap for its first second
+
+A question can follow another with Delete where the last one's button
+was, and a second tap meant for that one answered this on the G6,
+through check-stores. Its buttons now take no tap for a second, and
+every answer is logged, the repair's result's too.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+---
+ .../org/mozilla/fenix/encri/EncriStores.kt    | 19 ++++++++++++-------
+ .../fenix/encri/EncriStoresActivity.kt        | 10 +++++++++-
+ 2 files changed, 21 insertions(+), 8 deletions(-)
+
+diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriStores.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriStores.kt
+index 3d09e96f5a..ea23a275b9 100644
+--- a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriStores.kt
++++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriStores.kt
+@@ -152,10 +152,7 @@ object EncriStores {
+         var repairFailed: String? = null
+         while (true) {
+             val question = question(store, state, repairFailed) ?: return
+-            Log.i(TAG, "stores ${store.label} asks: ${question.answers.joinToString(" ")}")
+-            val answer = ask(question)
+-            Log.i(TAG, "stores ${store.label} answered=$answer")
+-            when (answer) {
++            when (ask(store, question)) {
+                 Answer.DELETE -> {
+                     delete(path)
+                     Log.i(TAG, "stores ${store.label} deleted")
+@@ -170,6 +167,7 @@ object EncriStores {
+                                 "unreadable=${r.unreadablePages} dangling=${r.danglingRows}",
+                         )
+                         ask(
++                            store,
+                             Question(
+                                 store.title,
+                                 "${store.subject} are repaired: ${r.rows} rows in ${r.tables} tables are kept. " +
+@@ -260,13 +258,20 @@ object EncriStores {
+         }
+     }
+ 
+-    /** Shows [question] once the questions before it are answered, and waits for its answer. */
+-    private suspend fun ask(question: Question): Answer =
++    /** Shows [question] about [store] once the questions before it are answered, and waits for its answer. */
++    private suspend fun ask(
++        store: Store,
++        question: Question,
++    ): Answer =
+         asking.withLock {
++            Log.i(TAG, "stores ${store.label} asks: ${question.answers.joinToString(" ")}")
+             val answer = CompletableDeferred<Answer>()
+             synchronized(this) { pending = question to answer }
+             EncriUnlock.fromForeground { from -> from.startActivity(Intent(from, EncriStoresActivity::class.java)) }
+-            answer.await().also { synchronized(this) { pending = null } }
++            answer.await().also {
++                synchronized(this) { pending = null }
++                Log.i(TAG, "stores ${store.label} answered=$it")
++            }
+         }
+ 
+     /** The question [EncriStoresActivity] is to show, if one waits. */
+diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriStoresActivity.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriStoresActivity.kt
+index 584ed450ff..6525417daa 100644
+--- a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriStoresActivity.kt
++++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriStoresActivity.kt
+@@ -12,7 +12,8 @@ import android.os.Bundle
+ /**
+  * Shows [EncriStores]' question about a sealed database that does not open, as an alert of its own over the browser,
+  * which ends only with an answer. One that ends before, as its task is taken away, is answered Keep, which changes
+- * nothing.
++ * nothing. Its buttons take no tap for its first second: a question can follow another with Delete where the last
++ * one's button was, and a second tap meant for that one would answer this.
+  */
+ class EncriStoresActivity : Activity() {
+     private var shown: AlertDialog? = null
+@@ -40,6 +41,9 @@ class EncriStoresActivity : Activity() {
+                         setButton(button, answer.label) { _, _ -> reply(answer) }
+                     }
+                     show()
++                    val shownButtons = buttons.mapNotNull { getButton(it) }
++                    shownButtons.forEach { it.isEnabled = false }
++                    window?.decorView?.postDelayed({ shownButtons.forEach { it.isEnabled = true } }, GUARD_MILLIS)
+                 }
+     }
+ 
+@@ -55,4 +59,8 @@ class EncriStoresActivity : Activity() {
+         if (isFinishing) reply(EncriStores.Answer.KEEP)
+         super.onDestroy()
+     }
++
++    private companion object {
++        const val GUARD_MILLIS = 1000L
++    }
+ }
+-- 
+2.47.3
+

@@ -1,0 +1,738 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jeremy Melanson <1080872+zish@users.noreply.github.com>
+Date: Sun, 22 Nov 2026 23:41:08 +0000
+Subject: [PATCH] feat: check and repair a sealed database in obfsvfs
+
+check() reads a sealed database through under a key before its
+component opens it, its schema and every page SQLite's quick check
+reads, without a checkpoint at its close: it opens, it is missing, it
+is under another key, it is damaged, or it is in the clear. repair()
+copies what SQLite's recovery can read of a damaged one into a new
+database sealed under the same key, which takes its place, its log,
+index and journal gone first. Its open is lenient: a page that does not
+open under the database's own key reads as one that holds nothing, and
+is counted, so that the recovery passes over it rather than stopping.
+It is refused under another key, for a database in the clear, and where
+the recovery reads no table, each leaving the database as it was.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+---
+ .../components/support/sql/src/lib.rs         |   1 +
+ .../components/support/sql/src/obfsvfs.rs     | 112 ++++-
+ .../support/sql/src/obfsvfs_repair.rs         | 473 ++++++++++++++++++
+ 3 files changed, 567 insertions(+), 19 deletions(-)
+ create mode 100644 third_party/application-services/components/support/sql/src/obfsvfs_repair.rs
+
+diff --git a/third_party/application-services/components/support/sql/src/lib.rs b/third_party/application-services/components/support/sql/src/lib.rs
+index 7474fc2323..9848fb3cf9 100644
+--- a/third_party/application-services/components/support/sql/src/lib.rs
++++ b/third_party/application-services/components/support/sql/src/lib.rs
+@@ -16,6 +16,7 @@ pub mod maintenance;
+ mod maybe_cached;
+ pub mod obfsvfs;
+ mod obfsvfs_cipher;
++mod obfsvfs_repair;
+ pub mod open_database;
+ pub mod path;
+ mod repeat;
+diff --git a/third_party/application-services/components/support/sql/src/obfsvfs.rs b/third_party/application-services/components/support/sql/src/obfsvfs.rs
+index f54c0ccc71..ebab374ef3 100644
+--- a/third_party/application-services/components/support/sql/src/obfsvfs.rs
++++ b/third_party/application-services/components/support/sql/src/obfsvfs.rs
+@@ -26,6 +26,9 @@
+ //! - Registered as SQLite's default, it refuses to open a sealed database without a key, and one in the clear with
+ //!   a key: either would be read as corrupt, and deleted.
+ //! - A checkpoint copies sealed pages from the log into the database as they are.
++//! - [`check`] says whether a sealed database opens, read through, before its component opens it, and [`repair`]
++//!   copies what SQLite's recovery can still read of a damaged one into a new one under its key
++//!   (`obfsvfs_repair.rs`): for an app that asks its user what to do with a database that does not open.
+ //!
+ //! Its limits are Gecko's: a database is sealed when it is made and its key never changes; memory-mapped I/O is off;
+ //! and only the database, its log and its journal are sealed, so temporary files must stay in memory, as they do on
+@@ -43,6 +46,8 @@ use std::sync::{Mutex, OnceLock};
+ use std::{mem, ptr, slice};
+ use url::Url;
+ 
++pub use crate::obfsvfs_repair::{check, repair, Repaired, State};
++
+ /// The page size of a sealed database.
+ pub const PAGE_SIZE: usize = 8192;
+ /// The length of a key, in bytes.
+@@ -92,18 +97,63 @@ pub enum Error {
+     NotRegistered,
+     #[error("A sealed database's path must be absolute: {0:?}")]
+     RelativePath(PathBuf),
++    #[error("The database is sealed under another key")]
++    WrongKey,
++    #[error("The database is in the clear")]
++    InTheClear,
++    #[error("There is no database to repair")]
++    Missing,
++    #[error("SQLite could not {0}: {1}")]
++    Sqlite(&'static str, rusqlite::Error),
++    #[error("SQLite's recovery failed: {0}")]
++    Recovery(String),
++    #[error("SQLite's recovery read no table of the database")]
++    NothingRead,
++    #[error("A file of the database could not be {0}: {1}")]
++    Io(&'static str, std::io::Error),
++}
++
++/// What [`sealed_name`] and [`repair_name`] were given, by handle.
++#[derive(Clone, Copy)]
++struct Kept {
++    key: [u8; KEY_BYTES],
++    /// Whether a page of the database that does not open under its own key reads as one that holds nothing, for
++    /// SQLite's recovery, rather than as damage, as [`repair_name`]'s does.
++    lenient: bool,
+ }
+ 
+ /// The keys [`sealed_name`] was given, by the handle each name carries in its place. Kept for the process's life,
+-/// as the connections opened by each name are.
+-fn keys() -> &'static Mutex<HashMap<u64, [u8; KEY_BYTES]>> {
+-    static KEYS: OnceLock<Mutex<HashMap<u64, [u8; KEY_BYTES]>>> = OnceLock::new();
++/// as the connections opened by each name are, but for those [`forget`] is told of.
++fn keys() -> &'static Mutex<HashMap<u64, Kept>> {
++    static KEYS: OnceLock<Mutex<HashMap<u64, Kept>>> = OnceLock::new();
+     KEYS.get_or_init(Default::default)
+ }
+ 
++/// Where each lenient open, by its name's handle, found a page of its database that did not open.
++fn unreadable() -> &'static Mutex<HashMap<u64, std::collections::BTreeSet<i64>>> {
++    static UNREADABLE: OnceLock<Mutex<HashMap<u64, std::collections::BTreeSet<i64>>>> = OnceLock::new();
++    UNREADABLE.get_or_init(Default::default)
++}
++
+ /// The name to open the database at `path` by, sealed under `key`: a `file:` URI naming this VFS and a handle to the
+ /// key, which this keeps. Open it with `SQLITE_OPEN_URI`.
+ pub fn sealed_name(path: &Path, key: &[u8]) -> Result<PathBuf, Error> {
++    name_for(path, key, false).map(|(name, _)| name)
++}
++
++/// As [`sealed_name`], with the name's handle, for [`forget`].
++pub(crate) fn sealed_name_with_handle(path: &Path, key: &[u8]) -> Result<(PathBuf, u64), Error> {
++    name_for(path, key, false)
++}
++
++/// As [`sealed_name`], for SQLite's recovery: a page of the database that does not open under its own key reads as
++/// one that holds nothing, and is counted, where any other open fails it as damage. Under a key not shown to be the
++/// database's, every page that does not open is damage still. With the name's handle, for [`forget`].
++pub(crate) fn repair_name(path: &Path, key: &[u8]) -> Result<(PathBuf, u64), Error> {
++    name_for(path, key, true)
++}
++
++fn name_for(path: &Path, key: &[u8], lenient: bool) -> Result<(PathBuf, u64), Error> {
+     static NEXT: AtomicU64 = AtomicU64::new(1);
+     let key: [u8; KEY_BYTES] = key.try_into().map_err(|_| Error::KeyLength(key.len()))?;
+     // Named in the URI, an unregistered VFS fails the open; a key alone would be ignored, and the database made in
+@@ -113,9 +163,19 @@ pub fn sealed_name(path: &Path, key: &[u8]) -> Result<PathBuf, Error> {
+     }
+     let mut url = Url::from_file_path(path).map_err(|_| Error::RelativePath(path.to_owned()))?;
+     let handle = NEXT.fetch_add(1, Ordering::Relaxed);
+-    keys().lock().unwrap_or_else(|e| e.into_inner()).insert(handle, key);
++    keys().lock().unwrap_or_else(|e| e.into_inner()).insert(handle, Kept { key, lenient });
+     url.set_query(Some(&format!("vfs={}&sealed={handle}", NAME.to_str().expect("ASCII"))));
+-    Ok(PathBuf::from(String::from(url)))
++    Ok((PathBuf::from(String::from(url)), handle))
++}
++
++/// Zeroes and drops the key a name's handle hands over, once no connection opened by the name is open: How many
++/// pages of its database a lenient open found that did not open.
++pub(crate) fn forget(handle: u64) -> u64 {
++    if let Some(mut kept) = keys().lock().unwrap_or_else(|e| e.into_inner()).remove(&handle) {
++        kept.key.fill(0);
++    }
++    let pages = unreadable().lock().unwrap_or_else(|e| e.into_inner()).remove(&handle);
++    pages.map_or(0, |pages| pages.len() as u64)
+ }
+ 
+ /// On Android, where application-services has a SQLite of its own, registers obfsvfs before a database is opened,
+@@ -193,6 +253,9 @@ struct ObfsFile {
+     /// Whether the key is shown to be the file's own: its database's pages showed it as the database was opened, or a
+     /// page of this file has opened under it. A frame of the log that does not open is then one a crash tore.
+     key_is_its: bool,
++    /// The handle the file's name carries, and whether it is [`repair_name`]'s.
++    handle: u64,
++    lenient: bool,
+ }
+ 
+ /// A key's check: the first bytes of an HMAC-SHA-256 of [`CHECK_LABEL`] under it, with the last bit set, so that no
+@@ -349,6 +412,13 @@ unsafe extern "C" fn obfs_read(
+             } else if p.kind == Kind::Log && amount == PAGE + WAL_FRAME_HEADER_BYTES && p.key_is_its {
+                 // A frame of the log that does not open under a key shown to be its own: one a crash tore, or one
+                 // left from an earlier log. SQLite's checksum refuses it as it is, and the log ends there.
++            } else if p.kind == Kind::Database && amount == PAGE && p.lenient && p.key_is_its {
++                // For SQLite's recovery, which stops at a page that fails: one that does not open under the
++                // database's own key reads as one that holds nothing, which it passes over, and is counted.
++                let start = if page.starts_with(MAGIC) { CLEAR_PREFIX_BYTES } else { 0 };
++                page[start..].fill(0);
++                let mut unreadable = unreadable().lock().unwrap_or_else(|e| e.into_inner());
++                unreadable.entry(p.handle).or_default().insert(offset);
+             } else {
+                 warn!("obfsvfs: a page does not open under its database's key");
+                 return ffi::SQLITE_IOERR_DATA;
+@@ -485,7 +555,7 @@ unsafe extern "C" fn obfs_unfetch(file: *mut ffi::sqlite3_file, offset: ffi::sql
+ }
+ 
+ /// What the start of a database's file says it is.
+-enum OnDisk {
++pub(crate) enum OnDisk {
+     Missing,
+     Unreadable,
+     /// Too short to say, or not SQLite's: a new database, or one that reads as corrupt either way.
+@@ -494,7 +564,7 @@ enum OnDisk {
+     Sealed,
+ }
+ 
+-fn on_disk(path: &CStr) -> OnDisk {
++pub(crate) fn on_disk(path: &CStr) -> OnDisk {
+     let Ok(path) = path.to_str() else {
+         return OnDisk::Unreadable;
+     };
+@@ -599,19 +669,18 @@ fn checks(file: &mut std::fs::File, first: u64, stride: u64, check: &[u8; CHECK_
+     found
+ }
+ 
+-/// The key a file's name hands over, which a log's and a journal's name carry too: None if it names none, Err if it
+-/// names one that [`sealed_name`] was not given.
+-unsafe fn key_in(name: *const c_char) -> Option<Result<[u8; KEY_BYTES], ()>> {
++/// The key a file's name hands over, by its handle, which a log's and a journal's name carry too: None if it names
++/// none, Err if it names one that [`sealed_name`] was not given.
++unsafe fn key_in(name: *const c_char) -> Option<Result<(u64, Kept), ()>> {
+     let value = ffi::sqlite3_uri_parameter(name, c"sealed".as_ptr());
+     if value.is_null() {
+         return None;
+     }
+-    let key = CStr::from_ptr(value)
+-        .to_str()
+-        .ok()
+-        .and_then(|handle| handle.parse::<u64>().ok())
+-        .and_then(|handle| keys().lock().unwrap_or_else(|e| e.into_inner()).get(&handle).copied());
+-    Some(key.ok_or(()))
++    let kept = CStr::from_ptr(value).to_str().ok().and_then(|handle| handle.parse::<u64>().ok()).and_then(|handle| {
++        let kept = keys().lock().unwrap_or_else(|e| e.into_inner()).get(&handle).copied();
++        kept.map(|kept| (handle, kept))
++    });
++    Some(kept.ok_or(()))
+ }
+ 
+ unsafe extern "C" fn obfs_open(
+@@ -639,13 +708,16 @@ unsafe extern "C" fn obfs_open(
+         ffi::sqlite3_database_file_object(name)
+     };
+     let key = match key_in(name) {
+-        Some(Ok(key)) => Some(key),
++        Some(Ok(kept)) => Some(kept),
+         Some(Err(())) => {
+             warn!("obfsvfs: a sealed name whose key is not kept here is refused");
+             return ffi::SQLITE_CANTOPEN;
+         }
+         // A log's or a journal's name carries its database's key; its database is asked too.
+-        None if is_ours(database) => Some((*(database as *mut ObfsFile)).key),
++        None if is_ours(database) => {
++            let database = &*(database as *mut ObfsFile);
++            Some((database.handle, Kept { key: database.key, lenient: false }))
++        }
+         None => None,
+     };
+     if kind == Kind::Database {
+@@ -665,7 +737,7 @@ unsafe extern "C" fn obfs_open(
+             _ => {}
+         }
+     }
+-    let Some(mut key) = key else {
++    let Some((handle, Kept { mut key, lenient })) = key else {
+         return below_vfs_call!(vfs, xOpen, ffi::SQLITE_CANTOPEN, name, file, flags, out_flags);
+     };
+     let (Some(cipher), Some(check)) = (Cipher::new(&key), check_of(&key)) else {
+@@ -687,6 +759,8 @@ unsafe extern "C" fn obfs_open(
+             in_checkpoint: false,
+             // A log or a journal opens once its database has.
+             key_is_its: is_ours(database) && (*(database as *mut ObfsFile)).key_is_its,
++            handle,
++            lenient: lenient && kind == Kind::Database,
+         },
+     );
+     key.fill(0);
+diff --git a/third_party/application-services/components/support/sql/src/obfsvfs_repair.rs b/third_party/application-services/components/support/sql/src/obfsvfs_repair.rs
+new file mode 100644
+index 0000000000..170cbfad21
+--- /dev/null
++++ b/third_party/application-services/components/support/sql/src/obfsvfs_repair.rs
+@@ -0,0 +1,473 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++//! Whether a sealed database opens, and the repair of one that is damaged, for an app that asks its user what to do
++//! with a database that does not open: encriox, whose history, bookmarks, logins and cards are sealed
++//! (encri-firefox, W22).
++//!
++//! - [`check`] opens the database as its component would, and reads it through: its header, its schema, and every
++//!   page SQLite's quick check reads, each the newest of its copies, the log's or the database's. A key not the
++//!   database's is told from damage by the check of its key each page carries ([`crate::obfsvfs`]).
++//! - [`repair`] copies what SQLite's recovery can read of a damaged database (`src/recover/`) into a new one sealed
++//!   under the same key, which takes its place. A page that does not open under its key reads to the recovery as one
++//!   that holds nothing, and is counted; what it held is lost.
++
++use crate::obfsvfs::{self, Error, OnDisk};
++use crate::warn;
++use rusqlite::config::DbConfig;
++use rusqlite::{ffi, Connection, OpenFlags};
++use std::ffi::{c_char, c_int, c_void, CStr, CString};
++use std::os::unix::ffi::OsStrExt;
++use std::path::{Path, PathBuf};
++
++/// What [`check`] finds of a sealed database.
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub enum State {
++    /// There is none, or its file is empty: its component makes it.
++    Missing,
++    /// It opens under its key, and SQLite finds it whole.
++    Opens,
++    /// It is sealed under another key: refused, and left as it is.
++    WrongKey,
++    /// Under its own key, a page of it or of its log does not open, or SQLite finds it malformed.
++    Damaged,
++    /// It is in the clear, which a sealed open refuses.
++    InTheClear,
++}
++
++/// What [`repair`] copied into the database that took the damaged one's place.
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub struct Repaired {
++    /// Its tables, but SQLite's own.
++    pub tables: u32,
++    /// Their rows.
++    pub rows: u64,
++    /// The damaged database's pages that did not open, which the recovery read as holding nothing.
++    pub unreadable_pages: u64,
++}
++
++/// Whether the sealed database at `path` opens under `key`, read through, before its component opens it. It changes
++/// nothing but its log's index, as any open does: the log is never checkpointed into the database.
++pub fn check(path: &Path, key: &[u8]) -> Result<State, Error> {
++    match std::fs::metadata(path) {
++        // A database whose file is empty is new; SQLite deletes its log at an open, whatever the key.
++        Ok(meta) if meta.len() == 0 => return Ok(State::Missing),
++        Ok(_) => {}
++        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(State::Missing),
++        Err(e) => return Err(Error::Io("read", e)),
++    }
++    if matches!(obfsvfs::on_disk(&c_path(path)?), OnDisk::Clear) {
++        return Ok(State::InTheClear);
++    }
++    let (name, handle) = obfsvfs::sealed_name_with_handle(path, key)?;
++    let read = read_through(&name);
++    obfsvfs::forget(handle);
++    match read {
++        Ok(found) if found == ["ok"] => Ok(State::Opens),
++        Ok(found) => {
++            warn!("obfsvfs: SQLite finds a sealed database malformed, in {} places", found.len());
++            Ok(State::Damaged)
++        }
++        Err(e) => match extended_code(&e) {
++            Some(ffi::SQLITE_AUTH) => Ok(State::WrongKey),
++            Some(code) if is_damage(code) => Ok(State::Damaged),
++            _ => Err(Error::Sqlite("read the database through", e)),
++        },
++    }
++}
++
++/// The database by `name` opened as its component would, without a checkpoint at its close: its schema, then SQLite's
++/// quick check, which reads every page of its tables and indexes.
++fn read_through(name: &Path) -> rusqlite::Result<Vec<String>> {
++    let conn = Connection::open_with_flags(name, flags())?;
++    conn.set_db_config(DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE, true)?;
++    conn.query_row("SELECT count(*) FROM sqlite_schema", [], |row| row.get::<_, i64>(0))?;
++    let mut quick_check = conn.prepare("PRAGMA quick_check")?;
++    let found = quick_check.query_map([], |row| row.get::<_, String>(0))?;
++    found.collect()
++}
++
++/// Copies what SQLite's recovery can read of the damaged sealed database at `path`, under its own `key`, into a new
++/// database sealed under the same key, which then takes its place, its log, its log's index and its journal gone with
++/// it. The damaged database's pages that do not open read to the recovery as holding nothing, and are counted.
++/// Refused under a key that is not the database's, for one in the clear, and where the recovery fails or reads no
++/// table, each leaving the database as it was.
++pub fn repair(path: &Path, key: &[u8]) -> Result<Repaired, Error> {
++    match obfsvfs::on_disk(&c_path(path)?) {
++        OnDisk::Missing => return Err(Error::Missing),
++        OnDisk::Clear => return Err(Error::InTheClear),
++        _ => {}
++    }
++    let repaired = sibling(path, ".repair");
++    remove(&repaired)?;
++    let (input_name, input_handle) = obfsvfs::repair_name(path, key)?;
++    let (output_name, output_handle) = obfsvfs::sealed_name_with_handle(&repaired, key)?;
++    let copied = copy(&input_name, &output_name);
++    let unreadable_pages = obfsvfs::forget(input_handle);
++    obfsvfs::forget(output_handle);
++    let (tables, rows) = match copied {
++        Ok(copied) => copied,
++        Err(e) => {
++            remove(&repaired)?;
++            return Err(e);
++        }
++    };
++    // The damaged database's log first: SQLite would read its frames into the new database as its own.
++    for suffix in ["-wal", "-shm", "-journal"] {
++        remove_file(&sibling(path, suffix))?;
++    }
++    std::fs::rename(&repaired, path).map_err(|e| Error::Io("moved into place", e))?;
++    if let Some(dir) = path.parent() {
++        if let Err(e) = std::fs::File::open(dir).and_then(|dir| dir.sync_all()) {
++            warn!("obfsvfs: the repaired database's directory could not be synced: {e}");
++        }
++    }
++    Ok(Repaired {
++        tables,
++        rows,
++        unreadable_pages,
++    })
++}
++
++/// Runs SQLite's recovery from the database by `input_name`, lenient, into a new one by `output_name`, then closes
++/// both, the new one out of its log: how many tables it holds, and how many rows.
++fn copy(input_name: &Path, output_name: &Path) -> Result<(u32, u64), Error> {
++    let input = Connection::open_with_flags(input_name, flags()).map_err(|e| match extended_code(&e) {
++        Some(ffi::SQLITE_AUTH) => Error::WrongKey,
++        _ => Error::Sqlite("open the damaged database", e),
++    })?;
++    input
++        .set_db_config(DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE, true)
++        .map_err(|e| Error::Sqlite("keep the damaged database's log", e))?;
++    // Opens the database's log now, while the database's file is still obfsvfs's own: the recovery wraps the file
++    // as it begins, and a log opened then would not know that the key is its database's. What it reads is no matter.
++    let _ = input.query_row("SELECT count(*) FROM sqlite_schema", [], |row| row.get::<_, i64>(0));
++    let output = Connection::open_with_flags(output_name, flags() | OpenFlags::SQLITE_OPEN_CREATE)
++        .map_err(|e| Error::Sqlite("make the repaired database", e))?;
++    recover(&input, &output)?;
++    let counted = count(&output).map_err(|e| Error::Sqlite("count what was repaired", e))?;
++    if counted.0 == 0 {
++        return Err(Error::NothingRead);
++    }
++    // Out of its log, so that the database's file holds every page once it is closed.
++    let mode: String = output
++        .query_row("PRAGMA journal_mode = DELETE", [], |row| row.get(0))
++        .map_err(|e| Error::Sqlite("take the repaired database out of its log", e))?;
++    if !mode.eq_ignore_ascii_case("delete") {
++        return Err(Error::Recovery(format!("the repaired database stayed in journal mode {mode}")));
++    }
++    output.close().map_err(|(_, e)| Error::Sqlite("close the repaired database", e))?;
++    drop(input);
++    Ok(counted)
++}
++
++/// Its tables, but SQLite's own and virtual ones, and their rows.
++fn count(conn: &Connection) -> rusqlite::Result<(u32, u64)> {
++    let mut names = conn.prepare(
++        "SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\'
++         AND sql NOT LIKE 'CREATE VIRTUAL%'",
++    )?;
++    let names: Vec<String> = names.query_map([], |row| row.get(0))?.collect::<rusqlite::Result<_>>()?;
++    let mut rows = 0u64;
++    for name in &names {
++        let quoted = name.replace('"', "\"\"");
++        rows += conn.query_row(&format!("SELECT count(*) FROM \"{quoted}\""), [], |row| row.get::<_, i64>(0))? as u64;
++    }
++    Ok((names.len() as u32, rows))
++}
++
++#[allow(non_camel_case_types)]
++#[repr(C)]
++struct sqlite3_recover {
++    _opaque: [u8; 0],
++}
++
++const SQLITE_RECOVER_ROWIDS: c_int = 3;
++
++extern "C" {
++    fn sqlite3_recover_init_sql(
++        db: *mut ffi::sqlite3,
++        z_db: *const c_char,
++        x_sql: Option<unsafe extern "C" fn(*mut c_void, *const c_char) -> c_int>,
++        ctx: *mut c_void,
++    ) -> *mut sqlite3_recover;
++    fn sqlite3_recover_config(p: *mut sqlite3_recover, op: c_int, arg: *mut c_void) -> c_int;
++    fn sqlite3_recover_run(p: *mut sqlite3_recover) -> c_int;
++    fn sqlite3_recover_errmsg(p: *mut sqlite3_recover) -> *const c_char;
++    fn sqlite3_recover_finish(p: *mut sqlite3_recover) -> c_int;
++}
++
++/// Where the recovery's statements go: the new database, and the first failure there.
++struct Replay<'a> {
++    output: &'a Connection,
++    failed: Option<rusqlite::Error>,
++}
++
++unsafe extern "C" fn run_statement(ctx: *mut c_void, sql: *const c_char) -> c_int {
++    let replay = &mut *(ctx as *mut Replay<'_>);
++    let Ok(sql) = CStr::from_ptr(sql).to_str() else {
++        return ffi::SQLITE_ERROR;
++    };
++    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| replay.output.execute_batch(sql))) {
++        Ok(Ok(())) => ffi::SQLITE_OK,
++        Ok(Err(e)) => {
++            replay.failed.get_or_insert(e);
++            ffi::SQLITE_ERROR
++        }
++        Err(_) => ffi::SQLITE_ERROR,
++    }
++}
++
++/// SQLite's recovery of `input`'s main database, as SQL, which `output` runs: rows keep their ids, which places', the
++/// logins' and autofill's tables refer to each other by. Nothing of `input` is changed.
++fn recover(input: &Connection, output: &Connection) -> Result<(), Error> {
++    let mut replay = Replay { output, failed: None };
++    // SAFETY: the recovery's calls, on the handle of a connection that outlives it; `replay` outlives the handle.
++    let (rc, message) = unsafe {
++        let p = sqlite3_recover_init_sql(
++            input.handle(),
++            c"main".as_ptr(),
++            Some(run_statement),
++            &mut replay as *mut Replay<'_> as *mut c_void,
++        );
++        if p.is_null() {
++            return Err(Error::Recovery("it could not begin".into()));
++        }
++        let mut on: c_int = 1;
++        sqlite3_recover_config(p, SQLITE_RECOVER_ROWIDS, &mut on as *mut c_int as *mut c_void);
++        sqlite3_recover_run(p);
++        let message = sqlite3_recover_errmsg(p);
++        let message = (!message.is_null()).then(|| CStr::from_ptr(message).to_string_lossy().into_owned());
++        (sqlite3_recover_finish(p), message)
++    };
++    if let Some(e) = replay.failed {
++        let _ = output.execute_batch("ROLLBACK");
++        return Err(Error::Sqlite("write what was recovered", e));
++    }
++    if rc != ffi::SQLITE_OK {
++        let _ = output.execute_batch("ROLLBACK");
++        return Err(Error::Recovery(message.unwrap_or_else(|| format!("SQLite's code {rc}"))));
++    }
++    Ok(())
++}
++
++fn flags() -> OpenFlags {
++    OpenFlags::SQLITE_OPEN_URI | OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX
++}
++
++fn extended_code(e: &rusqlite::Error) -> Option<c_int> {
++    match e {
++        rusqlite::Error::SqliteFailure(failure, _) => Some(failure.extended_code),
++        _ => None,
++    }
++}
++
++/// A page that does not open under the database's own key, or what SQLite finds malformed.
++fn is_damage(code: c_int) -> bool {
++    code == ffi::SQLITE_IOERR_DATA || code & 0xff == ffi::SQLITE_CORRUPT || code & 0xff == ffi::SQLITE_NOTADB
++}
++
++fn c_path(path: &Path) -> Result<CString, Error> {
++    CString::new(path.as_os_str().as_bytes()).map_err(|_| Error::RelativePath(path.to_owned()))
++}
++
++fn sibling(path: &Path, suffix: &str) -> PathBuf {
++    let mut name = path.as_os_str().to_owned();
++    name.push(suffix);
++    PathBuf::from(name)
++}
++
++/// A database's files, gone: it, its log, its log's index and its journal.
++fn remove(path: &Path) -> Result<(), Error> {
++    for suffix in ["-wal", "-shm", "-journal", ""] {
++        remove_file(&sibling(path, suffix))?;
++    }
++    Ok(())
++}
++
++fn remove_file(path: &Path) -> Result<(), Error> {
++    match std::fs::remove_file(path) {
++        Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(Error::Io("deleted", e)),
++        _ => Ok(()),
++    }
++}
++
++#[cfg(test)]
++mod test {
++    use super::*;
++    use crate::obfsvfs::{sealed_name, KEY_BYTES, PAGE_SIZE};
++
++    const KEY: [u8; KEY_BYTES] = [7; KEY_BYTES];
++    const OTHER_KEY: [u8; KEY_BYTES] = [9; KEY_BYTES];
++    const MARKER: &str = "ENCRIOXREPAIR0123456789abcdef";
++
++    fn open(path: &Path, key: &[u8]) -> rusqlite::Result<Connection> {
++        let conn = Connection::open_with_flags(sealed_name(path, key).unwrap(), flags() | OpenFlags::SQLITE_OPEN_CREATE)?;
++        conn.execute_batch("PRAGMA journal_mode = WAL; PRAGMA wal_autocheckpoint = 0;")?;
++        Ok(conn)
++    }
++
++    fn insert(conn: &Connection, from: usize, rows: usize) {
++        let tx = conn.unchecked_transaction().unwrap();
++        for i in from..from + rows {
++            tx.execute("INSERT INTO t (id, v) VALUES (?, ?)", (i as i64 + 1, format!("{MARKER}-{i}-{}", "x".repeat(i % 200))))
++                .unwrap();
++        }
++        tx.commit().unwrap();
++    }
++
++    /// A sealed database in `dir` of `rows` rows in its file and `logged` more in its log, with an index over them,
++    /// as a new process finds it: copied, with its log, while the connection that wrote it is still open.
++    fn made(rows: usize, logged: usize) -> (tempfile::TempDir, PathBuf) {
++        let dir = tempfile::tempdir().unwrap();
++        let path = dir.path().join("places.sqlite");
++        let conn = open(&path, &KEY).unwrap();
++        conn.execute_batch("CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT); CREATE INDEX t_v ON t (v);").unwrap();
++        insert(&conn, 0, rows);
++        conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)").unwrap();
++        insert(&conn, rows, logged);
++        let copy = tempfile::tempdir().unwrap();
++        for name in ["places.sqlite", "places.sqlite-wal"] {
++            std::fs::copy(dir.path().join(name), copy.path().join(name)).unwrap();
++        }
++        let path = copy.path().join("places.sqlite");
++        (copy, path)
++    }
++
++    /// The rows the table's leaves hold, each page by its number, as SQLite's dbstat has them.
++    fn leaves(path: &Path) -> Vec<(i64, i64)> {
++        let conn = open(path, &KEY).unwrap();
++        conn.set_db_config(DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE, true).unwrap();
++        let mut stmt = conn
++            .prepare("SELECT pageno, ncell FROM dbstat WHERE name = 't' AND pagetype = 'leaf' ORDER BY pageno")
++            .unwrap();
++        let found = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
++        found.collect::<rusqlite::Result<_>>().unwrap()
++    }
++
++    /// Page `page` of the database's file changed, as damage changes it: its tag no longer holds.
++    fn damage(path: &Path, page: i64) {
++        let mut bytes = std::fs::read(path).unwrap();
++        let start = (page as usize - 1) * PAGE_SIZE;
++        for b in &mut bytes[start + 1000..start + 1016] {
++            *b ^= 0xff;
++        }
++        std::fs::write(path, bytes).unwrap();
++    }
++
++    fn rows(path: &Path) -> rusqlite::Result<i64> {
++        open(path, &KEY)?.query_row("SELECT count(*) FROM t WHERE v LIKE ?", [format!("{MARKER}%")], |r| r.get(0))
++    }
++
++    /// The directory's files and what each holds, but the log's index, which any open may make again.
++    fn files(dir: &Path) -> Vec<(String, Vec<u8>)> {
++        let mut found: Vec<_> = std::fs::read_dir(dir)
++            .unwrap()
++            .map(|e| e.unwrap().path())
++            .filter(|p| !p.to_string_lossy().ends_with("-shm"))
++            .map(|p| (p.file_name().unwrap().to_string_lossy().into_owned(), std::fs::read(&p).unwrap()))
++            .collect();
++        found.sort();
++        found
++    }
++
++    #[test]
++    fn test_check_tells_each_state_and_changes_nothing() {
++        let dir = tempfile::tempdir().unwrap();
++        assert_eq!(check(&dir.path().join("none.sqlite"), &KEY).unwrap(), State::Missing);
++        std::fs::write(dir.path().join("empty.sqlite"), b"").unwrap();
++        assert_eq!(check(&dir.path().join("empty.sqlite"), &KEY).unwrap(), State::Missing);
++        let clear = dir.path().join("clear.sqlite");
++        Connection::open(&clear).unwrap().execute_batch("CREATE TABLE t (v)").unwrap();
++        assert_eq!(check(&clear, &KEY).unwrap(), State::InTheClear);
++
++        let (copy, path) = made(500, 100);
++        let before = files(copy.path());
++        assert_eq!(check(&path, &KEY).unwrap(), State::Opens);
++        assert_eq!(files(copy.path()), before, "the check changed a file: its log was checkpointed");
++        assert_eq!(check(&path, &OTHER_KEY).unwrap(), State::WrongKey);
++        assert_eq!(files(copy.path()), before, "a check under another key changed a file");
++        // A page whose newest copy is the database's, not the log's.
++        damage(&path, leaves(&path)[0].0);
++        assert_eq!(check(&path, &KEY).unwrap(), State::Damaged);
++    }
++
++    #[test]
++    fn test_check_finds_a_damaged_page_an_open_does_not_read() {
++        let (_copy, path) = made(2000, 0);
++        let leaves = leaves(&path);
++        damage(&path, leaves[leaves.len() / 2].0);
++        let conn = open(&path, &KEY).unwrap();
++        conn.query_row("SELECT count(*) FROM sqlite_schema", [], |r| r.get::<_, i64>(0)).unwrap();
++        drop(conn);
++        assert_eq!(check(&path, &KEY).unwrap(), State::Damaged);
++    }
++
++    #[test]
++    fn test_repair_copies_every_row_but_the_damaged_page_s() {
++        let (copy, path) = made(2000, 0);
++        let leaves = leaves(&path);
++        let (page, lost) = leaves[leaves.len() / 2];
++        damage(&path, page);
++        let repaired = repair(&path, &KEY).unwrap();
++        assert_eq!(repaired, Repaired { tables: 1, rows: 2000 - lost as u64, unreadable_pages: 1 });
++        let names: Vec<_> = files(copy.path()).into_iter().map(|(name, _)| name).collect();
++        assert_eq!(names, ["places.sqlite"], "the damaged database's files are not all gone");
++        for (name, bytes) in files(copy.path()) {
++            assert!(!bytes.windows(MARKER.len()).any(|w| w == MARKER.as_bytes()), "{name} holds a row in the clear");
++        }
++        assert_eq!(rows(&path).unwrap(), 2000 - lost);
++        assert_eq!(check(&path, &KEY).unwrap(), State::Opens);
++        // Its index, made again from the rows.
++        let conn = open(&path, &KEY).unwrap();
++        let indexed: i64 = conn.query_row("SELECT count(*) FROM t INDEXED BY t_v WHERE v > ''", [], |r| r.get(0)).unwrap();
++        assert_eq!(indexed, 2000 - lost);
++    }
++
++    #[test]
++    fn test_repair_keeps_what_the_log_holds() {
++        let (_copy, path) = made(2000, 300);
++        let (page, lost) = leaves(&path)[1];
++        damage(&path, page);
++        let repaired = repair(&path, &KEY).unwrap();
++        assert_eq!(repaired.rows, 2300 - lost as u64);
++        assert_eq!(rows(&path).unwrap(), 2300 - lost);
++    }
++
++    #[test]
++    fn test_repair_reads_past_a_frame_a_crash_tore() {
++        let (_copy, path) = made(2000, 300);
++        let (page, lost) = leaves(&path)[1];
++        // The log's first frame, its page's second half zeros, as a write cut short leaves it: the log ends before
++        // it, and the 300 rows with it. No frame before it shows the key to be the log's, so its database must.
++        let log = sibling(&path, "-wal");
++        let mut bytes = std::fs::read(&log).unwrap();
++        let first = 32 + 24;
++        bytes[first + PAGE_SIZE / 2..first + PAGE_SIZE].fill(0);
++        std::fs::write(&log, bytes).unwrap();
++        damage(&path, page);
++        let repaired = repair(&path, &KEY).unwrap();
++        assert_eq!(repaired.rows, 2000 - lost as u64);
++        assert_eq!(rows(&path).unwrap(), 2000 - lost);
++    }
++
++    #[test]
++    fn test_repair_under_another_key_is_refused_and_changes_nothing() {
++        let (copy, path) = made(500, 100);
++        damage(&path, leaves(&path)[0].0);
++        let before = files(copy.path());
++        assert!(matches!(repair(&path, &OTHER_KEY), Err(Error::WrongKey)));
++        assert_eq!(files(copy.path()), before);
++    }
++
++    #[test]
++    fn test_repair_that_cannot_read_the_schema_leaves_the_database_as_it_was() {
++        let (copy, path) = made(500, 0);
++        damage(&path, 1);
++        let before = files(copy.path());
++        let e = repair(&path, &KEY).unwrap_err();
++        assert!(matches!(e, Error::Recovery(_) | Error::NothingRead), "{e}");
++        assert_eq!(files(copy.path()), before);
++    }
++}
+-- 
+2.47.3
+

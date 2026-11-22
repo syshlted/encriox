@@ -3,7 +3,8 @@
 # against the SQLite application-services bundles, with a toy cipher where NSS's AES-256-GCM would be, since there is
 # no NSS for the host. The toy seals nothing, but fails to open what another key sealed, or what was changed, as
 # AES-GCM does, so what is tested is the VFS: pages, the reserved bytes, the log and the journal, checkpoints, and
-# the refusals. Offline, from the checkout's vendored crates, with mach's Rust.
+# the refusals; and `obfsvfs_repair.rs`, its check and its repair, with SQLite's recovery compiled from the
+# checkout's `src/recover/`. Offline, from the checkout's vendored crates, with mach's Rust.
 #
 #   scripts/spike/stage-3/check-obfsvfs-host <firefox checkout>
 set -eu
@@ -34,8 +35,12 @@ edition = "2021"
 
 [dependencies]
 rusqlite = { version = "0.37.0", features = ["bundled"] }
+libsqlite3-sys = "0.35.0"
 url = "2.1"
 thiserror = "2"
+
+[build-dependencies]
+cc = "1.0"
 
 [dev-dependencies]
 tempfile = "3.1.0"
@@ -66,10 +71,18 @@ pub(crate) use crate::harness_warn as warn;
 mod obfsvfs_cipher;
 #[path = "$firefox/third_party/application-services/components/support/sql/src/obfsvfs.rs"]
 pub mod obfsvfs;
+#[path = "$firefox/third_party/application-services/components/support/sql/src/obfsvfs_repair.rs"]
+mod obfsvfs_repair;
 LIB
+# sql-support's own build script, which compiles SQLite's recovery from its directory.
+sed "s|\"src/recover|\"$firefox/third_party/application-services/components/support/sql/src/recover|" \
+    "$firefox/third_party/application-services/components/support/sql/build.rs" > "$crate/build.rs"
 cp "$here/obfsvfs-host/src/obfsvfs_cipher.rs" "$crate/src/obfsvfs_cipher.rs"
 
 cd "$crate"
+# Cargo takes a vendored crate as it was built last, by its version alone, and stage 3 patches libsqlite3-sys's build
+# script for SQLite's recovery: its build is made again each run.
+cargo clean --offline --quiet -p libsqlite3-sys
 status=0
 cargo test --offline --quiet > test.log 2>&1 || status=$?
 grep -v '^warning: patch .* was not used\|^help: \|^      ' test.log || true

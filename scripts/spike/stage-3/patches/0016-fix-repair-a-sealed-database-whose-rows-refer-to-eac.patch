@@ -1,0 +1,267 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jeremy Melanson <1080872+zish@users.noreply.github.com>
+Date: Sun, 22 Nov 2026 23:46:17 +0000
+Subject: [PATCH] fix: repair a sealed database whose rows refer to each other
+
+The repair of places failed, FOREIGN KEY constraint failed: this
+SQLite turns foreign keys on, and the recovery's pragma to turn them
+off comes inside its transaction, where SQLite ignores it, while it
+writes rows ahead of those they refer to. The repaired database's
+foreign keys are now off for the copy, and the rows left referring to
+a row lost with the damaged pages are dropped and counted: a visit
+without its page, a bookmark without its folder. places and the prompt
+carry the count.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+---
+ .../org/mozilla/fenix/encri/EncriStores.kt    |  4 +-
+ .../components/places/src/api/places_api.rs   |  2 +
+ .../components/places/src/places.udl          |  1 +
+ .../support/sql/src/obfsvfs_repair.rs         | 94 +++++++++++++++++--
+ .../appservices/places/uniffi/places.kt       |  7 +-
+ 5 files changed, 97 insertions(+), 11 deletions(-)
+
+diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriStores.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriStores.kt
+index ec21c3ce88..3d09e96f5a 100644
+--- a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriStores.kt
++++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriStores.kt
+@@ -167,14 +167,14 @@ object EncriStores {
+                         Log.i(
+                             TAG,
+                             "stores ${store.label} repaired tables=${r.tables} rows=${r.rows} " +
+-                                "unreadable=${r.unreadablePages}",
++                                "unreadable=${r.unreadablePages} dangling=${r.danglingRows}",
+                         )
+                         ask(
+                             Question(
+                                 store.title,
+                                 "${store.subject} are repaired: ${r.rows} rows in ${r.tables} tables are kept. " +
+                                     "${r.unreadablePages} of their pages could not be read, and what those held is " +
+-                                    "lost.",
++                                    "lost, with ${r.danglingRows} rows that referred to it.",
+                                 listOf(Answer.OK),
+                             ),
+                         )
+diff --git a/third_party/application-services/components/places/src/api/places_api.rs b/third_party/application-services/components/places/src/api/places_api.rs
+index 8c2b76c8be..a9ffddcc60 100644
+--- a/third_party/application-services/components/places/src/api/places_api.rs
++++ b/third_party/application-services/components/places/src/api/places_api.rs
+@@ -138,6 +138,7 @@ pub struct SealedDatabaseRepair {
+     pub tables: u32,
+     pub rows: u64,
+     pub unreadable_pages: u64,
++    pub dangling_rows: u64,
+ }
+ 
+ /// Whether the sealed database at `db_path`, places' or any other an app seals through sql-support's obfsvfs, opens
+@@ -167,6 +168,7 @@ pub fn sealed_database_repair(db_path: impl AsRef<Path>, mut key: Vec<u8>) -> Ap
+         tables: repaired.tables,
+         rows: repaired.rows,
+         unreadable_pages: repaired.unreadable_pages,
++        dangling_rows: repaired.dangling_rows,
+     })
+ }
+ 
+diff --git a/third_party/application-services/components/places/src/places.udl b/third_party/application-services/components/places/src/places.udl
+index cd7f24d059..b70e0a06b8 100644
+--- a/third_party/application-services/components/places/src/places.udl
++++ b/third_party/application-services/components/places/src/places.udl
+@@ -48,6 +48,7 @@ dictionary SealedDatabaseRepair {
+     u32 tables;           // Its tables, but SQLite's own.
+     u64 rows;             // Their rows.
+     u64 unreadable_pages; // The damaged database's pages that did not open, which the recovery read as holding nothing.
++    u64 dangling_rows;    // The rows read that referred to a row lost with those pages, a visit without its page, dropped.
+ };
+ 
+ enum ConnectionType {
+diff --git a/third_party/application-services/components/support/sql/src/obfsvfs_repair.rs b/third_party/application-services/components/support/sql/src/obfsvfs_repair.rs
+index 170cbfad21..8c85100f7d 100644
+--- a/third_party/application-services/components/support/sql/src/obfsvfs_repair.rs
++++ b/third_party/application-services/components/support/sql/src/obfsvfs_repair.rs
+@@ -45,6 +45,9 @@ pub struct Repaired {
+     pub rows: u64,
+     /// The damaged database's pages that did not open, which the recovery read as holding nothing.
+     pub unreadable_pages: u64,
++    /// The rows the recovery read that referred, by a foreign key, to a row lost with those pages, which were dropped:
++    /// a visit without its page, a bookmark without its folder.
++    pub dangling_rows: u64,
+ }
+ 
+ /// Whether the sealed database at `path` opens under `key`, read through, before its component opens it. It changes
+@@ -106,7 +109,7 @@ pub fn repair(path: &Path, key: &[u8]) -> Result<Repaired, Error> {
+     let copied = copy(&input_name, &output_name);
+     let unreadable_pages = obfsvfs::forget(input_handle);
+     obfsvfs::forget(output_handle);
+-    let (tables, rows) = match copied {
++    let (tables, rows, dangling_rows) = match copied {
+         Ok(copied) => copied,
+         Err(e) => {
+             remove(&repaired)?;
+@@ -127,12 +130,14 @@ pub fn repair(path: &Path, key: &[u8]) -> Result<Repaired, Error> {
+         tables,
+         rows,
+         unreadable_pages,
++        dangling_rows,
+     })
+ }
+ 
+-/// Runs SQLite's recovery from the database by `input_name`, lenient, into a new one by `output_name`, then closes
+-/// both, the new one out of its log: how many tables it holds, and how many rows.
+-fn copy(input_name: &Path, output_name: &Path) -> Result<(u32, u64), Error> {
++/// Runs SQLite's recovery from the database by `input_name`, lenient, into a new one by `output_name`, drops the rows
++/// that refer to rows it could not read, then closes both, the new one out of its log: how many tables it holds, how
++/// many rows, and how many were dropped.
++fn copy(input_name: &Path, output_name: &Path) -> Result<(u32, u64, u64), Error> {
+     let input = Connection::open_with_flags(input_name, flags()).map_err(|e| match extended_code(&e) {
+         Some(ffi::SQLITE_AUTH) => Error::WrongKey,
+         _ => Error::Sqlite("open the damaged database", e),
+@@ -145,9 +150,15 @@ fn copy(input_name: &Path, output_name: &Path) -> Result<(u32, u64), Error> {
+     let _ = input.query_row("SELECT count(*) FROM sqlite_schema", [], |row| row.get::<_, i64>(0));
+     let output = Connection::open_with_flags(output_name, flags() | OpenFlags::SQLITE_OPEN_CREATE)
+         .map_err(|e| Error::Sqlite("make the repaired database", e))?;
++    // Foreign keys off for the copy, which writes a table's rows before or after those they refer to: the recovery's
++    // own pragma for it comes inside its transaction, where SQLite ignores it, and this SQLite turns them on.
++    output
++        .execute_batch("PRAGMA foreign_keys = OFF")
++        .map_err(|e| Error::Sqlite("turn the repaired database's foreign keys off", e))?;
+     recover(&input, &output)?;
+-    let counted = count(&output).map_err(|e| Error::Sqlite("count what was repaired", e))?;
+-    if counted.0 == 0 {
++    let dangling = drop_dangling(&output).map_err(|e| Error::Sqlite("drop the rows that refer to rows lost", e))?;
++    let (tables, rows) = count(&output).map_err(|e| Error::Sqlite("count what was repaired", e))?;
++    if tables == 0 {
+         return Err(Error::NothingRead);
+     }
+     // Out of its log, so that the database's file holds every page once it is closed.
+@@ -159,7 +170,32 @@ fn copy(input_name: &Path, output_name: &Path) -> Result<(u32, u64), Error> {
+     }
+     output.close().map_err(|(_, e)| Error::Sqlite("close the repaired database", e))?;
+     drop(input);
+-    Ok(counted)
++    Ok((tables, rows, dangling))
++}
++
++/// Deletes the rows that refer, by a foreign key, to a row that is not there, as the recovery leaves those whose
++/// referent was in a page it could not read, until none does, or none of those left can be addressed: how many. A row
++/// of a table without rowids cannot be, and is left.
++fn drop_dangling(conn: &Connection) -> rusqlite::Result<u64> {
++    let mut dropped = 0;
++    loop {
++        let mut check = conn.prepare("PRAGMA foreign_key_check")?;
++        let found = check.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<i64>>(1)?)))?;
++        let found: Vec<_> = found.collect::<rusqlite::Result<_>>()?;
++        let tx = conn.unchecked_transaction()?;
++        let mut deleted = 0;
++        for (table, rowid) in found {
++            if let Some(rowid) = rowid {
++                let quoted = table.replace('"', "\"\"");
++                deleted += tx.execute(&format!("DELETE FROM \"{quoted}\" WHERE rowid = ?"), [rowid])? as u64;
++            }
++        }
++        tx.commit()?;
++        if deleted == 0 {
++            return Ok(dropped);
++        }
++        dropped += deleted;
++    }
+ }
+ 
+ /// Its tables, but SQLite's own and virtual ones, and their rows.
+@@ -411,7 +447,10 @@ mod test {
+         let (page, lost) = leaves[leaves.len() / 2];
+         damage(&path, page);
+         let repaired = repair(&path, &KEY).unwrap();
+-        assert_eq!(repaired, Repaired { tables: 1, rows: 2000 - lost as u64, unreadable_pages: 1 });
++        assert_eq!(
++            repaired,
++            Repaired { tables: 1, rows: 2000 - lost as u64, unreadable_pages: 1, dangling_rows: 0 }
++        );
+         let names: Vec<_> = files(copy.path()).into_iter().map(|(name, _)| name).collect();
+         assert_eq!(names, ["places.sqlite"], "the damaged database's files are not all gone");
+         for (name, bytes) in files(copy.path()) {
+@@ -452,6 +491,45 @@ mod test {
+         assert_eq!(rows(&path).unwrap(), 2000 - lost);
+     }
+ 
++    #[test]
++    fn test_repair_drops_the_rows_whose_referent_was_lost_and_keeps_the_rest() {
++        let dir = tempfile::tempdir().unwrap();
++        let path = dir.path().join("places.sqlite");
++        {
++            let conn = open(&path, &KEY).unwrap();
++            // As places' own: visits refer to their pages, with foreign keys on, as this SQLite has them by default.
++            conn.execute_batch(
++                "CREATE TABLE p (id INTEGER PRIMARY KEY, v TEXT);
++                 CREATE TABLE c (id INTEGER PRIMARY KEY, p INTEGER NOT NULL REFERENCES p(id) ON DELETE CASCADE);",
++            )
++            .unwrap();
++            let tx = conn.unchecked_transaction().unwrap();
++            for i in 1..=2000i64 {
++                tx.execute("INSERT INTO p (id, v) VALUES (?, ?)", (i, format!("{MARKER}-{i}-{}", "x".repeat(200))))
++                    .unwrap();
++                tx.execute("INSERT INTO c (p) VALUES (?)", [i]).unwrap();
++            }
++            tx.commit().unwrap();
++        }
++        let conn = open(&path, &KEY).unwrap();
++        conn.set_db_config(DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE, true).unwrap();
++        let (page, lost): (i64, i64) = conn
++            .query_row(
++                "SELECT pageno, ncell FROM dbstat WHERE name = 'p' AND pagetype = 'leaf' ORDER BY pageno LIMIT 1 OFFSET 3",
++                [],
++                |r| Ok((r.get(0)?, r.get(1)?)),
++            )
++            .unwrap();
++        drop(conn);
++        damage(&path, page);
++        let repaired = repair(&path, &KEY).unwrap();
++        assert_eq!(repaired.dangling_rows, lost as u64);
++        assert_eq!(repaired.rows, 2 * (2000 - lost as u64));
++        let conn = open(&path, &KEY).unwrap();
++        let broken: i64 = conn.query_row("SELECT count(*) FROM pragma_foreign_key_check", [], |r| r.get(0)).unwrap();
++        assert_eq!(broken, 0);
++    }
++
+     #[test]
+     fn test_repair_under_another_key_is_refused_and_changes_nothing() {
+         let (copy, path) = made(500, 100);
+diff --git a/toolkit/components/uniffi-bindgen-gecko-js/android/components/places/android/src/main/java/mozilla/appservices/places/uniffi/places.kt b/toolkit/components/uniffi-bindgen-gecko-js/android/components/places/android/src/main/java/mozilla/appservices/places/uniffi/places.kt
+index fb48ad7f98..0a1e9d6d97 100644
+--- a/toolkit/components/uniffi-bindgen-gecko-js/android/components/places/android/src/main/java/mozilla/appservices/places/uniffi/places.kt
++++ b/toolkit/components/uniffi-bindgen-gecko-js/android/components/places/android/src/main/java/mozilla/appservices/places/uniffi/places.kt
+@@ -3797,6 +3797,8 @@ data class SealedDatabaseRepair (
+     var `rows`: kotlin.ULong
+     , 
+     var `unreadablePages`: kotlin.ULong
++    , 
++    var `danglingRows`: kotlin.ULong
+     
+ ){
+     
+@@ -3816,19 +3818,22 @@ public object FfiConverterTypeSealedDatabaseRepair: FfiConverterRustBuffer<Seale
+             FfiConverterUInt.read(buf),
+             FfiConverterULong.read(buf),
+             FfiConverterULong.read(buf),
++            FfiConverterULong.read(buf),
+         )
+     }
+ 
+     override fun allocationSize(value: SealedDatabaseRepair) = (
+             FfiConverterUInt.allocationSize(value.`tables`) +
+             FfiConverterULong.allocationSize(value.`rows`) +
+-            FfiConverterULong.allocationSize(value.`unreadablePages`)
++            FfiConverterULong.allocationSize(value.`unreadablePages`) +
++            FfiConverterULong.allocationSize(value.`danglingRows`)
+     )
+ 
+     override fun write(value: SealedDatabaseRepair, buf: ByteBuffer) {
+             FfiConverterUInt.write(value.`tables`, buf)
+             FfiConverterULong.write(value.`rows`, buf)
+             FfiConverterULong.write(value.`unreadablePages`, buf)
++            FfiConverterULong.write(value.`danglingRows`, buf)
+     }
+ }
+ 
+-- 
+2.47.3
+

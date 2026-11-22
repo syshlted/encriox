@@ -1,0 +1,184 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jeremy Melanson <1080872+zish@users.noreply.github.com>
+Date: Sun, 22 Nov 2026 23:44:28 +0000
+Subject: [PATCH] fix: leave a kept store's database unopened, and answer its
+ question
+
+Keep let the store open its damaged database as it always had, and the
+failed open's close checkpointed the log into the damaged file and
+deleted the log, which check-stores found on the G6. A kept store is
+now refused its key for the rest of the session, with what a failed
+open of its own throws, so that nothing opens the database. An answer
+is taken only for the question it was shown for, never for a later one.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+---
+ .../org/mozilla/fenix/encri/EncriStores.kt    | 34 +++++++++++++++----
+ .../fenix/encri/EncriStoresActivity.kt        |  7 ++--
+ 2 files changed, 32 insertions(+), 9 deletions(-)
+
+diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriStores.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriStores.kt
+index 7caaa9fc57..8514168d73 100644
+--- a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriStores.kt
++++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriStores.kt
+@@ -18,6 +18,9 @@ import kotlinx.coroutines.SupervisorJob
+ import kotlinx.coroutines.async
+ import kotlinx.coroutines.sync.Mutex
+ import kotlinx.coroutines.sync.withLock
++import mozilla.appservices.autofill.AutofillApiException
++import mozilla.appservices.logins.LoginsApiException
++import mozilla.appservices.places.uniffi.PlacesApiException
+ import mozilla.appservices.places.uniffi.SealedDatabaseState
+ import mozilla.appservices.places.uniffi.sealedDatabaseCheck
+ import mozilla.appservices.places.uniffi.sealedDatabaseRepair
+@@ -34,20 +37,25 @@ import mozilla.appservices.places.uniffi.sealedDatabaseRepair
+  * - sealed under another key: kept as it is, and gone on without, never offered for deletion;
+  * - in the clear, which a sealed open refuses: delete it, or keep it.
+  *
+- * Nothing is deleted unasked. A kept database is asked about again at the next start, and its store's opens fail as
+- * they would have, which the store takes as it always has. Sync is off (W17), so the questions say that nothing
++ * Nothing is deleted unasked. A kept database is asked about again at the next start, and its store does not open it:
++ * each of its opens fails as one of the database's own would have, which the store takes as it always has, so that
++ * nothing is written into it, not even a checkpoint of its log. Sync is off (W17), so the questions say that nothing
+  * deleted or lost comes back.
+  */
+ object EncriStores {
+     private const val TAG = EncriDownloadFileWriter.TAG
+ 
+-    /** The three sealed stores, each by its database and its key. */
++    /**
++     * The three sealed stores, each by its database and its key, and what its store is answered for a database the
++     * user kept: what a failed open of its own throws.
++     */
+     enum class Store(
+         internal val label: String,
+         internal val title: String,
+         internal val subject: String,
+         private val file: (Context) -> File,
+         private val derive: suspend () -> ByteArray,
++        private val refusal: (String) -> Exception,
+     ) {
+         PLACES(
+             "places",
+@@ -55,6 +63,7 @@ object EncriStores {
+             "Your history and bookmarks",
+             { File(it.filesDir, "places.sqlite") },
+             EncriDatabaseKeys::places,
++            { PlacesApiException.UnexpectedPlacesException(it) },
+         ),
+         LOGINS(
+             "logins",
+@@ -62,6 +71,7 @@ object EncriStores {
+             "Your saved logins",
+             { it.getDatabasePath("logins2.sqlite") },
+             EncriDatabaseKeys::logins,
++            { LoginsApiException.UnexpectedLoginsApiException(it) },
+         ),
+         AUTOFILL(
+             "autofill",
+@@ -69,12 +79,15 @@ object EncriStores {
+             "Your saved cards and addresses",
+             { it.getDatabasePath("autofill.sqlite") },
+             EncriDatabaseKeys::autofill,
++            { AutofillApiException.SqlException(it) },
+         ),
+         ;
+ 
+         internal fun path(context: Context): File = file(context)
+ 
+         internal suspend fun key(): ByteArray = derive()
++
++        internal fun refused(): Exception = refusal("$label is kept as it is, at the user's word, and not opened")
+     }
+ 
+     /** An answer to a question, by the label of its button. */
+@@ -95,12 +108,14 @@ object EncriStores {
+ 
+     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+     private val decisions = ConcurrentHashMap<Store, Deferred<Unit>>()
++    private val kept = ConcurrentHashMap.newKeySet<Store>()
+     private val asking = Mutex()
+     private var pending: Pair<Question, CompletableDeferred<Answer>>? = null
+ 
+     /**
+      * The key [store]'s database is sealed with, once the database is known to open, or the user has said what to do
+-     * with it. Its store asks for it when it first opens its database, and waits.
++     * with it. Its store asks for it when it first opens its database, and waits. For a database the user kept, it
++     * throws what a failed open of the store's own would, every time it is asked in this process.
+      */
+     suspend fun key(
+         context: Context,
+@@ -118,6 +133,7 @@ object EncriStores {
+             decisions.remove(store, decision)
+             Log.i(TAG, "stores ${store.label} not decided: ${e.message}")
+         }
++        if (store in kept) throw store.refused()
+         return store.key()
+     }
+ 
+@@ -169,6 +185,7 @@ object EncriStores {
+                     }
+                 }
+                 else -> {
++                    kept.add(store)
+                     Log.i(TAG, "stores ${store.label} kept")
+                     return
+                 }
+@@ -245,10 +262,13 @@ object EncriStores {
+     @Synchronized
+     internal fun question(): Question? = pending?.first
+ 
+-    /** What [EncriStoresActivity] was answered. */
++    /** What [EncriStoresActivity] was answered to [question]: never taken for a later question's answer. */
+     @Synchronized
+-    internal fun answer(answer: Answer) {
+-        pending?.second?.complete(answer)
++    internal fun answer(
++        question: Question,
++        answer: Answer,
++    ) {
++        pending?.takeIf { it.first === question }?.second?.complete(answer)
+     }
+ 
+     /** A database's files, deleted: it, its log, its log's index, its journal, and a repair a crash left. */
+diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriStoresActivity.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriStoresActivity.kt
+index c83f5fdd3a..584ed450ff 100644
+--- a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriStoresActivity.kt
++++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriStoresActivity.kt
+@@ -16,6 +16,7 @@ import android.os.Bundle
+  */
+ class EncriStoresActivity : Activity() {
+     private var shown: AlertDialog? = null
++    private var asked: EncriStores.Question? = null
+     private var answered = false
+ 
+     override fun onCreate(savedInstanceState: Bundle?) {
+@@ -25,6 +26,7 @@ class EncriStoresActivity : Activity() {
+             finish()
+             return
+         }
++        asked = question
+         val buttons =
+             listOf(DialogInterface.BUTTON_POSITIVE, DialogInterface.BUTTON_NEGATIVE, DialogInterface.BUTTON_NEUTRAL)
+         shown =
+@@ -42,14 +44,15 @@ class EncriStoresActivity : Activity() {
+     }
+ 
+     private fun reply(answer: EncriStores.Answer) {
++        if (answered) return
+         answered = true
+-        EncriStores.answer(answer)
++        asked?.let { EncriStores.answer(it, answer) }
+         finish()
+     }
+ 
+     override fun onDestroy() {
+         shown?.dismiss()
+-        if (isFinishing && !answered) EncriStores.answer(EncriStores.Answer.KEEP)
++        if (isFinishing) reply(EncriStores.Answer.KEEP)
+         super.onDestroy()
+     }
+ }
+-- 
+2.47.3
+

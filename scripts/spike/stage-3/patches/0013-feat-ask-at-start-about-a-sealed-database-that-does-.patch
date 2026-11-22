@@ -1,0 +1,553 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jeremy Melanson <1080872+zish@users.noreply.github.com>
+Date: Sun, 22 Nov 2026 23:43:33 +0000
+Subject: [PATCH] feat: ask at start about a sealed database that does not open
+
+Each of the spike's three sealed stores' keys waits, once a process,
+for its database to be read through under it. One that opens, or is
+not there, goes on at once. One that is damaged brings up a question
+from the browser's activity in front: repair it, delete it and start
+the store empty, or keep it and go on without it. One under another key
+is kept, never offered for deletion, and one in the clear may be
+deleted or kept. Nothing is deleted unasked, a kept database is asked
+about again at the next start, and the questions say that, with Sync
+off, nothing deleted or lost comes back. The gate gains `stores check`
+and `seal fill`, for check-stores.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+---
+ .../fenix/app/src/main/AndroidManifest.xml    |   7 +
+ .../java/org/mozilla/fenix/components/Core.kt |  17 +-
+ .../mozilla/fenix/encri/EncriGateActivity.kt  |  27 +-
+ .../org/mozilla/fenix/encri/EncriStores.kt    | 274 ++++++++++++++++++
+ .../fenix/encri/EncriStoresActivity.kt        |  55 ++++
+ .../org/mozilla/fenix/encri/EncriUnlock.kt    |  21 +-
+ 6 files changed, 390 insertions(+), 11 deletions(-)
+ create mode 100644 mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriStores.kt
+ create mode 100644 mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriStoresActivity.kt
+
+diff --git a/mobile/android/fenix/app/src/main/AndroidManifest.xml b/mobile/android/fenix/app/src/main/AndroidManifest.xml
+index 08bf4e5981..c074f87c33 100644
+--- a/mobile/android/fenix/app/src/main/AndroidManifest.xml
++++ b/mobile/android/fenix/app/src/main/AndroidManifest.xml
+@@ -519,6 +519,13 @@
+             android:exported="true"
+             android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+ 
++        <!-- encriox's stage 3 spike: asks what to do with a sealed database that does not open (W22). -->
++        <activity
++            android:name=".encri.EncriStoresActivity"
++            android:exported="false"
++            android:configChanges="keyboard|keyboardHidden|orientation|screenLayout|screenSize|smallestScreenSize|uiMode"
++            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
++
+         <!-- encriox's stage 2 spike: shows encri's screens when the vault is not open to the browser. -->
+         <activity
+             android:name=".encri.EncriUnlockActivity"
+diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/components/Core.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/components/Core.kt
+index aa457d2bba..94db5bea98 100644
+--- a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/components/Core.kt
++++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/components/Core.kt
+@@ -122,7 +122,7 @@ import org.mozilla.fenix.components.search.ApplicationSearchMiddleware
+ import org.mozilla.fenix.components.search.SearchMigration
+ import org.mozilla.fenix.components.search.SearchWidgetMiddleware
+ import org.mozilla.fenix.downloads.DownloadService
+-import org.mozilla.fenix.encri.EncriDatabaseKeys
++import org.mozilla.fenix.encri.EncriStores
+ import org.mozilla.fenix.encri.EncriKeyPreferences
+ import org.mozilla.fenix.ext.components
+ import org.mozilla.fenix.ext.isLargeWindow
+@@ -544,26 +544,27 @@ class Core(
+     // We can fully initialize GeckoEngine without initialized our storage.
+     // encriox's spike seals places' database, the history and the bookmarks, the logins' and the cards' with keys from
+     // the one the vault holds (encri-firefox, stage 3), where a release keeps them in the clear, as the control run of
+-    // check-sealed does.
+-    private fun sealedWith(key: suspend () -> ByteArray) =
+-        key.takeUnless { context.components.settings.encrioxUnsealed }
++    // check-sealed does. Each key waits for its database to be read through, and for the user's answer if it does not
++    // open (W22).
++    private fun sealedWith(store: EncriStores.Store): (suspend () -> ByteArray)? =
++        if (context.components.settings.encrioxUnsealed) null else { -> EncriStores.key(context, store) }
+     val lazyHistoryStorage = lazyMonitored {
+-        PlacesHistoryStorage(context, crashReporter, databaseKey = sealedWith(EncriDatabaseKeys::places))
++        PlacesHistoryStorage(context, crashReporter, databaseKey = sealedWith(EncriStores.Store.PLACES))
+     }
+     val lazyBookmarksStorage = lazyMonitored {
+-        PlacesBookmarksStorage(context, databaseKey = sealedWith(EncriDatabaseKeys::places))
++        PlacesBookmarksStorage(context, databaseKey = sealedWith(EncriStores.Store.PLACES))
+     }
+     // encriox's spike seals the logins' and the cards' keys with the key the vault holds, where a release kept them in
+     // plaintext beside the stores (encri-firefox W6).
+     private val lazyEncriKeys = lazy { EncriKeyPreferences(context) }
+     val lazyPasswordsStorage = lazyMonitored {
+-        SyncableLoginsStorage(context, lazyEncriKeys, databaseKey = sealedWith(EncriDatabaseKeys::logins))
++        SyncableLoginsStorage(context, lazyEncriKeys, databaseKey = sealedWith(EncriStores.Store.LOGINS))
+     }
+     val lazyAutofillStorage = lazyMonitored {
+         AutofillCreditCardsAddressesStorage(
+             context,
+             lazyEncriKeys,
+-            databaseKey = sealedWith(EncriDatabaseKeys::autofill),
++            databaseKey = sealedWith(EncriStores.Store.AUTOFILL),
+         )
+     }
+     val lazyDomainsAutocompleteProvider = lazyMonitored {
+diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt
+index bd2a4d72ea..f3b004852c 100644
+--- a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt
++++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt
+@@ -101,10 +101,14 @@ import org.mozilla.gecko.util.GeckoBundle
+  *   clear unless the database is sealed; `read` logs how many of each the stores hold, opened with their keys;
+  *   `forget` deletes them; `plain` opens each of the three databases without its key, as a component given none
+  *   would, and `wrong` each under another's key, as a key not its own would, and each logs what each open did;
++ *   `--es seal fill --ei visits <n>` records n visits to pages that hold no marker, for a places database of more
++ *   pages than the four fill;
+  * - `--es keycheck make|read`, stage 3's key check, on a sealed places database of the gate's own in the cache under
+  *   a key of its own: `make --ei visits <n> --ei more <m>` records n visits and closes it, which puts them in the
+  *   database and deletes its log, then m more, which it leaves in a log for the app to be stopped, as a crash stops
+- *   it; `read` opens it and logs how many visits it holds, or what the open or the read did.
++ *   it; `read` opens it and logs how many visits it holds, or what the open or the read did;
++ * - `--es stores check` logs what [EncriStores]' check finds of each of the three databases, which it reads through
++ *   under its key, asking nothing and changing nothing but a log's index.
+  *
+  * Every result is a line under the tag `encriox-spike`.
+  */
+@@ -212,7 +216,15 @@ class EncriGateActivity : ComponentActivity() {
+             extras.getBoolean("forget") -> work.launch { forgetKept(context) }
+             extras.getBoolean("clean") -> work.launch { clean(context) }
+             extras.containsKey("seal") ->
+-                work.launch { seal(context, extras.getString("seal").orEmpty(), extras.getString("marker").orEmpty()) }
++                work.launch {
++                    val how = extras.getString("seal").orEmpty()
++                    seal(context, how, extras.getString("marker").orEmpty(), extras.getInt("visits"))
++                }
++            extras.getString("stores") == "check" ->
++                work.launch {
++                    val states = EncriStores.states(context)
++                    Log.i(TAG, "stores check ${states.entries.joinToString(" ") { "${it.key.label}=${it.value}" }}")
++                }
+             extras.containsKey("keycheck") ->
+                 work.launch {
+                     val how = extras.getString("keycheck").orEmpty()
+@@ -457,6 +469,7 @@ class EncriGateActivity : ComponentActivity() {
+             context: Context,
+             how: String,
+             marker: String,
++            visits: Int = 0,
+         ) {
+             val core = context.components.core
+             val page = "$SEAL_ORIGIN/places/$marker"
+@@ -501,6 +514,16 @@ class EncriGateActivity : ComponentActivity() {
+                             "card=${card.said()}",
+                     )
+                 }
++                "fill" -> {
++                    val filled =
++                        runCatching {
++                            repeat(visits) { i ->
++                                core.historyStorage.recordVisit("$SEAL_ORIGIN/fill/$i", PageVisit(VisitType.LINK))
++                            }
++                            visits
++                        }
++                    Log.i(TAG, "seal filled visits=${filled.said()}")
++                }
+                 "read" -> {
+                     val visits =
+                         runCatching {
+diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriStores.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriStores.kt
+new file mode 100644
+index 0000000000..7caaa9fc57
+--- /dev/null
++++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriStores.kt
+@@ -0,0 +1,274 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
++
++package org.mozilla.fenix.encri
++
++import android.content.Context
++import android.content.Intent
++import android.util.Log
++import java.io.File
++import java.util.concurrent.ConcurrentHashMap
++import kotlinx.coroutines.CancellationException
++import kotlinx.coroutines.CompletableDeferred
++import kotlinx.coroutines.CoroutineScope
++import kotlinx.coroutines.Deferred
++import kotlinx.coroutines.Dispatchers
++import kotlinx.coroutines.SupervisorJob
++import kotlinx.coroutines.async
++import kotlinx.coroutines.sync.Mutex
++import kotlinx.coroutines.sync.withLock
++import mozilla.appservices.places.uniffi.SealedDatabaseState
++import mozilla.appservices.places.uniffi.sealedDatabaseCheck
++import mozilla.appservices.places.uniffi.sealedDatabaseRepair
++
++/**
++ * Asks the user what to do with a sealed database that does not open, before its store opens it (encri-firefox W22):
++ * places', which holds the history and the bookmarks, the logins' and autofill's. Each store's key waits here, once a
++ * process, for its database to be read through under it. One that opens, or is not there yet, goes on at once. One
++ * that does not brings up a question, from whichever of the browser's activities is in the foreground, and its store
++ * waits for the answer:
++ *
++ * - damaged, under its own key: repair it, which keeps what SQLite's recovery can still read and loses the rest;
++ *   delete it, and start the store empty; or keep it as it is, and go on without it;
++ * - sealed under another key: kept as it is, and gone on without, never offered for deletion;
++ * - in the clear, which a sealed open refuses: delete it, or keep it.
++ *
++ * Nothing is deleted unasked. A kept database is asked about again at the next start, and its store's opens fail as
++ * they would have, which the store takes as it always has. Sync is off (W17), so the questions say that nothing
++ * deleted or lost comes back.
++ */
++object EncriStores {
++    private const val TAG = EncriDownloadFileWriter.TAG
++
++    /** The three sealed stores, each by its database and its key. */
++    enum class Store(
++        internal val label: String,
++        internal val title: String,
++        internal val subject: String,
++        private val file: (Context) -> File,
++        private val derive: suspend () -> ByteArray,
++    ) {
++        PLACES(
++            "places",
++            "History and bookmarks",
++            "Your history and bookmarks",
++            { File(it.filesDir, "places.sqlite") },
++            EncriDatabaseKeys::places,
++        ),
++        LOGINS(
++            "logins",
++            "Saved logins",
++            "Your saved logins",
++            { it.getDatabasePath("logins2.sqlite") },
++            EncriDatabaseKeys::logins,
++        ),
++        AUTOFILL(
++            "autofill",
++            "Saved cards and addresses",
++            "Your saved cards and addresses",
++            { it.getDatabasePath("autofill.sqlite") },
++            EncriDatabaseKeys::autofill,
++        ),
++        ;
++
++        internal fun path(context: Context): File = file(context)
++
++        internal suspend fun key(): ByteArray = derive()
++    }
++
++    /** An answer to a question, by the label of its button. */
++    enum class Answer(internal val label: String) {
++        REPAIR("Repair"),
++        DELETE("Delete"),
++        KEEP("Keep"),
++        GO_ON("Go on without them"),
++        OK("OK"),
++    }
++
++    /** A question for [EncriStoresActivity]: up to three answers, the first the alert's positive button. */
++    internal class Question(
++        val title: String,
++        val message: String,
++        val answers: List<Answer>,
++    )
++
++    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
++    private val decisions = ConcurrentHashMap<Store, Deferred<Unit>>()
++    private val asking = Mutex()
++    private var pending: Pair<Question, CompletableDeferred<Answer>>? = null
++
++    /**
++     * The key [store]'s database is sealed with, once the database is known to open, or the user has said what to do
++     * with it. Its store asks for it when it first opens its database, and waits.
++     */
++    suspend fun key(
++        context: Context,
++        store: Store,
++    ): ByteArray {
++        val app = context.applicationContext
++        // Its own scope's, not the store's: a store's call cancelled mid-question leaves the question to the next. A
++        // decision that failed is not kept: the store's key is asked for again, as it was before there were questions.
++        val decision = decisions.computeIfAbsent(store) { scope.async { decide(app, store) } }
++        try {
++            decision.await()
++        } catch (e: CancellationException) {
++            throw e
++        } catch (e: Exception) {
++            decisions.remove(store, decision)
++            Log.i(TAG, "stores ${store.label} not decided: ${e.message}")
++        }
++        return store.key()
++    }
++
++    /** What the check finds of each store's database, for the gate: nothing is asked, and nothing done. */
++    suspend fun states(context: Context): Map<Store, String> =
++        Store.entries.associateWith { store -> check(context, store)?.name ?: "failed" }
++
++    private suspend fun decide(
++        context: Context,
++        store: Store,
++    ) {
++        val path = store.path(context)
++        val state = check(context, store) ?: return
++        Log.i(TAG, "stores ${store.label} state=$state")
++        var repairFailed: String? = null
++        while (true) {
++            val question = question(store, state, repairFailed) ?: return
++            Log.i(TAG, "stores ${store.label} asks: ${question.answers.joinToString(" ")}")
++            val answer = ask(question)
++            Log.i(TAG, "stores ${store.label} answered=$answer")
++            when (answer) {
++                Answer.DELETE -> {
++                    delete(path)
++                    Log.i(TAG, "stores ${store.label} deleted")
++                    return
++                }
++                Answer.REPAIR -> {
++                    val repaired = withKey(store) { key -> runCatching { sealedDatabaseRepair(path.path, key) } }
++                    repaired.onSuccess { r ->
++                        Log.i(
++                            TAG,
++                            "stores ${store.label} repaired tables=${r.tables} rows=${r.rows} " +
++                                "unreadable=${r.unreadablePages}",
++                        )
++                        ask(
++                            Question(
++                                store.title,
++                                "${store.subject} are repaired: ${r.rows} rows in ${r.tables} tables are kept. " +
++                                    "${r.unreadablePages} of their pages could not be read, and what those held is " +
++                                    "lost.",
++                                listOf(Answer.OK),
++                            ),
++                        )
++                        return
++                    }
++                    repaired.onFailure { e ->
++                        Log.i(TAG, "stores ${store.label} repair failed: ${e.message}")
++                        repairFailed = e.message ?: e.javaClass.simpleName
++                    }
++                }
++                else -> {
++                    Log.i(TAG, "stores ${store.label} kept")
++                    return
++                }
++            }
++        }
++    }
++
++    /** What the check finds of [store]'s database, or null if it could not say: the store then opens it as it would. */
++    private suspend fun check(
++        context: Context,
++        store: Store,
++    ): SealedDatabaseState? =
++        withKey(store) { key ->
++            runCatching { sealedDatabaseCheck(store.path(context).path, key) }
++                .onFailure { Log.i(TAG, "stores ${store.label} check failed: ${it.message}") }
++                .getOrNull()
++        }
++
++    private fun question(
++        store: Store,
++        state: SealedDatabaseState,
++        repairFailed: String?,
++    ): Question? {
++        val gone = "Sync is off, so nothing deleted or lost comes back."
++        return when (state) {
++            SealedDatabaseState.MISSING, SealedDatabaseState.OPENS -> null
++            SealedDatabaseState.DAMAGED ->
++                if (repairFailed == null) {
++                    Question(
++                        store.title,
++                        "${store.subject} do not open: some of their pages are damaged.\n\n" +
++                            "Repair keeps what can still be read, and loses the rest. Delete starts them again " +
++                            "empty. Keep leaves them as they are, and the browser goes on without them, until you " +
++                            "are asked again at the next start.\n\n$gone",
++                        listOf(Answer.REPAIR, Answer.DELETE, Answer.KEEP),
++                    )
++                } else {
++                    Question(
++                        store.title,
++                        "${store.subject} could not be repaired ($repairFailed), and are as they were.\n\n" +
++                            "Delete starts them again empty. Keep leaves them as they are, and the browser goes on " +
++                            "without them, until you are asked again at the next start.\n\n$gone",
++                        listOf(Answer.DELETE, Answer.KEEP),
++                    )
++                }
++            SealedDatabaseState.WRONG_KEY ->
++                Question(
++                    store.title,
++                    "${store.subject} are sealed under a key that is not theirs, so they do not open. They are kept " +
++                        "as they are, never deleted, and the browser goes on without them.",
++                    listOf(Answer.GO_ON),
++                )
++            SealedDatabaseState.IN_THE_CLEAR ->
++                Question(
++                    store.title,
++                    "${store.subject} are stored unencrypted, which the browser does not open.\n\n" +
++                        "Delete starts them again empty. Keep leaves them as they are, and the browser goes on " +
++                        "without them, until you are asked again at the next start.\n\n$gone",
++                    listOf(Answer.DELETE, Answer.KEEP),
++                )
++        }
++    }
++
++    /** Shows [question] once the questions before it are answered, and waits for its answer. */
++    private suspend fun ask(question: Question): Answer =
++        asking.withLock {
++            val answer = CompletableDeferred<Answer>()
++            synchronized(this) { pending = question to answer }
++            EncriUnlock.fromForeground { from -> from.startActivity(Intent(from, EncriStoresActivity::class.java)) }
++            answer.await().also { synchronized(this) { pending = null } }
++        }
++
++    /** The question [EncriStoresActivity] is to show, if one waits. */
++    @Synchronized
++    internal fun question(): Question? = pending?.first
++
++    /** What [EncriStoresActivity] was answered. */
++    @Synchronized
++    internal fun answer(answer: Answer) {
++        pending?.second?.complete(answer)
++    }
++
++    /** A database's files, deleted: it, its log, its log's index, its journal, and a repair a crash left. */
++    private fun delete(path: File) {
++        val suffixes = listOf("", "-wal", "-shm", "-journal")
++        for (suffix in suffixes + suffixes.map { ".repair$it" }) {
++            val file = File(path.path + suffix)
++            if (file.exists() && !file.delete()) Log.i(TAG, "stores could not delete ${file.name}")
++        }
++    }
++
++    private suspend inline fun <T> withKey(
++        store: Store,
++        use: (ByteArray) -> T,
++    ): T {
++        val key = store.key()
++        try {
++            return use(key)
++        } finally {
++            key.fill(0)
++        }
++    }
++}
+diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriStoresActivity.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriStoresActivity.kt
+new file mode 100644
+index 0000000000..c83f5fdd3a
+--- /dev/null
++++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriStoresActivity.kt
+@@ -0,0 +1,55 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
++
++package org.mozilla.fenix.encri
++
++import android.app.Activity
++import android.app.AlertDialog
++import android.content.DialogInterface
++import android.os.Bundle
++
++/**
++ * Shows [EncriStores]' question about a sealed database that does not open, as an alert of its own over the browser,
++ * which ends only with an answer. One that ends before, as its task is taken away, is answered Keep, which changes
++ * nothing.
++ */
++class EncriStoresActivity : Activity() {
++    private var shown: AlertDialog? = null
++    private var answered = false
++
++    override fun onCreate(savedInstanceState: Bundle?) {
++        super.onCreate(savedInstanceState)
++        val question = EncriStores.question()
++        if (question == null) {
++            finish()
++            return
++        }
++        val buttons =
++            listOf(DialogInterface.BUTTON_POSITIVE, DialogInterface.BUTTON_NEGATIVE, DialogInterface.BUTTON_NEUTRAL)
++        shown =
++            AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
++                .setTitle(question.title)
++                .setMessage(question.message)
++                .setCancelable(false)
++                .create()
++                .apply {
++                    question.answers.zip(buttons).forEach { (answer, button) ->
++                        setButton(button, answer.label) { _, _ -> reply(answer) }
++                    }
++                    show()
++                }
++    }
++
++    private fun reply(answer: EncriStores.Answer) {
++        answered = true
++        EncriStores.answer(answer)
++        finish()
++    }
++
++    override fun onDestroy() {
++        shown?.dismiss()
++        if (isFinishing && !answered) EncriStores.answer(EncriStores.Answer.KEEP)
++        super.onDestroy()
++    }
++}
+diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriUnlock.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriUnlock.kt
+index 36f4e00288..ffd734397b 100644
+--- a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriUnlock.kt
++++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriUnlock.kt
+@@ -37,6 +37,7 @@ object EncriUnlock {
+     private var installed = false
+     private var waitingForForeground = false
+     private var pending: CompletableDeferred<Boolean>? = null
++    private val others = mutableListOf<(Activity) -> Unit>()
+ 
+     /** Follows the browser's activities, from the application's start: there is one to start the screens from. */
+     @Synchronized
+@@ -62,6 +63,17 @@ object EncriUnlock {
+         return request.await()
+     }
+ 
++    /**
++     * Runs [start] on the main thread with whichever of the browser's activities is in the foreground, or with the
++     * next one to come there, as encri's screens are started: for the browser's own prompts ([EncriStores]).
++     */
++    fun fromForeground(start: (Activity) -> Unit) {
++        main.post {
++            val from = synchronized(this) { resumed?.get().also { if (it == null) others.add(start) } }
++            if (from != null) start(from)
++        }
++    }
++
+     /** What [EncriUnlockActivity] found once encri's screens were done. */
+     @Synchronized
+     internal fun answer(open: Boolean) {
+@@ -110,14 +122,21 @@ object EncriUnlock {
+         }
+ 
+         override fun onActivityResumed(activity: Activity) {
++            val ours = activity is EncriUnlockActivity || activity is EncriStoresActivity
++            var waiting = emptyList<(Activity) -> Unit>()
+             val show =
+                 synchronized(EncriUnlock) {
+                     resumed = WeakReference(activity)
+-                    (waitingForForeground && activity !is EncriUnlockActivity).also {
++                    if (!ours) {
++                        waiting = others.toList()
++                        others.clear()
++                    }
++                    (waitingForForeground && !ours).also {
+                         if (it) waitingForForeground = false
+                     }
+                 }
+             if (show) show()
++            waiting.forEach { it(activity) }
+         }
+ 
+         override fun onActivityPaused(activity: Activity) {
+-- 
+2.47.3
+

@@ -1,0 +1,56 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jeremy Melanson <1080872+zish@users.noreply.github.com>
+Date: Sun, 22 Nov 2026 23:45:08 +0000
+Subject: [PATCH] feat: log how long the check of each sealed store takes
+
+Each check logs its time and the database's size with its log, for the
+cost of reading the three through at every start.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+---
+ .../java/org/mozilla/fenix/encri/EncriStores.kt   | 15 +++++++++++++--
+ 1 file changed, 13 insertions(+), 2 deletions(-)
+
+diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriStores.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriStores.kt
+index 8514168d73..ec21c3ce88 100644
+--- a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriStores.kt
++++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriStores.kt
+@@ -6,6 +6,7 @@ package org.mozilla.fenix.encri
+ 
+ import android.content.Context
+ import android.content.Intent
++import android.os.SystemClock
+ import android.util.Log
+ import java.io.File
+ import java.util.concurrent.ConcurrentHashMap
+@@ -193,15 +194,25 @@ object EncriStores {
+         }
+     }
+ 
+-    /** What the check finds of [store]'s database, or null if it could not say: the store then opens it as it would. */
++    /**
++     * What the check finds of [store]'s database, or null if it could not say: the store then opens it as it would.
++     * How long it took, and the database's size, are logged.
++     */
+     private suspend fun check(
+         context: Context,
+         store: Store,
+     ): SealedDatabaseState? =
+         withKey(store) { key ->
+-            runCatching { sealedDatabaseCheck(store.path(context).path, key) }
++            val path = store.path(context)
++            val started = SystemClock.elapsedRealtime()
++            runCatching { sealedDatabaseCheck(path.path, key) }
+                 .onFailure { Log.i(TAG, "stores ${store.label} check failed: ${it.message}") }
+                 .getOrNull()
++                .also {
++                    val took = SystemClock.elapsedRealtime() - started
++                    val bytes = path.length() + File(path.path + "-wal").length()
++                    Log.i(TAG, "stores ${store.label} checked in ${took}ms, $bytes bytes with its log")
++                }
+         }
+ 
+     private fun question(
+-- 
+2.47.3
+
