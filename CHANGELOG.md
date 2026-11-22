@@ -4,6 +4,22 @@ What happened, newest first. Why is in `docs/decisions/`, and what is next is in
 
 ## Unreleased
 
+### A prompt at start for a sealed database that does not open (2026-11-22)
+
+On the user's word, stage 3 reads each of its three sealed databases through under its key at start, before its store
+opens it, and asks the user about one that does not open (W25, stage 3's patches 0010 to 0017): a damaged one may be
+repaired, deleted or kept, one under another key is only kept, and one in the clear may be deleted or kept; nothing
+is deleted unasked, and the question says that, with Sync off, nothing deleted or lost comes back. The repair is
+SQLite's own recovery, now compiled into the megazord, copying what it can read into a new database sealed under the
+same key. On the G6, each answer tapped on the screen: places with page 1 damaged was kept with no file changed, asked
+about again, and could not be repaired, which was said; places with a page deep in it damaged was repaired, 3,813 rows
+kept, and took new ones; the logins damaged were deleted and their store started again empty; autofill under another
+key was offered no deletion; and the three in the clear were each deleted. The check reads every page: 76–118 ms for
+places at 6.8 MB checked again in a process, and 392–628 ms first in a new one, beside Gecko's start. Found and
+fixed: Keep at first let the store open its damaged database as it always had, and the failed
+open's close checkpointed the log into the damaged file and deleted the log; the repair failed on places' foreign
+keys; and a second tap could answer the next question with Delete.
+
 ### A key check in each sealed page (2026-11-21)
 
 On the user's word, each page stage 3 seals now carries, in its 4 spare reserved bytes, a check of its database's

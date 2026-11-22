@@ -41,7 +41,8 @@ After W21, the user answered its six flags:
 3. **No unencrypted data at rest**: a database in the clear is refused, never moved into a sealed one, and the rule
    holds for whatever encriox stores next.
 4. **A sealed database that does not open is the user's to delete, through a prompt at start** (`ROADMAP.md`, item
-   6). Where places', the logins' or autofill's database cannot be opened under its key, as damaged or as a page whose
+   6; built and measured as W25, with a repair beside deleting and keeping, and a store the user kept not opened at
+   all). Where places', the logins' or autofill's database cannot be opened under its key, as damaged or as a page whose
    tag fails, encriox says which, history and bookmarks, the logins or the cards and addresses, and offers to delete
    it and start that store empty, or to keep it and go on without that store. It is never deleted unasked. **Sync is
    off in the first build** (W17, point 3, "Firefox accounts and Sync"), so a deleted store does not come back, and
@@ -89,5 +90,8 @@ After W21, the user answered its six flags:
 - **W22's first flag, built** (2026-11-21, W24): as stage 3's patch 0008. A key is refused as not the database's where
   no page carries its check and some page carries another's, so that a page 1 damaged through its check is told by
   the next.
+- **W22's prompt at start, built** (2026-11-22, W25): as stage 3's patches 0010 to 0017, measured on the G6. A damaged
+  database may be repaired, deleted or kept, one under another key only kept, one in the clear deleted or kept; a
+  kept one's store is refused its key that session, so that nothing opens it; nothing is deleted unasked.
 
 <!-- /amendments -->

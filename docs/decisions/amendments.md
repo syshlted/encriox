@@ -82,3 +82,8 @@ Each entry corrects a record. Its bold lead names the record possessively ("W1's
 - **W22's first flag, built** (2026-11-21, W24): as stage 3's patch 0008. A key is refused as not the database's where
   no page carries its check and some page carries another's, so that a page 1 damaged through its check is told by
   the next.
+- **W22's prompt at start, built** (2026-11-22, W25): as stage 3's patches 0010 to 0017, measured on the G6. A damaged
+  database may be repaired, deleted or kept, one under another key only kept, one in the clear deleted or kept; a
+  kept one's store is refused its key that session, so that nothing opens it; nothing is deleted unasked.
+- **W24's first flag** (2026-11-22, W25): the prompt at start does not read the components' messages; it tells a
+  wrong key from damage by obfsvfs's own check, before the store opens anything.

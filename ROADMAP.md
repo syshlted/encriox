@@ -140,11 +140,16 @@ sources are there, and are not repeated here:
      database's is refused at the open, *authorization denied*, changing nothing; a torn log opens, its last frame
      losing that commit alone and its first reading what the database holds, where before a torn first frame made the
      database an I/O error; and a damaged page is *disk I/O error*. Four points flagged for veto.
-   - **A prompt at start for a sealed database that does not open, next** (W22): which store it is, and the user's
-     choice to delete it and start that store empty, ~~or~~ keep it and go on without it, or, where some pages still
+   - ~~**A prompt at start for a sealed database that does not open, next** (W22): which store it is, and the user's
+     choice to delete it and start that store empty, keep it and go on without it, or, where some pages still
      open, repair it into a new sealed database with what SQLite's recovery can read; never deleted unasked, and never
      offered for deletion under a key that is not its own. With Sync off (W17), the prompt says a deleted store does not
-     come back. S.
+     come back. S.~~ **Done 2026-11-22 (W25)**, stage 3's patches 0010 to 0017, on the G6 (`check-stores`), every answer
+     tapped on its screen: each store's database is read through under its key at start; a damaged one is repaired,
+     deleted or kept, one under another key only kept, one in the clear deleted or kept, and a kept one's store does
+     not open it that session. A repair of places with a page damaged kept 3,813 rows, dropping the 100 that referred
+     to the page's. Found and fixed: Keep let the store's failed open checkpoint the log into the damaged file. Five
+     points flagged for veto.
    - **The repository and the build**: `patches/`, `scripts/` and the file naming the Firefox release (W9), S; the
      series moved onto the newest release tag, the first measure of a rebase's cost, M; a build type of encriox's
      own, minified, Gecko optimised, without Fenix's `sharedUserId`, with a `.debug` type beside it, M; the branding,
