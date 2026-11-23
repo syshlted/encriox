@@ -1,0 +1,300 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jeremy Melanson <1080872+zish@users.noreply.github.com>
+Date: Mon, 23 Nov 2026 00:37:30 +0000
+Subject: [PATCH] feat: let places check and repair the app's sealed databases
+
+places_api gains sealed_database_check and sealed_database_repair,
+sql-support's check and repair for any database an app seals through
+obfsvfs, the logins' and autofill's as well as places' own, with the
+Kotlin bindings regenerated from the megazord. A repair says how many
+tables and rows it kept, how many pages it could not read, and how
+many rows it dropped for referring to a row lost with them.
+
+The stage 3 spike's patch 0012, and 0016's places, as one
+(encri-firefox, W25).
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+---
+ .../components/places/src/api/places_api.rs   |  50 ++++++++
+ .../components/places/src/ffi.rs              |   5 +-
+ .../components/places/src/places.udl          |  30 +++++
+ .../appservices/places/uniffi/places.kt       | 119 ++++++++++++++++++
+ 4 files changed, 203 insertions(+), 1 deletion(-)
+
+diff --git a/third_party/application-services/components/places/src/api/places_api.rs b/third_party/application-services/components/places/src/api/places_api.rs
+index 62374e5bb3..ac66b3e171 100644
+--- a/third_party/application-services/components/places/src/api/places_api.rs
++++ b/third_party/application-services/components/places/src/api/places_api.rs
+@@ -122,6 +122,56 @@ pub fn places_api_new_sealed(db_name: impl AsRef<Path>, key: Vec<u8>) -> ApiResu
+     PlacesApi::new_sealed(db_name, key)
+ }
+ 
++/// What [`sealed_database_check`] finds of a sealed database: sql-support's [`sql_support::obfsvfs::State`].
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub enum SealedDatabaseState {
++    Missing,
++    Opens,
++    WrongKey,
++    Damaged,
++    InTheClear,
++}
++
++/// What [`sealed_database_repair`] copied: sql-support's [`sql_support::obfsvfs::Repaired`].
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub struct SealedDatabaseRepair {
++    pub tables: u32,
++    pub rows: u64,
++    pub unreadable_pages: u64,
++    pub dangling_rows: u64,
++}
++
++/// Whether the sealed database at `db_path`, places' or any other an app seals through sql-support's obfsvfs, opens
++/// under `key`, read through, before its component opens it.
++#[handle_error(crate::Error)]
++pub fn sealed_database_check(db_path: impl AsRef<Path>, mut key: Vec<u8>) -> ApiResult<SealedDatabaseState> {
++    let state = normalize_database_path(db_path).map(|path| sql_support::obfsvfs::check(&path, &key));
++    key.fill(0);
++    use sql_support::obfsvfs::State;
++    Ok(match state?? {
++        State::Missing => SealedDatabaseState::Missing,
++        State::Opens => SealedDatabaseState::Opens,
++        State::WrongKey => SealedDatabaseState::WrongKey,
++        State::Damaged => SealedDatabaseState::Damaged,
++        State::InTheClear => SealedDatabaseState::InTheClear,
++    })
++}
++
++/// Copies what SQLite's recovery can read of the damaged sealed database at `db_path` into a new one sealed under the
++/// same `key`, which takes its place: sql-support's [`sql_support::obfsvfs::repair`].
++#[handle_error(crate::Error)]
++pub fn sealed_database_repair(db_path: impl AsRef<Path>, mut key: Vec<u8>) -> ApiResult<SealedDatabaseRepair> {
++    let repaired = normalize_database_path(db_path).map(|path| sql_support::obfsvfs::repair(&path, &key));
++    key.fill(0);
++    let repaired = repaired??;
++    Ok(SealedDatabaseRepair {
++        tables: repaired.tables,
++        rows: repaired.rows,
++        unreadable_pages: repaired.unreadable_pages,
++        dangling_rows: repaired.dangling_rows,
++    })
++}
++
+ /// The entry-point to the places API. This object gives access to database
+ /// connections and other helpers. It enforces that only 1 write connection
+ /// can exist to the database at once.
+diff --git a/third_party/application-services/components/places/src/ffi.rs b/third_party/application-services/components/places/src/ffi.rs
+index 0cc5388b7d..cb9e1ba78b 100644
+--- a/third_party/application-services/components/places/src/ffi.rs
++++ b/third_party/application-services/components/places/src/ffi.rs
+@@ -5,7 +5,10 @@
+ // This module implement the traits that make the FFI code easier to manage.
+ 
+ use crate::api::matcher::{self, search_frecent, SearchParams};
+-pub use crate::api::places_api::{places_api_new, places_api_new_sealed};
++pub use crate::api::places_api::{
++    places_api_new, places_api_new_sealed, sealed_database_check, sealed_database_repair, SealedDatabaseRepair,
++    SealedDatabaseState,
++};
+ pub use crate::error::{warn, Result};
+ pub use crate::error::{ApiResult, PlacesApiError};
+ use crate::glean_metrics;
+diff --git a/third_party/application-services/components/places/src/places.udl b/third_party/application-services/components/places/src/places.udl
+index 025545e3b7..b70e0a06b8 100644
+--- a/third_party/application-services/components/places/src/places.udl
++++ b/third_party/application-services/components/places/src/places.udl
+@@ -19,6 +19,36 @@ namespace places {
+     // its history and bookmarks sealed, such as encriox (encri-firefox, `docs/sealed-history.md`).
+     [Throws=PlacesApiError]
+     PlacesApi places_api_new_sealed(string db_path, bytes key);
++
++    // Whether the sealed database at `db_path` opens under `key`, read through, before its component opens it:
++    // places', or any other an app seals through sql-support's obfsvfs, the logins' and autofill's too. It changes
++    // nothing but the log's index. For an app that asks its user about a database that does not open (encri-firefox,
++    // W22).
++    [Throws=PlacesApiError]
++    SealedDatabaseState sealed_database_check(string db_path, bytes key);
++
++    // Copies what SQLite's recovery can still read of the damaged sealed database at `db_path` into a new one sealed
++    // under the same `key`, which takes its place; what did not read is lost. Refused under a key that is not the
++    // database's, and where nothing could be read, each leaving the database as it was.
++    [Throws=PlacesApiError]
++    SealedDatabaseRepair sealed_database_repair(string db_path, bytes key);
++};
++
++// What sealed_database_check finds.
++enum SealedDatabaseState {
++    "Missing",    // There is none, or its file is empty: its component makes it.
++    "Opens",      // It opens under its key, and SQLite finds it whole.
++    "WrongKey",   // It is sealed under another key: refused, and left as it is.
++    "Damaged",    // Under its own key, a page of it or of its log does not open, or SQLite finds it malformed.
++    "InTheClear", // It is in the clear, which a sealed open refuses.
++};
++
++// What sealed_database_repair copied into the database that took the damaged one's place.
++dictionary SealedDatabaseRepair {
++    u32 tables;           // Its tables, but SQLite's own.
++    u64 rows;             // Their rows.
++    u64 unreadable_pages; // The damaged database's pages that did not open, which the recovery read as holding nothing.
++    u64 dangling_rows;    // The rows read that referred to a row lost with those pages, a visit without its page, dropped.
+ };
+ 
+ enum ConnectionType {
+diff --git a/toolkit/components/uniffi-bindgen-gecko-js/android/components/places/android/src/main/java/mozilla/appservices/places/uniffi/places.kt b/toolkit/components/uniffi-bindgen-gecko-js/android/components/places/android/src/main/java/mozilla/appservices/places/uniffi/places.kt
+index 33bb3e5db4..0a1e9d6d97 100644
+--- a/toolkit/components/uniffi-bindgen-gecko-js/android/components/places/android/src/main/java/mozilla/appservices/places/uniffi/places.kt
++++ b/toolkit/components/uniffi-bindgen-gecko-js/android/components/places/android/src/main/java/mozilla/appservices/places/uniffi/places.kt
+@@ -678,6 +678,10 @@ internal object IntegrityCheckingUniffiLib {
+     ): Int
+     external fun uniffi_places_checksum_func_places_api_new_sealed(
+     ): Int
++    external fun uniffi_places_checksum_func_sealed_database_check(
++    ): Int
++    external fun uniffi_places_checksum_func_sealed_database_repair(
++    ): Int
+     external fun uniffi_places_checksum_method_placesapi_new_connection(
+     ): Int
+     external fun uniffi_places_checksum_method_placesapi_register_with_sync_manager(
+@@ -890,6 +894,10 @@ internal object UniffiLib {
+     ): Long
+     external fun uniffi_places_fn_func_places_api_new_sealed(`dbPath`: RustBuffer.ByValue,`key`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+     ): Long
++    external fun uniffi_places_fn_func_sealed_database_check(`dbPath`: RustBuffer.ByValue,`key`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
++    ): RustBuffer.ByValue
++    external fun uniffi_places_fn_func_sealed_database_repair(`dbPath`: RustBuffer.ByValue,`key`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
++    ): RustBuffer.ByValue
+     external fun ffi_places_rustbuffer_alloc(`size`: Long,uniffi_out_err: UniffiRustCallStatus, 
+     ): RustBuffer.ByValue
+     external fun ffi_places_rustbuffer_from_bytes(`bytes`: ForeignBytes.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+@@ -3783,6 +3791,54 @@ public object FfiConverterTypePlacesRunMaintenanceOptions: FfiConverterRustBuffe
+ 
+ 
+ 
++data class SealedDatabaseRepair (
++    var `tables`: kotlin.UInt
++    , 
++    var `rows`: kotlin.ULong
++    , 
++    var `unreadablePages`: kotlin.ULong
++    , 
++    var `danglingRows`: kotlin.ULong
++    
++){
++    
++
++    
++
++    
++    companion object
++}
++
++/**
++ * @suppress
++ */
++public object FfiConverterTypeSealedDatabaseRepair: FfiConverterRustBuffer<SealedDatabaseRepair> {
++    override fun read(buf: ByteBuffer): SealedDatabaseRepair {
++        return SealedDatabaseRepair(
++            FfiConverterUInt.read(buf),
++            FfiConverterULong.read(buf),
++            FfiConverterULong.read(buf),
++            FfiConverterULong.read(buf),
++        )
++    }
++
++    override fun allocationSize(value: SealedDatabaseRepair) = (
++            FfiConverterUInt.allocationSize(value.`tables`) +
++            FfiConverterULong.allocationSize(value.`rows`) +
++            FfiConverterULong.allocationSize(value.`unreadablePages`) +
++            FfiConverterULong.allocationSize(value.`danglingRows`)
++    )
++
++    override fun write(value: SealedDatabaseRepair, buf: ByteBuffer) {
++            FfiConverterUInt.write(value.`tables`, buf)
++            FfiConverterULong.write(value.`rows`, buf)
++            FfiConverterULong.write(value.`unreadablePages`, buf)
++            FfiConverterULong.write(value.`danglingRows`, buf)
++    }
++}
++
++
++
+ data class SearchResult (
+     var `url`: Url
+     , 
+@@ -4567,6 +4623,43 @@ public object FfiConverterTypePlacesApiError : FfiConverterRustBuffer<PlacesApiE
+ 
+ 
+ 
++enum class SealedDatabaseState {
++    
++    MISSING,
++    OPENS,
++    WRONG_KEY,
++    DAMAGED,
++    IN_THE_CLEAR;
++
++    
++
++
++    companion object
++}
++
++
++/**
++ * @suppress
++ */
++public object FfiConverterTypeSealedDatabaseState: FfiConverterRustBuffer<SealedDatabaseState> {
++    override fun read(buf: ByteBuffer) = try {
++        SealedDatabaseState.values()[buf.getInt() - 1]
++    } catch (e: IndexOutOfBoundsException) {
++        throw RuntimeException("invalid enum value, something is very wrong!!", e)
++    }
++
++    override fun allocationSize(value: SealedDatabaseState) = 4UL
++
++    override fun write(value: SealedDatabaseState, buf: ByteBuffer) {
++        buf.putInt(value.ordinal + 1)
++    }
++}
++
++
++
++
++
++
+ enum class VisitType {
+     
+     /**
+@@ -5416,4 +5509,30 @@ public typealias FfiConverterTypeVisitTransitionSet = FfiConverterInt
+     }
+     
+ 
++    @Throws(PlacesApiException::class) fun `sealedDatabaseCheck`(`dbPath`: kotlin.String, `key`: kotlin.ByteArray): SealedDatabaseState {
++            return FfiConverterTypeSealedDatabaseState.lift(
++    uniffiRustCallWithError(PlacesApiException) { _status ->
++    UniffiLib.uniffi_places_fn_func_sealed_database_check(
++    
++        
++        FfiConverterString.lower(`dbPath`),
++        FfiConverterByteArray.lower(`key`),_status)
++}
++    )
++    }
++    
++
++    @Throws(PlacesApiException::class) fun `sealedDatabaseRepair`(`dbPath`: kotlin.String, `key`: kotlin.ByteArray): SealedDatabaseRepair {
++            return FfiConverterTypeSealedDatabaseRepair.lift(
++    uniffiRustCallWithError(PlacesApiException) { _status ->
++    UniffiLib.uniffi_places_fn_func_sealed_database_repair(
++    
++        
++        FfiConverterString.lower(`dbPath`),
++        FfiConverterByteArray.lower(`key`),_status)
++}
++    )
++    }
++    
++
+ 
+-- 
+2.47.3
+

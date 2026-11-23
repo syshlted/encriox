@@ -1,0 +1,61 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jeremy Melanson <1080872+zish@users.noreply.github.com>
+Date: Mon, 23 Nov 2026 02:13:43 +0000
+Subject: [PATCH] fix: ignore LG's resource preloading under StrictMode
+
+On the LG G6 at API 28, LG's ResourcesImpl asks for the code cache
+directory on the main thread, which reads the disk: at every activity
+launch and at the first frame. A debug build is killed by Fenix's
+StrictMode listener before any code of its own runs, as encriox's was
+at its first start. Ignored there as Fenix ignores Samsung's and
+Xiaomi's own violations, for LG's two methods alone.
+
+The stage 1 spike's patch 0004 (encri-firefox, W4).
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+---
+ .../perf/ThreadPenaltyDeathWithIgnoresListener.kt  | 14 +++++++++++++-
+ 1 file changed, 13 insertions(+), 1 deletion(-)
+
+diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/perf/ThreadPenaltyDeathWithIgnoresListener.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/perf/ThreadPenaltyDeathWithIgnoresListener.kt
+index dd184cd30b..e60c1c0793 100644
+--- a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/perf/ThreadPenaltyDeathWithIgnoresListener.kt
++++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/perf/ThreadPenaltyDeathWithIgnoresListener.kt
+@@ -19,6 +19,7 @@ private const val ACTIVITY_MANAGER_SERVICE_CLASS = "com.android.server.am.Activi
+ private const val IN_MEMORY_DEX_CLASS_LOADER_CLASS = "dalvik.system.InMemoryDexClassLoader"
+ private const val MIUI_MULTI_LANG_HELPER_CLASS = "miui.util.font.MultiLangHelper"
+ private const val PLATFORM_PREFERENCE_CLASS = "androidx.preference.Preference"
++private val LG_RESOURCE_PRELOADING = setOf("startParallelLoading", "onFinishFirstPerformTraversals")
+ 
+ /**
+  * A [StrictMode.OnThreadViolationListener] that recreates [StrictMode.ThreadPolicy.Builder.penaltyDeath] but will
+@@ -58,7 +59,8 @@ class ThreadPenaltyDeathWithIgnoresListener(
+             isXiaomiMultiLangHelperViolation(violation) ||
+             isFinishAttachApplication(violation) ||
+             containsInMemoryDexClassLoader(violation) ||
+-            isInflatingPlatformPreference(violation)
++            isInflatingPlatformPreference(violation) ||
++            isLgParallelResourceLoading(violation)
+ 
+     private fun isSamsungIdsController(violation: Violation): Boolean {
+         // See https://bugzilla.mozilla.org/show_bug.cgi?id=1806469
+@@ -117,6 +119,16 @@ class ThreadPenaltyDeathWithIgnoresListener(
+         return violation.stackTrace.any { it.className == IN_MEMORY_DEX_CLASS_LOADER_CLASS }
+     }
+ 
++    private fun isLgParallelResourceLoading(violation: Violation): Boolean {
++        // encriox (encri-firefox W4, W26): on the LG G6 at API 28, LG's ResourcesImpl reads and writes the disk on
++        // the main thread, in startParallelLoading at every activity launch and in onFinishFirstPerformTraversals at
++        // the first frame. A debug build dies before any code of its own runs.
++        return manufacturerChecker.isLG() &&
++            violation.stackTrace.any {
++                it.className == "android.content.res.ResourcesImpl" && it.methodName in LG_RESOURCE_PRELOADING
++            }
++    }
++
+     private fun isXiaomiMultiLangHelperViolation(violation: Violation): Boolean {
+         return manufacturerChecker.isXiaomi() &&
+             violation.stackTrace.any { it.className == MIUI_MULTI_LANG_HELPER_CLASS }
+-- 
+2.47.3
+

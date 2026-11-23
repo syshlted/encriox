@@ -1,0 +1,284 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jeremy Melanson <1080872+zish@users.noreply.github.com>
+Date: Mon, 23 Nov 2026 00:36:49 +0000
+Subject: [PATCH] feat: let Android Components seal places', logins' and cards'
+ stores
+
+PlacesHistoryStorage and PlacesBookmarksStorage, SyncableLoginsStorage
+and AutofillCreditCardsAddressesStorage each take a database key: a
+source of 32 bytes, asked for, and waited for, when the store first
+opens its database. Without one, a store keeps its database in the
+clear, as it always has. Places' connection is the process's own, so
+every store of it must agree on whether it is sealed.
+
+The stage 3 spike's patch 0003 (encri-firefox, W21), on the release
+rather than on stage 1's changes to the logins' and autofill's stores.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+---
+ .../browser/storage/sync/Connection.kt        | 31 ++++++++++++++---
+ .../storage/sync/PlacesBookmarksStorage.kt    | 10 ++++--
+ .../storage/sync/PlacesHistoryStorage.kt      | 14 ++++++--
+ .../browser/storage/sync/PlacesStorage.kt     | 10 ++++--
+ .../AutofillCreditCardsAddressesStorage.kt    | 34 ++++++++++++++-----
+ .../sync/logins/SyncableLoginsStorage.kt      | 13 ++++++-
+ 6 files changed, 92 insertions(+), 20 deletions(-)
+
+diff --git a/mobile/android/android-components/components/browser/storage-sync/src/main/java/mozilla/components/browser/storage/sync/Connection.kt b/mobile/android/android-components/components/browser/storage-sync/src/main/java/mozilla/components/browser/storage/sync/Connection.kt
+index 4ea9c0e9aa..edbdf93a57 100644
+--- a/mobile/android/android-components/components/browser/storage-sync/src/main/java/mozilla/components/browser/storage/sync/Connection.kt
++++ b/mobile/android/android-components/components/browser/storage-sync/src/main/java/mozilla/components/browser/storage/sync/Connection.kt
+@@ -7,6 +7,7 @@ package mozilla.components.browser.storage.sync
+ import androidx.annotation.GuardedBy
+ import java.io.Closeable
+ import java.io.File
++import kotlinx.coroutines.runBlocking
+ import mozilla.appservices.places.PlacesApi
+ import mozilla.appservices.places.PlacesReaderConnection
+ import mozilla.appservices.places.PlacesWriterConnection
+@@ -54,19 +55,39 @@ internal object RustPlacesConnection : Connection {
+ 
+     @GuardedBy("this") private var cachedReader: PlacesReaderConnection? = null
+ 
++    @GuardedBy("this") private var sealed = false
++
+     /**
+      * Creates a long-lived [PlacesApi] instance, and caches a reader connection. Writer connection is maintained by
+      * [PlacesApi] itself, and is created upon its initialization.
+      *
+      * @param parentDir Location of the parent directory in which database is/will be stored.
++     * @param databaseKey Where the key the database is sealed with comes from, 32 bytes, or null to keep it in the
++     *   clear. The first init opens the database, and waits for the key: never on the main thread, as it may come
++     *   from a vault the user has yet to unlock. Every init after it must agree.
+      */
+-    fun init(parentDir: File) =
+-        synchronized(this) {
+-            if (api == null) {
+-                api = PlacesApi(File(parentDir, DB_NAME).canonicalPath)
++    fun init(
++        parentDir: File,
++        databaseKey: (suspend () -> ByteArray)? = null,
++    ) = synchronized(this) {
++        if (api == null) {
++            val path = File(parentDir, DB_NAME).canonicalPath
++            api = if (databaseKey == null) {
++                PlacesApi(path)
++            } else {
++                val key = runBlocking { databaseKey() }
++                try {
++                    PlacesApi(path, key)
++                } finally {
++                    key.fill(0)
++                }
+             }
+-            cachedReader = api!!.openReader()
++            sealed = databaseKey != null
++        } else {
++            check(sealed == (databaseKey != null)) { "places is open already, ${if (sealed) "sealed" else "in the clear"}" }
+         }
++        cachedReader = api!!.openReader()
++    }
+ 
+     override fun registerWithSyncManager() {
+         val api = safeGetApi()
+diff --git a/mobile/android/android-components/components/browser/storage-sync/src/main/java/mozilla/components/browser/storage/sync/PlacesBookmarksStorage.kt b/mobile/android/android-components/components/browser/storage-sync/src/main/java/mozilla/components/browser/storage/sync/PlacesBookmarksStorage.kt
+index fbc7bdb9e0..8fb09e7f2f 100644
+--- a/mobile/android/android-components/components/browser/storage-sync/src/main/java/mozilla/components/browser/storage/sync/PlacesBookmarksStorage.kt
++++ b/mobile/android/android-components/components/browser/storage-sync/src/main/java/mozilla/components/browser/storage/sync/PlacesBookmarksStorage.kt
+@@ -26,12 +26,18 @@ import mozilla.components.support.utils.segmentAwareDomainMatch
+ /** How many bookmarks to try and find from which to pick one that can be an autocomplete suggestion. */
+ private const val BOOKMARKS_AUTOCOMPLETE_QUERY_LIMIT = 20
+ 
+-/** Implementation of the [BookmarksStorage] which is backed by a Rust Places lib via [PlacesApi]. */
++/**
++ * Implementation of the [BookmarksStorage] which is backed by a Rust Places lib via [PlacesApi].
++ *
++ * @param databaseKey Where the key places' database is sealed with comes from, or null to keep it in the clear
++ *   ([PlacesStorage]).
++ */
+ open class PlacesBookmarksStorage(
+     context: Context,
+     override val autocompletePriority: Int = 0,
+     private val currentTimeMillis: () -> Long = { System.currentTimeMillis() },
+-) : PlacesStorage(context), BookmarksStorage, SyncableStore, AutocompleteProvider {
++    databaseKey: (suspend () -> ByteArray)? = null,
++) : PlacesStorage(context, databaseKey = databaseKey), BookmarksStorage, SyncableStore, AutocompleteProvider {
+ 
+     override val logger = Logger("PlacesBookmarksStorage")
+ 
+diff --git a/mobile/android/android-components/components/browser/storage-sync/src/main/java/mozilla/components/browser/storage/sync/PlacesHistoryStorage.kt b/mobile/android/android-components/components/browser/storage-sync/src/main/java/mozilla/components/browser/storage/sync/PlacesHistoryStorage.kt
+index 23d39549bb..2ac506bd0a 100644
+--- a/mobile/android/android-components/components/browser/storage-sync/src/main/java/mozilla/components/browser/storage/sync/PlacesHistoryStorage.kt
++++ b/mobile/android/android-components/components/browser/storage-sync/src/main/java/mozilla/components/browser/storage/sync/PlacesHistoryStorage.kt
+@@ -39,14 +39,24 @@ import mozilla.components.support.utils.segmentAwareDomainMatch
+ 
+ private const val AUTOCOMPLETE_SOURCE_NAME = "placesHistory"
+ 
+-/** Implementation of the [HistoryStorage] which is backed by a Rust Places lib via [PlacesApi]. */
++/**
++ * Implementation of the [HistoryStorage] which is backed by a Rust Places lib via [PlacesApi].
++ *
++ * @param databaseKey Where the key places' database is sealed with comes from, or null to keep it in the clear
++ *   ([PlacesStorage]).
++ */
+ @Suppress("TooManyFunctions", "LargeClass")
+ open class PlacesHistoryStorage(
+     private val context: Context,
+     crashReporter: CrashReporting? = null,
+     override val autocompletePriority: Int = 0,
+     private val currentTimeMillis: () -> Long = { System.currentTimeMillis() },
+-) : PlacesStorage(context, crashReporter), HistoryStorage, HistoryMetadataStorage, SyncableStore, AutocompleteProvider {
++    databaseKey: (suspend () -> ByteArray)? = null,
++) : PlacesStorage(context, crashReporter, databaseKey = databaseKey),
++    HistoryStorage,
++    HistoryMetadataStorage,
++    SyncableStore,
++    AutocompleteProvider {
+     /**
+      * Separate reader used only for autocomplete suggestions allowing to decouple this functionality from the history
+      * suggestions feature and independent reader management.
+diff --git a/mobile/android/android-components/components/browser/storage-sync/src/main/java/mozilla/components/browser/storage/sync/PlacesStorage.kt b/mobile/android/android-components/components/browser/storage-sync/src/main/java/mozilla/components/browser/storage/sync/PlacesStorage.kt
+index 82114b1200..604a616200 100644
+--- a/mobile/android/android-components/components/browser/storage-sync/src/main/java/mozilla/components/browser/storage/sync/PlacesStorage.kt
++++ b/mobile/android/android-components/components/browser/storage-sync/src/main/java/mozilla/components/browser/storage/sync/PlacesStorage.kt
+@@ -26,13 +26,19 @@ import mozilla.components.support.base.utils.NamedThreadFactory
+ import mozilla.components.support.rusterrors.reportRustError
+ import mozilla.components.support.utils.logElapsedTime
+ 
+-/** A base class for concrete implementations of PlacesStorages */
++/**
++ * A base class for concrete implementations of PlacesStorages
++ *
++ * @param databaseKey Where the key places' database is sealed with comes from, 32 bytes, for an app that keeps its
++ *   history and bookmarks sealed, or null to keep them in the clear. It is asked when the database is first opened.
++ */
+ abstract class PlacesStorage(
+     context: Context,
+     val crashReporter: CrashReporting? = null,
+     readDispatcher: CoroutineDispatcher = Dispatchers.IO,
+     internal val writeDispatcher: CoroutineDispatcher =
+         Executors.newSingleThreadExecutor(NamedThreadFactory("PlacesStorageWriteScope")).asCoroutineDispatcher(),
++    private val databaseKey: (suspend () -> ByteArray)? = null,
+ ) : Storage, SyncableStore, StorageMaintenanceRegistry {
+     internal val writeScope = CoroutineScope(writeDispatcher)
+ 
+@@ -48,7 +54,7 @@ abstract class PlacesStorage(
+     abstract val logger: Logger
+ 
+     internal open val places: Connection by lazy {
+-        RustPlacesConnection.init(storageDir)
++        RustPlacesConnection.init(storageDir, databaseKey)
+         RustPlacesConnection
+     }
+ 
+diff --git a/mobile/android/android-components/components/service/sync-autofill/src/main/java/mozilla/components/service/sync/autofill/AutofillCreditCardsAddressesStorage.kt b/mobile/android/android-components/components/service/sync-autofill/src/main/java/mozilla/components/service/sync/autofill/AutofillCreditCardsAddressesStorage.kt
+index 81f1aee3b6..c17e81c862 100644
+--- a/mobile/android/android-components/components/service/sync-autofill/src/main/java/mozilla/components/service/sync/autofill/AutofillCreditCardsAddressesStorage.kt
++++ b/mobile/android/android-components/components/service/sync-autofill/src/main/java/mozilla/components/service/sync/autofill/AutofillCreditCardsAddressesStorage.kt
+@@ -21,6 +21,7 @@ import kotlinx.coroutines.withContext
+ import mozilla.appservices.autofill.AutofillApiException.NoSuchRecord
+ import mozilla.appservices.autofill.Store as RustAutofillStorage
+ import mozilla.appservices.autofill.createAutofillStoreWithStaticKeyManager
++import mozilla.appservices.autofill.createSealedAutofillStoreWithStaticKeyManager
+ import mozilla.components.concept.storage.Address
+ import mozilla.components.concept.storage.CreditCard
+ import mozilla.components.concept.storage.CreditCardsAddressesStorage
+@@ -42,10 +43,14 @@ const val AUTOFILL_DB_NAME = "autofill.sqlite"
+  * @param context A [Context] used for disk access.
+  * @param securePrefs A [SecureAbove22Preferences] wrapped in [Lazy] to avoid eager instantiation. Used for storing
+  *   encryption key material.
++ * @param databaseKey Where the key the database is sealed with comes from, 32 bytes, for an app that keeps every
++ *   field of its cards and addresses sealed, or null to keep the database in the clear. It is asked, and waited for,
++ *   when the database is opened.
+  */
+ class AutofillCreditCardsAddressesStorage(
+     private val context: Context,
+     securePrefs: Lazy<SecureAbove22Preferences>,
++    private val databaseKey: (suspend () -> ByteArray)? = null,
+ ) : CreditCardsAddressesStorage, SyncableStore, AutoCloseable {
+     private val logger = Logger("AutofillCCAddressesStorage")
+ 
+@@ -59,10 +64,16 @@ class AutofillCreditCardsAddressesStorage(
+     internal val conn: Deferred<AutofillStorageConnection> by lazy {
+         scope.async {
+             val managedKey = crypto.getOrGenerateKey()
+-            AutofillStorageConnection.init(
+-                dbPath = context.getDatabasePath(AUTOFILL_DB_NAME).absolutePath,
+-                key = managedKey.key,
+-            )
++            val sealedWith = databaseKey?.invoke()
++            try {
++                AutofillStorageConnection.init(
++                    dbPath = context.getDatabasePath(AUTOFILL_DB_NAME).absolutePath,
++                    key = managedKey.key,
++                    databaseKey = sealedWith,
++                )
++            } finally {
++                sealedWith?.fill(0)
++            }
+             AutofillStorageConnection
+         }
+     }
+@@ -219,12 +230,19 @@ class AutofillCreditCardsAddressesStorage(
+ internal object AutofillStorageConnection : Closeable {
+     @GuardedBy("this") private var storage: RustAutofillStorage? = null
+ 
+-    internal fun init(dbPath: String = AUTOFILL_DB_NAME, key: String) =
+-        synchronized(this) {
+-            if (storage == null) {
+-                storage = createAutofillStoreWithStaticKeyManager(dbPath, key)
++    internal fun init(
++        dbPath: String = AUTOFILL_DB_NAME,
++        key: String,
++        databaseKey: ByteArray? = null,
++    ) = synchronized(this) {
++        if (storage == null) {
++            storage = if (databaseKey == null) {
++                createAutofillStoreWithStaticKeyManager(dbPath, key)
++            } else {
++                createSealedAutofillStoreWithStaticKeyManager(dbPath, databaseKey, key)
+             }
+         }
++    }
+ 
+     internal fun getStorage(): RustAutofillStorage =
+         synchronized(this) {
+diff --git a/mobile/android/android-components/components/service/sync-logins/src/main/java/mozilla/components/service/sync/logins/SyncableLoginsStorage.kt b/mobile/android/android-components/components/service/sync-logins/src/main/java/mozilla/components/service/sync/logins/SyncableLoginsStorage.kt
+index 33578e62d5..1e1bc65817 100644
+--- a/mobile/android/android-components/components/service/sync-logins/src/main/java/mozilla/components/service/sync/logins/SyncableLoginsStorage.kt
++++ b/mobile/android/android-components/components/service/sync-logins/src/main/java/mozilla/components/service/sync/logins/SyncableLoginsStorage.kt
+@@ -75,11 +75,16 @@ typealias InvalidKey = mozilla.appservices.logins.LoginsApiException.InvalidKey
+  * Implements [LoginsStorage] and [SyncableStore] using the application-services logins library.
+  *
+  * Synchronization is handled via the SyncManager by calling [registerWithSyncManager]
++ *
++ * @param databaseKey Where the key the logins' database is sealed with comes from, 32 bytes, for an app that keeps
++ *   each login's origin and times sealed as well as its username and password, or null to keep the database in the
++ *   clear. It is asked, and waited for, when the database is opened.
+  */
+ class SyncableLoginsStorage(
+     private val context: Context,
+     private val securePrefs: Lazy<SecureAbove22Preferences>,
+     private val coroutineDispatcher: CoroutineDispatcher = Dispatchers.IO,
++    private val databaseKey: (suspend () -> ByteArray)? = null,
+ ) : LoginsStorage, SyncableStore, AutoCloseable {
+     private val logger = Logger("SyncableLoginsStorage")
+     private val coroutineContext by lazy { coroutineDispatcher }
+@@ -103,7 +108,13 @@ class SyncableLoginsStorage(
+                 }
+             val path = context.getDatabasePath(DB_NAME)
+             val pathExisted = path.exists()
+-            val storage = DatabaseLoginsStorage(path.absolutePath, keyManager)
++            val sealedWith = databaseKey?.invoke()
++            val storage =
++                try {
++                    DatabaseLoginsStorage(path.absolutePath, keyManager, sealedWith)
++                } finally {
++                    sealedWith?.fill(0)
++                }
+             // If the path existed, but we generated a new key, then the key can't decrypt any existing
+             // logins.  Run wipeLocal, to try to recover
+             // (https://bugzilla.mozilla.org/show_bug.cgi?id=1970409)
+-- 
+2.47.3
+

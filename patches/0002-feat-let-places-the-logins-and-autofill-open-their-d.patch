@@ -1,0 +1,583 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jeremy Melanson <1080872+zish@users.noreply.github.com>
+Date: Mon, 23 Nov 2026 00:35:51 +0000
+Subject: [PATCH] feat: let places, the logins and autofill open their
+ databases sealed
+
+Each gains a sealed open beside its own, through sql-support's
+obfsvfs, under a 32-byte key: places_api_new_sealed, LoginStore's
+new_sealed and create_sealed_autofill_store_with_static_key_manager,
+with the Kotlin bindings regenerated from the megazord, and the Kotlin
+wrappers of places and the logins taking the key. Each connection
+opens the database by a name that carries a handle to the key, never
+the key, and the key handed in is zeroed once obfsvfs holds it.
+
+The stage 3 spike's patch 0002 (encri-firefox, W21).
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+---
+ .../components/autofill/src/autofill.udl      |  5 +++
+ .../components/autofill/src/db/mod.rs         | 13 ++++++
+ .../components/autofill/src/db/store.rs       | 12 +++++
+ .../components/autofill/src/error.rs          |  8 ++++
+ .../components/autofill/src/lib.rs            | 12 +++++
+ .../logins/DatabaseLoginsStorage.kt           | 10 ++++-
+ .../components/logins/src/db.rs               | 13 ++++++
+ .../components/logins/src/error.rs            |  3 ++
+ .../components/logins/src/logins.udl          |  6 +++
+ .../components/logins/src/store.rs            | 11 +++++
+ .../appservices/places/PlacesConnection.kt    |  7 ++-
+ .../components/places/src/api/places_api.rs   | 17 +++++++
+ .../components/places/src/error.rs            |  3 ++
+ .../components/places/src/ffi.rs              |  2 +-
+ .../components/places/src/places.udl          |  5 +++
+ .../mozilla/appservices/autofill/autofill.kt  | 41 +++++++++++++++++
+ .../java/mozilla/appservices/logins/logins.kt | 44 +++++++++++++++++--
+ .../appservices/places/uniffi/places.kt       | 36 +++++++++++++++
+ 18 files changed, 239 insertions(+), 9 deletions(-)
+
+diff --git a/third_party/application-services/components/autofill/src/autofill.udl b/third_party/application-services/components/autofill/src/autofill.udl
+index f7dca58b14..b066d29a70 100644
+--- a/third_party/application-services/components/autofill/src/autofill.udl
++++ b/third_party/application-services/components/autofill/src/autofill.udl
+@@ -9,6 +9,11 @@ namespace autofill {
+     /// static key
+     [Throws=AutofillApiError]
+     Store create_autofill_store_with_static_key_manager(string path, string key);
++
++    /// The same, with the database sealed under `db_key`, 32 bytes, through sql-support's obfsvfs: for an app that
++    /// keeps every field of its cards and addresses sealed, such as encriox (encri-firefox, `docs/sealed-history.md`).
++    [Throws=AutofillApiError]
++    Store create_sealed_autofill_store_with_static_key_manager(string path, bytes db_key, string key);
+ };
+ 
+ /// What you pass to create or update a credit-card. The number is given in
+diff --git a/third_party/application-services/components/autofill/src/db/mod.rs b/third_party/application-services/components/autofill/src/db/mod.rs
+index 074c2cb716..6314a39478 100644
+--- a/third_party/application-services/components/autofill/src/db/mod.rs
++++ b/third_party/application-services/components/autofill/src/db/mod.rs
+@@ -35,6 +35,19 @@ impl AutofillDb {
+         Self::new_named(db_path, encdec)
+     }
+ 
++    /// As [`AutofillDb::new`], with the database sealed under `key`, 32 bytes: its pages, its write-ahead log and its
++    /// journal are sealed through sql-support's obfsvfs, and it opens only under its key.
++    pub fn new_sealed(
++        db_path: impl AsRef<Path>,
++        mut key: Vec<u8>,
++        encdec: Arc<dyn EncryptorDecryptor>,
++    ) -> Result<Self> {
++        let db_path = normalize_database_path(db_path)?;
++        let sealed = sql_support::obfsvfs::sealed_name(&db_path, &key);
++        key.fill(0);
++        Self::new_named(sealed?, encdec)
++    }
++
+     pub fn new_memory(db_path: &str, encdec: Arc<dyn EncryptorDecryptor>) -> Result<Self> {
+         let name = PathBuf::from(format!("file:{}?mode=memory&cache=shared", db_path));
+         Self::new_named(name, encdec)
+diff --git a/third_party/application-services/components/autofill/src/db/store.rs b/third_party/application-services/components/autofill/src/db/store.rs
+index 4b19cbba34..b8bd7c60e3 100644
+--- a/third_party/application-services/components/autofill/src/db/store.rs
++++ b/third_party/application-services/components/autofill/src/db/store.rs
+@@ -68,6 +68,18 @@ impl Store {
+         })
+     }
+ 
++    /// As [`Store::new`], with the database sealed under `key`.
++    #[handle_error(Error)]
++    pub fn new_sealed(
++        db_path: impl AsRef<Path>,
++        key: Vec<u8>,
++        encdec: Arc<dyn EncryptorDecryptor>,
++    ) -> ApiResult<Self> {
++        Ok(Self {
++            db: Mutex::new(Some(AutofillDb::new_sealed(db_path, key, encdec)?)),
++        })
++    }
++
+     /// Creates a store backed by an in-memory database with its own memory API (required for unit tests).
+     #[cfg(test)]
+     pub fn new_memory() -> Self {
+diff --git a/third_party/application-services/components/autofill/src/error.rs b/third_party/application-services/components/autofill/src/error.rs
+index a3d38700d1..a8d933b1c1 100644
+--- a/third_party/application-services/components/autofill/src/error.rs
++++ b/third_party/application-services/components/autofill/src/error.rs
+@@ -47,6 +47,9 @@ pub enum Error {
+     #[error("Error opening database: {0}")]
+     OpenDatabaseError(#[from] sql_support::open_database::Error),
+ 
++    #[error("Error sealing database: {0}")]
++    SealedDatabaseError(#[from] sql_support::obfsvfs::Error),
++
+     #[error("Error executing SQL: {0}")]
+     SqlError(#[from] rusqlite::Error),
+ 
+@@ -110,6 +113,11 @@ impl GetErrorHandling for Error {
+             })
+             .report_error("autofill-sql-error"),
+ 
++            Self::SealedDatabaseError(e) => ErrorHandling::convert(AutofillApiError::SqlError {
++                reason: e.to_string(),
++            })
++            .report_error("autofill-sealed-database-error"),
++
+             Self::IoError(e) => {
+                 ErrorHandling::convert(AutofillApiError::UnexpectedAutofillApiError {
+                     reason: e.to_string(),
+diff --git a/third_party/application-services/components/autofill/src/lib.rs b/third_party/application-services/components/autofill/src/lib.rs
+index 26acb2bfeb..7a0e57071c 100644
+--- a/third_party/application-services/components/autofill/src/lib.rs
++++ b/third_party/application-services/components/autofill/src/lib.rs
+@@ -48,6 +48,18 @@ pub fn create_autofill_store_with_static_key_manager(
+     Ok(Arc::new(Store::new(path, Arc::new(encdec))?))
+ }
+ 
++// The same, with the database sealed under `db_key`, 32 bytes, through sql-support's obfsvfs.
++pub fn create_sealed_autofill_store_with_static_key_manager(
++    path: String,
++    db_key: Vec<u8>,
++    key: String,
++) -> ApiResult<Arc<Store>> {
++    let encdec: ManagedEncryptorDecryptor =
++        ManagedEncryptorDecryptor::new(Arc::new(StaticKeyManager::new(key)));
++    check_canary_roundtrip(&encdec)?;
++    Ok(Arc::new(Store::new_sealed(path, db_key, Arc::new(encdec))?))
++}
++
+ /// Reject a key that cannot round-trip, instead of failing on first use.
+ #[handle_error(Error)]
+ fn check_canary_roundtrip(encdec: &dyn EncryptorDecryptor) -> ApiResult<()> {
+diff --git a/third_party/application-services/components/logins/android/src/main/java/mozilla/appservices/logins/DatabaseLoginsStorage.kt b/third_party/application-services/components/logins/android/src/main/java/mozilla/appservices/logins/DatabaseLoginsStorage.kt
+index 8d764316fb..c1848e0311 100644
+--- a/third_party/application-services/components/logins/android/src/main/java/mozilla/appservices/logins/DatabaseLoginsStorage.kt
++++ b/third_party/application-services/components/logins/android/src/main/java/mozilla/appservices/logins/DatabaseLoginsStorage.kt
+@@ -24,12 +24,18 @@ import org.mozilla.appservices.logins.GleanMetrics.LoginsStore as LoginsStoreMet
+  * LoginStore.
+  */
+ 
+-class DatabaseLoginsStorage(dbPath: String, keyManager: KeyManager) : AutoCloseable {
++class DatabaseLoginsStorage(dbPath: String, keyManager: KeyManager, databaseKey: ByteArray? = null) : AutoCloseable {
+     private var store: LoginStore
+ 
+     init {
+         val encdec = createManagedEncdec(keyManager)
+-        this.store = LoginStore(dbPath, encdec)
++        // With a database key, 32 bytes, the database is sealed under it as well as each login's secret fields under
++        // the key manager's, and opens only under it.
++        this.store = if (databaseKey == null) {
++            LoginStore(dbPath, encdec)
++        } else {
++            LoginStore.newSealed(dbPath, databaseKey, encdec)
++        }
+     }
+ 
+     @Throws(LoginsApiException::class)
+diff --git a/third_party/application-services/components/logins/src/db.rs b/third_party/application-services/components/logins/src/db.rs
+index 0d951d47f8..a3d6e10e3c 100644
+--- a/third_party/application-services/components/logins/src/db.rs
++++ b/third_party/application-services/components/logins/src/db.rs
+@@ -79,9 +79,22 @@ impl LoginDb {
+     }
+ 
+     pub fn open(path: impl AsRef<Path>, encdec: Arc<dyn EncryptorDecryptor>) -> Result<Self> {
++        sql_support::obfsvfs::register_on_android();
+         Self::with_connection(Connection::open(path)?, encdec)
+     }
+ 
++    /// As [`LoginDb::open`], with the database sealed under `key`, 32 bytes: its pages and its journal are sealed
++    /// through sql-support's obfsvfs, and it opens only under its key. `path` must be absolute.
++    pub fn open_sealed(
++        path: impl AsRef<Path>,
++        mut key: Vec<u8>,
++        encdec: Arc<dyn EncryptorDecryptor>,
++    ) -> Result<Self> {
++        let sealed = sql_support::obfsvfs::sealed_name(path.as_ref(), &key);
++        key.fill(0);
++        Self::open(sealed?, encdec)
++    }
++
+     #[cfg(test)]
+     pub fn open_in_memory() -> Self {
+         let encdec: Arc<dyn EncryptorDecryptor> = crate::test_utils::TEST_ENCDEC.clone();
+diff --git a/third_party/application-services/components/logins/src/error.rs b/third_party/application-services/components/logins/src/error.rs
+index a9b71aacbb..968b457ecf 100644
+--- a/third_party/application-services/components/logins/src/error.rs
++++ b/third_party/application-services/components/logins/src/error.rs
+@@ -105,6 +105,9 @@ pub enum Error {
+     #[error("{0}")]
+     Interrupted(#[from] interrupt_support::Interrupted),
+ 
++    #[error("Error sealing database: {0}")]
++    SealedDatabaseError(#[from] sql_support::obfsvfs::Error),
++
+     #[error("IOError: {0}")]
+     IOError(#[from] std::io::Error),
+ 
+diff --git a/third_party/application-services/components/logins/src/logins.udl b/third_party/application-services/components/logins/src/logins.udl
+index 0ba079306a..65c88d8b45 100644
+--- a/third_party/application-services/components/logins/src/logins.udl
++++ b/third_party/application-services/components/logins/src/logins.udl
+@@ -154,6 +154,12 @@ interface LoginStore {
+     [Throws=LoginsApiError]
+     constructor(string path, EncryptorDecryptor encdec);
+ 
++    // The same, with the database sealed under `key`, 32 bytes, through sql-support's obfsvfs: for an app that keeps
++    // its logins' origins and times sealed as well as their usernames and passwords, such as encriox (encri-firefox,
++    // `docs/sealed-history.md`).
++    [Name=new_sealed, Throws=LoginsApiError]
++    constructor(string path, bytes key, EncryptorDecryptor encdec);
++
+     [Throws=LoginsApiError]
+     Login add(LoginEntry login);
+ 
+diff --git a/third_party/application-services/components/logins/src/store.rs b/third_party/application-services/components/logins/src/store.rs
+index 99ba904405..a3adb1e7f5 100644
+--- a/third_party/application-services/components/logins/src/store.rs
++++ b/third_party/application-services/components/logins/src/store.rs
+@@ -89,6 +89,17 @@ impl LoginStore {
+         Ok(Self { db })
+     }
+ 
++    /// As [`LoginStore::new`], with the database sealed under `key`.
++    #[handle_error(Error)]
++    pub fn new_sealed(
++        path: impl AsRef<Path>,
++        key: Vec<u8>,
++        encdec: Arc<dyn EncryptorDecryptor>,
++    ) -> ApiResult<Self> {
++        let db = Mutex::new(Some(LoginDb::open_sealed(path, key, encdec)?));
++        Ok(Self { db })
++    }
++
+     pub fn new_from_db(db: LoginDb) -> Self {
+         let db = Mutex::new(Some(db));
+         Self { db }
+diff --git a/third_party/application-services/components/places/android/src/main/java/mozilla/appservices/places/PlacesConnection.kt b/third_party/application-services/components/places/android/src/main/java/mozilla/appservices/places/PlacesConnection.kt
+index 3c81403486..b11e925d15 100644
+--- a/third_party/application-services/components/places/android/src/main/java/mozilla/appservices/places/PlacesConnection.kt
++++ b/third_party/application-services/components/places/android/src/main/java/mozilla/appservices/places/PlacesConnection.kt
+@@ -29,6 +29,7 @@ import mozilla.appservices.places.uniffi.TopFrecentSiteInfo
+ import mozilla.appservices.places.uniffi.VisitObservation
+ import mozilla.appservices.places.uniffi.VisitType
+ import mozilla.appservices.places.uniffi.placesApiNew
++import mozilla.appservices.places.uniffi.placesApiNewSealed
+ import mozilla.appservices.sync15.SyncTelemetryPing
+ import mozilla.telemetry.glean.private.CounterMetricType
+ import mozilla.telemetry.glean.private.LabeledMetricType
+@@ -46,8 +47,10 @@ typealias Guid = String
+  * where necessary).
+  *
+  * @param path an absolute path to a file that will be used for the internal database.
++ * @param key the key the database is sealed with, 32 bytes, or null to keep it in the clear. A sealed database opens
++ *   only under its key, and one in the clear only without one.
+  */
+-class PlacesApi(path: String) : PlacesManager, AutoCloseable {
++class PlacesApi(path: String, key: ByteArray? = null) : PlacesManager, AutoCloseable {
+     // References to our "api" object and the single writer connection.
+     private var api: UniffiPlacesApi
+     private var writeConn: PlacesWriterConnection
+@@ -56,7 +59,7 @@ class PlacesApi(path: String) : PlacesManager, AutoCloseable {
+         // as per https://github.com/mozilla/uniffi-rs/pull/1063, there was some
+         // pushback on allowing this to actually be a constructor, so it's a global
+         // function instead :(
+-        api = placesApiNew(path)
++        api = if (key == null) placesApiNew(path) else placesApiNewSealed(path, key)
+ 
+         val uniffiConnection = api.newConnection(ConnectionType.READ_WRITE)
+         writeConn = PlacesWriterConnection(uniffiConnection, this)
+diff --git a/third_party/application-services/components/places/src/api/places_api.rs b/third_party/application-services/components/places/src/api/places_api.rs
+index 8b212a4554..62374e5bb3 100644
+--- a/third_party/application-services/components/places/src/api/places_api.rs
++++ b/third_party/application-services/components/places/src/api/places_api.rs
+@@ -116,6 +116,12 @@ pub fn places_api_new(db_name: impl AsRef<Path>) -> ApiResult<Arc<PlacesApi>> {
+     PlacesApi::new(db_name)
+ }
+ 
++/// As [`places_api_new`], with the database sealed under `key`.
++#[handle_error(crate::Error)]
++pub fn places_api_new_sealed(db_name: impl AsRef<Path>, key: Vec<u8>) -> ApiResult<Arc<PlacesApi>> {
++    PlacesApi::new_sealed(db_name, key)
++}
++
+ /// The entry-point to the places API. This object gives access to database
+ /// connections and other helpers. It enforces that only 1 write connection
+ /// can exist to the database at once.
+@@ -142,6 +148,17 @@ impl PlacesApi {
+         Self::new_or_existing(db_name)
+     }
+ 
++    /// As [`PlacesApi::new`], with the database sealed under `key`, 32 bytes: its pages, its write-ahead log and its
++    /// journal are sealed through sql-support's obfsvfs. Every connection opens it by a name that carries a handle
++    /// to the key, never the key, which obfsvfs keeps. It is sealed when it is made: a database in the clear, or one
++    /// sealed under another key, is refused, and left as it is.
++    pub fn new_sealed(db_name: impl AsRef<Path>, mut key: Vec<u8>) -> Result<Arc<Self>> {
++        let db_name = normalize_database_path(db_name)?;
++        let sealed = sql_support::obfsvfs::sealed_name(&db_name, &key);
++        key.fill(0);
++        Self::new_or_existing(sealed?)
++    }
++
+     /// Create a new, or fetch an already open, memory-based PlacesApi. You must
+     /// provide a name, but you are still able to have a single writer and many
+     ///  reader connections to the same memory DB open.
+diff --git a/third_party/application-services/components/places/src/error.rs b/third_party/application-services/components/places/src/error.rs
+index 11b7f6b4c1..70fcae9238 100644
+--- a/third_party/application-services/components/places/src/error.rs
++++ b/third_party/application-services/components/places/src/error.rs
+@@ -111,6 +111,9 @@ pub enum Error {
+     #[error("Error opening database: {0}")]
+     OpenDatabaseError(#[from] sql_support::open_database::Error),
+ 
++    #[error("Error sealing database: {0}")]
++    SealedDatabaseError(#[from] sql_support::obfsvfs::Error),
++
+     #[error("Invalid metadata observation: {0}")]
+     InvalidMetadataObservation(#[from] InvalidMetadataObservation),
+ }
+diff --git a/third_party/application-services/components/places/src/ffi.rs b/third_party/application-services/components/places/src/ffi.rs
+index cf69997e51..0cc5388b7d 100644
+--- a/third_party/application-services/components/places/src/ffi.rs
++++ b/third_party/application-services/components/places/src/ffi.rs
+@@ -5,7 +5,7 @@
+ // This module implement the traits that make the FFI code easier to manage.
+ 
+ use crate::api::matcher::{self, search_frecent, SearchParams};
+-pub use crate::api::places_api::places_api_new;
++pub use crate::api::places_api::{places_api_new, places_api_new_sealed};
+ pub use crate::error::{warn, Result};
+ pub use crate::error::{ApiResult, PlacesApiError};
+ use crate::glean_metrics;
+diff --git a/third_party/application-services/components/places/src/places.udl b/third_party/application-services/components/places/src/places.udl
+index 6cca8d71f1..025545e3b7 100644
+--- a/third_party/application-services/components/places/src/places.udl
++++ b/third_party/application-services/components/places/src/places.udl
+@@ -14,6 +14,11 @@ typedef string Guid;
+ namespace places {
+     [Throws=PlacesApiError]
+     PlacesApi places_api_new(string db_path);
++
++    // The same, with the database sealed under `key`, 32 bytes, through sql-support's obfsvfs: for an app that keeps
++    // its history and bookmarks sealed, such as encriox (encri-firefox, `docs/sealed-history.md`).
++    [Throws=PlacesApiError]
++    PlacesApi places_api_new_sealed(string db_path, bytes key);
+ };
+ 
+ enum ConnectionType {
+diff --git a/toolkit/components/uniffi-bindgen-gecko-js/android/components/autofill/android/src/main/java/mozilla/appservices/autofill/autofill.kt b/toolkit/components/uniffi-bindgen-gecko-js/android/components/autofill/android/src/main/java/mozilla/appservices/autofill/autofill.kt
+index ca8657b78a..ff328cb2d4 100644
+--- a/toolkit/components/uniffi-bindgen-gecko-js/android/components/autofill/android/src/main/java/mozilla/appservices/autofill/autofill.kt
++++ b/toolkit/components/uniffi-bindgen-gecko-js/android/components/autofill/android/src/main/java/mozilla/appservices/autofill/autofill.kt
+@@ -681,6 +681,8 @@ internal object IntegrityCheckingUniffiLib {
+     ): Int
+     external fun uniffi_autofill_checksum_func_create_autofill_store_with_static_key_manager(
+     ): Int
++    external fun uniffi_autofill_checksum_func_create_sealed_autofill_store_with_static_key_manager(
++    ): Int
+     external fun uniffi_autofill_checksum_method_addressesbridgedengine_apply(
+     ): Int
+     external fun uniffi_autofill_checksum_method_addressesbridgedengine_ensure_current_sync_id(
+@@ -966,6 +968,8 @@ internal object UniffiLib {
+     ): RustBuffer.ByValue
+     external fun uniffi_autofill_fn_func_create_autofill_store_with_static_key_manager(`path`: RustBuffer.ByValue,`key`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+     ): Long
++    external fun uniffi_autofill_fn_func_create_sealed_autofill_store_with_static_key_manager(`path`: RustBuffer.ByValue,`dbKey`: RustBuffer.ByValue,`key`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
++    ): Long
+     external fun ffi_autofill_rustbuffer_alloc(`size`: Long,uniffi_out_err: UniffiRustCallStatus, 
+     ): RustBuffer.ByValue
+     external fun ffi_autofill_rustbuffer_from_bytes(`bytes`: ForeignBytes.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+@@ -1365,6 +1369,25 @@ public object FfiConverterString: FfiConverter<String, RustBuffer.ByValue> {
+     }
+ }
+ 
++/**
++ * @suppress
++ */
++public object FfiConverterByteArray: FfiConverterRustBuffer<ByteArray> {
++    override fun read(buf: ByteBuffer): ByteArray {
++        val len = buf.getInt()
++        val byteArr = ByteArray(len)
++        buf.get(byteArr)
++        return byteArr
++    }
++    override fun allocationSize(value: ByteArray): ULong {
++        return 4UL + value.size.toULong()
++    }
++    override fun write(value: ByteArray, buf: ByteBuffer) {
++        buf.putInt(value.size)
++        buf.put(value)
++    }
++}
++
+ 
+ // This template implements a class for working with a Rust struct via a handle
+ // to the live Rust struct on the other side of the FFI.
+@@ -5080,4 +5103,22 @@ public object FfiConverterSequenceTypeCreditCardBulkTombstoneResultEntry: FfiCon
+     }
+     
+ 
++        /**
++         * The same, with the database sealed under `db_key`, 32 bytes, through sql-support's obfsvfs: for an app that
++         * keeps every field of its cards and addresses sealed, such as encriox (encri-firefox, `docs/sealed-history.md`).
++         */
++    @Throws(AutofillApiException::class) fun `createSealedAutofillStoreWithStaticKeyManager`(`path`: kotlin.String, `dbKey`: kotlin.ByteArray, `key`: kotlin.String): Store {
++            return FfiConverterTypeStore.lift(
++    uniffiRustCallWithError(AutofillApiException) { _status ->
++    UniffiLib.uniffi_autofill_fn_func_create_sealed_autofill_store_with_static_key_manager(
++    
++        
++        FfiConverterString.lower(`path`),
++        FfiConverterByteArray.lower(`dbKey`),
++        FfiConverterString.lower(`key`),_status)
++}
++    )
++    }
++    
++
+ 
+diff --git a/toolkit/components/uniffi-bindgen-gecko-js/android/components/logins/android/src/main/java/mozilla/appservices/logins/logins.kt b/toolkit/components/uniffi-bindgen-gecko-js/android/components/logins/android/src/main/java/mozilla/appservices/logins/logins.kt
+index 549b95e983..469003674e 100644
+--- a/toolkit/components/uniffi-bindgen-gecko-js/android/components/logins/android/src/main/java/mozilla/appservices/logins/logins.kt
++++ b/toolkit/components/uniffi-bindgen-gecko-js/android/components/logins/android/src/main/java/mozilla/appservices/logins/logins.kt
+@@ -779,6 +779,8 @@ internal object IntegrityCheckingUniffiLib {
+     ): Int
+     external fun uniffi_logins_checksum_constructor_loginstore_new(
+     ): Int
++    external fun uniffi_logins_checksum_constructor_loginstore_new_sealed(
++    ): Int
+     external fun ffi_logins_uniffi_contract_version(
+     ): Int
+ 
+@@ -806,6 +808,8 @@ internal object UniffiLib {
+     ): Unit
+     external fun uniffi_logins_fn_constructor_loginstore_new(`path`: RustBuffer.ByValue,`encdec`: Long,uniffi_out_err: UniffiRustCallStatus, 
+     ): Long
++    external fun uniffi_logins_fn_constructor_loginstore_new_sealed(`path`: RustBuffer.ByValue,`key`: RustBuffer.ByValue,`encdec`: Long,uniffi_out_err: UniffiRustCallStatus, 
++    ): Long
+     external fun uniffi_logins_fn_method_loginstore_add(`ptr`: Long,`login`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+     ): RustBuffer.ByValue
+     external fun uniffi_logins_fn_method_loginstore_add_many(`ptr`: Long,`logins`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+@@ -1309,6 +1313,25 @@ public object FfiConverterString: FfiConverter<String, RustBuffer.ByValue> {
+     }
+ }
+ 
++/**
++ * @suppress
++ */
++public object FfiConverterByteArray: FfiConverterRustBuffer<ByteArray> {
++    override fun read(buf: ByteBuffer): ByteArray {
++        val len = buf.getInt()
++        val byteArr = ByteArray(len)
++        buf.get(byteArr)
++        return byteArr
++    }
++    override fun allocationSize(value: ByteArray): ULong {
++        return 4UL + value.size.toULong()
++    }
++    override fun write(value: ByteArray, buf: ByteBuffer) {
++        buf.putInt(value.size)
++        buf.put(value)
++    }
++}
++
+ 
+ // This template implements a class for working with a Rust struct via a handle
+ // to the live Rust struct on the other side of the FFI.
+@@ -2306,11 +2329,24 @@ open class LoginStore: Disposable, AutoCloseable, LoginStoreInterface
+ 
+ 
+     
++    companion object {
++        
++    @Throws(LoginsApiException::class) fun `newSealed`(`path`: kotlin.String, `key`: kotlin.ByteArray, `encdec`: EncryptorDecryptor): LoginStore {
++            return FfiConverterTypeLoginStore.lift(
++    uniffiRustCallWithError(LoginsApiException) { _status ->
++    UniffiLib.uniffi_logins_fn_constructor_loginstore_new_sealed(
++    
++        
++        FfiConverterString.lower(`path`),
++        FfiConverterByteArray.lower(`key`),
++        FfiConverterTypeEncryptorDecryptor.lower(`encdec`),_status)
++}
++    )
++    }
+     
+-    /**
+-     * @suppress
+-     */
+-    companion object
++
++        
++    }
+     
+ }
+ 
+diff --git a/toolkit/components/uniffi-bindgen-gecko-js/android/components/places/android/src/main/java/mozilla/appservices/places/uniffi/places.kt b/toolkit/components/uniffi-bindgen-gecko-js/android/components/places/android/src/main/java/mozilla/appservices/places/uniffi/places.kt
+index 36409c8cc9..33bb3e5db4 100644
+--- a/toolkit/components/uniffi-bindgen-gecko-js/android/components/places/android/src/main/java/mozilla/appservices/places/uniffi/places.kt
++++ b/toolkit/components/uniffi-bindgen-gecko-js/android/components/places/android/src/main/java/mozilla/appservices/places/uniffi/places.kt
+@@ -676,6 +676,8 @@ internal object IntegrityCheckingUniffiLib {
+     internal fun ensureInitialized() = Unit
+     external fun uniffi_places_checksum_func_places_api_new(
+     ): Int
++    external fun uniffi_places_checksum_func_places_api_new_sealed(
++    ): Int
+     external fun uniffi_places_checksum_method_placesapi_new_connection(
+     ): Int
+     external fun uniffi_places_checksum_method_placesapi_register_with_sync_manager(
+@@ -886,6 +888,8 @@ internal object UniffiLib {
+     ): Unit
+     external fun uniffi_places_fn_func_places_api_new(`dbPath`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+     ): Long
++    external fun uniffi_places_fn_func_places_api_new_sealed(`dbPath`: RustBuffer.ByValue,`key`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
++    ): Long
+     external fun ffi_places_rustbuffer_alloc(`size`: Long,uniffi_out_err: UniffiRustCallStatus, 
+     ): RustBuffer.ByValue
+     external fun ffi_places_rustbuffer_from_bytes(`bytes`: ForeignBytes.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+@@ -1354,6 +1358,25 @@ public object FfiConverterString: FfiConverter<String, RustBuffer.ByValue> {
+     }
+ }
+ 
++/**
++ * @suppress
++ */
++public object FfiConverterByteArray: FfiConverterRustBuffer<ByteArray> {
++    override fun read(buf: ByteBuffer): ByteArray {
++        val len = buf.getInt()
++        val byteArr = ByteArray(len)
++        buf.get(byteArr)
++        return byteArr
++    }
++    override fun allocationSize(value: ByteArray): ULong {
++        return 4UL + value.size.toULong()
++    }
++    override fun write(value: ByteArray, buf: ByteBuffer) {
++        buf.putInt(value.size)
++        buf.put(value)
++    }
++}
++
+ 
+ // This template implements a class for working with a Rust struct via a handle
+ // to the live Rust struct on the other side of the FFI.
+@@ -5380,4 +5403,17 @@ public typealias FfiConverterTypeVisitTransitionSet = FfiConverterInt
+     }
+     
+ 
++    @Throws(PlacesApiException::class) fun `placesApiNewSealed`(`dbPath`: kotlin.String, `key`: kotlin.ByteArray): PlacesApi {
++            return FfiConverterTypePlacesApi.lift(
++    uniffiRustCallWithError(PlacesApiException) { _status ->
++    UniffiLib.uniffi_places_fn_func_places_api_new_sealed(
++    
++        
++        FfiConverterString.lower(`dbPath`),
++        FfiConverterByteArray.lower(`key`),_status)
++}
++    )
++    }
++    
++
+ 
+-- 
+2.47.3
+

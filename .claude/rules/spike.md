@@ -1,7 +1,6 @@
 ---
 paths:
   - "scripts/spike/**"
-  - "LICENSE"
 ---
 
 # The spikes — component brief
@@ -15,9 +14,8 @@ in which the profile's keys are kept under a secret from the vault's key, and ch
 key is locked (W14), which does not start without the vault (W15), and what its encryption of SQLite costs (W16).
 `scripts/spike/stage-3/` builds stage 2's with application-services in Firefox's own tree, and seals places', the
 logins' and autofill's databases through an obfsvfs of application-services' own, with keys from the vault's (W21),
-and asks the user at start about one that does not open (W25).
-`LICENSE` is here too until a build of encriox itself has a brief. This brief is level 1; full records are in
-`docs/decisions/`.
+and asks the user at start about one that does not open (W25). encriox's own series carries stage 3's sealing
+(`encriox.md`, W26). This brief is level 1; full records are in `docs/decisions/`.
 
 ## Rules that hold here
 

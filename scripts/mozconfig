@@ -1,0 +1,24 @@
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+# encriox's mach configuration: Gecko and application-services compiled from the checkout, and Fenix built against
+# them, as the stage 3 spike's is (W13, W21).
+ac_add_options --enable-project=mobile/android
+# arm64 alone, as every test phone is (W17, flag 3).
+ac_add_options --target=aarch64-linux-android
+# Fenix alone of the Android projects, so that Gradle configures nothing else.
+ac_add_options --enable-android-subproject=fenix
+# mach's own SDK, so that the suite's SDK, which is encri's toolchain, is left as it is
+# (scripts/spike/stage-1/README.md lists what it holds).
+ac_add_options --with-android-sdk=$HOME/.mozbuild/android-sdk-linux
+ac_add_options --enable-update-channel=release
+# A release checkout bootstraps its toolchains, clang, Rust, the NDK and the rest, only when asked. Not android-sdk:
+# the SDK is given above.
+ac_add_options --enable-bootstrap=-android-sdk
+ac_add_options --disable-debug-symbols
+# The megazord, libmegazord.so, compiled by mach from Firefox's own copy of application-services,
+# `third_party/application-services`, against Gecko's NSS, so that its databases can be sealed (W21); Gradle then takes
+# its components as projects of the build.
+ac_add_options --enable-appservices-in-tree
+mk_add_options MOZ_OBJDIR=@TOPSRCDIR@/obj-encriox

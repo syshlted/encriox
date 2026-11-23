@@ -1,0 +1,40 @@
+#!/bin/sh
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+# Builds encriox's debug APK from a checkout `fetch` made: Gecko and application-services' megazord compiled from it,
+# then Fenix against that GeckoView and those components, with this directory's mozconfig.
+#
+#   scripts/build <firefox checkout>
+#
+# The checkout, its objdir and mach's state, with the toolchains it bootstraps, belong on the drive for large builds
+# (W7); the state goes beside the checkout unless MOZBUILD_STATE_PATH says otherwise. The APKs are under
+# <firefox checkout>/obj-encriox/gradle/build/mobile/android/fenix/app/outputs/apk/debug/.
+set -eu
+
+here=$(cd "$(dirname "$0")" && pwd)
+firefox=$(cd "${1:?usage: build <firefox checkout>}" && pwd)
+. "$here/../firefox-release"
+
+git -C "$firefox" merge-base --is-ancestor "$FIREFOX_COMMIT" HEAD 2>/dev/null ||
+    { echo "build: $firefox is not built on $FIREFOX_TAG, $FIREFOX_COMMIT (firefox-release)" >&2; exit 1; }
+
+export MOZCONFIG="$here/mozconfig"
+export MOZBUILD_STATE_PATH="${MOZBUILD_STATE_PATH:-$(dirname "$firefox")/mozbuild}"
+# The SDK and bundletool the spikes use, under ~/.mozbuild (scripts/spike/stage-1/README.md). The JDK is
+# configure's own, which it bootstraps into mach's state whatever JAVA_HOME says.
+export ANDROID_HOME="$HOME/.mozbuild/android-sdk-linux"
+export ANDROID_BUNDLETOOL_PATH="$HOME/.mozbuild/bundletool.jar"
+
+# Rust, which configure bootstraps only in Mozilla's automation: the toolchain Mozilla's CI builds Android with,
+# linux64-rust-android, fetched once into mach's state.
+mkdir -p "$MOZBUILD_STATE_PATH"
+[ -x "$MOZBUILD_STATE_PATH/rustc/bin/rustc" ] ||
+    (cd "$MOZBUILD_STATE_PATH" && "$firefox/mach" --no-interactive artifact toolchain --from-build linux64-rust-android)
+export PATH="$MOZBUILD_STATE_PATH/rustc/bin:$PATH"
+
+cd "$firefox"
+./mach --no-interactive build
+# From the root build, where :geckoview is a project, so that Android Components takes this checkout's GeckoView.
+./mach --no-interactive gradle --console=plain fenix:assembleDebug

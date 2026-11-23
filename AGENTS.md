@@ -7,18 +7,19 @@
 ## What this is
 
 **encriox, a browser for encri: a fork of Firefox for Android that reaches the vault through encri-api** (W1,
-2026-11-13), licensed MPL-2.0 throughout (W2), and named in W3. Its sibling on Chromium is encrimium, a project of
-its own, after encriox's spikes (W3, W11). `docs/feasibility-study.md` (2026-11-10) weighed it against the same on Chromium
-and against encri's own code inside Chromium, and its *Scenario 1* is the design W1 adopted. **Nothing of encriox is
-built yet.** The stage 1 spike, a throwaway, is built and measured on three phones (`scripts/spike/stage-1/`, W4 to W6);
-the stage 2 spike's first round ran on its build, with prefs alone (`scripts/spike/stage-2/`, W12), and stage 2 now
-builds its own Gecko, on which all three of Lockstore's switches work (W13) and the profile's keys are kept under a
-secret from the vault's key (W14), which does not start without the vault (W15), and whose encryption of SQLite was
-measured (W16), and which closes at a lock, letting Gecko write what it holds first (W20). Stage 3 builds
-application-services in Firefox's tree on stage 2's, and seals places', the logins' and autofill's databases with keys
-from the vault's (`scripts/spike/stage-3/`, W21), each page carrying a check of its key (W24), and a database that does
-not open asked about at start, to be repaired, deleted or kept (W25). encriox's first usable build is planned and
-accepted (W17; `ROADMAP.md`, item 6), and carries them.
+2026-11-13), licensed MPL-2.0 throughout (W2), and named in W3. Its sibling on Chromium is encrimium, a project of its
+own, after encriox's spikes (W3, W11). `docs/feasibility-study.md` (2026-11-10) weighed it against the same on Chromium
+and against encri's own code inside Chromium, and its *Scenario 1* is the design W1 adopted. **encriox's own series has
+begun, and is not used yet** (W26): `patches/` on the Firefox release `firefox-release` names, made into a checkout and
+built by `scripts/`, holds stage 3's sealing below, and nothing of Fenix's yet. The stage 1 spike, a throwaway, is built
+and measured on three phones (`scripts/spike/stage-1/`, W4 to W6); the stage 2 spike's first round ran on its build,
+with prefs alone (`scripts/spike/stage-2/`, W12), and stage 2 now builds its own Gecko, on which all three of
+Lockstore's switches work (W13) and the profile's keys are kept under a secret from the vault's key (W14), which does
+not start without the vault (W15), and whose encryption of SQLite was measured (W16), and which closes at a lock,
+letting Gecko write what it holds first (W20). Stage 3 builds application-services in Firefox's tree on stage 2's, and
+seals places', the logins' and autofill's databases with keys from the vault's (`scripts/spike/stage-3/`, W21), each
+page carrying a check of its key (W24), and a database that does not open asked about at start, to be repaired, deleted
+or kept (W25). encriox's first usable build is planned and accepted (W17; `ROADMAP.md`, item 6), and carries them.
 
 ## Relationship to the other repositories
 
@@ -52,7 +53,8 @@ what is next.
 
 | Brief | Covers |
 |---|---|
-| `spike.md` | the spikes, stages 1 to 3, `scripts/spike/**`, and `LICENSE` until encriox's own build has a brief |
+| `encriox.md` | encriox's own build: `firefox-release`, `patches/`, `scripts/fetch`, `build` and `mozconfig`, and `LICENSE` |
+| `spike.md` | the spikes, stages 1 to 3, `scripts/spike/**` |
 
 ## Hard constraints
 

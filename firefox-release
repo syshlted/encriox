@@ -1,0 +1,10 @@
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+# The Firefox release encriox is built on (W9): the tag its series, `patches/`, applies to, and that tag's commit.
+# Whatever says which release encriox is built on reads it here, and nowhere else: `scripts/fetch` and
+# `scripts/build` do now. encriox builds its own Gecko, so no published GeckoView is named.
+FIREFOX_REPOSITORY=https://github.com/mozilla-firefox/firefox
+FIREFOX_TAG=FIREFOX_160_0_RELEASE
+FIREFOX_COMMIT=2887d9de1f69c0e9776413da80e7ba0d1225dd9b

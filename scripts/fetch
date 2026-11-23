@@ -1,0 +1,27 @@
+#!/bin/sh
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+# Makes the Firefox checkout encriox builds from (W9): the release tag `firefox-release` names, shallow, with the
+# series in `patches/` committed on a branch of its own, `encriox`.
+#
+#   scripts/fetch <new directory>
+#
+# Put it on the drive for large builds, /home/coder/extra_space/encri-extraspace (W7), beside mach's state: the
+# checkout is about 6 GB, and its objdir tens of GB.
+set -eu
+
+root=$(cd "$(dirname "$0")/.." && pwd)
+target=${1:?usage: fetch <new directory>}
+. "$root/firefox-release"
+
+git clone --quiet --depth 1 --branch "$FIREFOX_TAG" "$FIREFOX_REPOSITORY" "$target"
+cd "$target"
+[ "$(git rev-parse HEAD)" = "$FIREFOX_COMMIT" ] || { echo "fetch: $FIREFOX_TAG is not $FIREFOX_COMMIT" >&2; exit 1; }
+git switch --quiet -c encriox
+set -- "$root"/patches/*.patch
+if [ -e "$1" ]; then
+    git am --quiet "$@"
+fi
+git log --oneline "$FIREFOX_COMMIT"..HEAD
