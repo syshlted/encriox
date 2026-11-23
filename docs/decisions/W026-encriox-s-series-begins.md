@@ -63,8 +63,10 @@ layout W9 settled, which the series needs first. **Flagged for veto on five poin
 | | |
 |---|---|
 | `fetch`, from GitHub | 16 min 47 s: a 1.0 GB pack, a 6.1 GB checkout, and the series' first six patches applied |
+| `fetch` again, of the seven patches as committed, into a checkout then deleted | 19 min 57 s; its tree the same as the tip built and measured |
 | `build`, the first, of the tip without patch 0007 | 80 min: 73 of mach's, Gecko and the megazord, and 7 of Gradle's; an objdir of 12 GB; `org.mozilla.fenix.debug`, 170 MB for arm64 |
 | `build` again with patch 0007, a change to Fenix alone | 4 min 47 s |
+| `build` at every prefix of the series, in order, the release alone first | each built: 5 min 26 s for the release alone, then 0.8–3.9 min a patch, 22 min in all |
 | obfsvfs's tests on this machine (`scripts/spike/stage-3/check-obfsvfs-host`), at the tip | 23 pass, the same files as stage 3's tip's |
 | The tip without patch 0007, on the G6 (Android 9), at its first start | killed by Fenix's StrictMode listener, *DiskReadViolation* in LG's `ResourcesImpl.startParallelLoading`; the crash reporter came up |
 | With patch 0007: the spike's marker page, opened from another app over `adb reverse` | loaded in a normal tab; its eight stores written; 15 violations of LG's logged as suppressed, none fatal, in this process and the next |
@@ -107,9 +109,6 @@ The build was then uninstalled from the G6, its data with it: it held the page i
 
 #### Unmeasured
 
-- Every prefix of the series built: the tip without patch 0007, and with it, were; the release alone and patches
-  0001 to 0005 were building when this was written (*Every prefix*, in the brief).
 - The other phones: the A20, whose wireless adb had dropped, the S9, not attached, and the S24.
 - The logins and the cards in a build of the series: Fenix's warm-up made their databases, in the clear, and nothing
   was saved in them.
-- `fetch` with patch 0007: it was applied by hand, with `git am`, as `fetch` applies the rest.

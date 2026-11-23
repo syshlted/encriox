@@ -77,6 +77,7 @@ nothing in the clear at rest.
 
 - **`fetch` took 17 minutes** from GitHub, a 1.0 GB pack, and the checkout is 6.1 GB; **the first build 80 minutes**,
   73 of them mach's, Gecko and the megazord, and 7 Gradle's, for an objdir of 12 GB; a change to Fenix alone, 5 (W26).
+  Every prefix of the series, the release alone first, built in turn in 22 minutes.
 - **A build of the series on the G6** (W26, patch 0007's): a page opened from another app loaded in a normal tab, and
   went to History; *Bookmark page* saved it, and Bookmarks listed it; the menu offers History and Bookmarks; places'
   database held its row, one visit and one bookmark, in the clear, with places' own 32 KiB pages and no reserved bytes,
