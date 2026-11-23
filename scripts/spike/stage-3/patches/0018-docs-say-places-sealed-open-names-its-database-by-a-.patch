@@ -1,0 +1,35 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jeremy Melanson <1080872+zish@users.noreply.github.com>
+Date: Mon, 23 Nov 2026 00:57:33 +0000
+Subject: [PATCH] docs: say places' sealed open names its database by a key's
+ handle
+
+places_api's new_sealed still said every connection opens the database
+by a name that carries the key, which is what patch 0001 did and patch
+0005 ended: the name carries a handle to the key, which obfsvfs keeps.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+---
+ .../components/places/src/api/places_api.rs                 | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/third_party/application-services/components/places/src/api/places_api.rs b/third_party/application-services/components/places/src/api/places_api.rs
+index a9ffddcc60..ac66b3e171 100644
+--- a/third_party/application-services/components/places/src/api/places_api.rs
++++ b/third_party/application-services/components/places/src/api/places_api.rs
+@@ -199,9 +199,9 @@ impl PlacesApi {
+     }
+ 
+     /// As [`PlacesApi::new`], with the database sealed under `key`, 32 bytes: its pages, its write-ahead log and its
+-    /// journal are sealed through sql-support's obfsvfs. Every connection opens it by a name that carries the key,
+-    /// which is never logged. It is sealed when it is made: a database in the clear, or one sealed under another key,
+-    /// is refused, and left as it is.
++    /// journal are sealed through sql-support's obfsvfs. Every connection opens it by a name that carries a handle
++    /// to the key, never the key, which obfsvfs keeps. It is sealed when it is made: a database in the clear, or one
++    /// sealed under another key, is refused, and left as it is.
+     pub fn new_sealed(db_name: impl AsRef<Path>, mut key: Vec<u8>) -> Result<Arc<Self>> {
+         let db_name = normalize_database_path(db_name)?;
+         let sealed = sql_support::obfsvfs::sealed_name(&db_name, &key);
+-- 
+2.47.3
+
