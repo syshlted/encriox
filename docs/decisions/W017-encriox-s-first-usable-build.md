@@ -102,5 +102,8 @@ encriox, and again only if encriox's key is ever rotated.
   build"): it waits for history and bookmarks, the logins and the cards in sealed databases, and carries them.
   History is recorded and bookmarks are on in its menus; the logins' origins are sealed with the rest of their
   database, not disclosed. Collections and pinned top sites, which are not application-services', stay off.
+- **W17's order of item 6** (2026-11-23, W26): history and bookmarks needed nothing turned on, W17's plan to have
+  them off never having been built; and stage 3's patches could be carried only once encriox had a series, so the
+  layout W9 settled came first. Stage 3's Fenix half waits for the spikes' patches that are encriox's.
 
 <!-- /amendments -->

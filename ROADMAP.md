@@ -131,8 +131,13 @@ sources are there, and are not repeated here:
      frozen, and a lock reaches it only when it is unfrozen. Measure it on the S24, which needs its vault locked, so
      its owner's word and its owner there to unlock it; then whether encriox keeps itself from being frozen while it
      holds the keys, by a foreground service of its own, or closes as it goes to the background. S.
-   - **History and bookmarks on in encriox's menus**, which W17 had off, and Fenix's history delegate set, S; and the
-     stage 3 patches carried into encriox's series with the in-tree build in its mozconfig, S.
+   - ~~**History and bookmarks on in encriox's menus**, which W17 had off, and Fenix's history delegate set, S; and the
+     stage 3 patches carried into encriox's series with the in-tree build in its mozconfig, S.~~ **Done 2026-11-23
+     (W26)**, with the layout below first, which the series needed: W17's history and bookmarks off was never built,
+     and Fenix records history and keeps bookmarks as it always has, measured on the G6 in a build of the series; and
+     stage 3's application-services and Android Components patches are its first six, built in tree
+     (`scripts/mozconfig`). Stage 3's Fenix half, the stores' keys and the prompt at start, needs `.encriox.key` and
+     the unlock, and comes with the spikes' patches that are encriox's, below.
    - ~~**A key check in each sealed page, next** (W22's amendment, the user's word of 2026-11-20): in obfsvfs, a check
      derived from the database's key in each page's 4 spare reserved bytes, so that a wrong key is told from a damaged
      file, measured with a log torn by a crash and a page that does not open under the right key, on a phone. S.~~
@@ -150,10 +155,11 @@ sources are there, and are not repeated here:
      not open it that session. A repair of places with a page damaged kept 3,813 rows, dropping the 100 that referred
      to the page's. Found and fixed: Keep let the store's failed open checkpoint the log into the damaged file. Five
      points flagged for veto.
-   - **The repository and the build**: `patches/`, `scripts/` and the file naming the Firefox release (W9), S; the
-     series moved onto the newest release tag, the first measure of a rebase's cost, M; a build type of encriox's
-     own, minified, Gecko optimised, without Fenix's `sharedUserId`, with a `.debug` type beside it, M; the branding,
-     every string and icon that names Firefox, M; Gecko's prefs as the build's defaults, S.
+   - **The repository and the build**: ~~`patches/`, `scripts/` and the file naming the Firefox release (W9), S~~
+     **done 2026-11-23 (W26)**, `firefox-release`, `scripts/fetch` and `scripts/build`; the series moved onto the
+     newest release tag, the first measure of a rebase's cost, M; a build type of encriox's own, minified, Gecko
+     optimised, without Fenix's `sharedUserId`, with a `.debug` type beside it, M; the branding, every string and icon
+     that names Firefox, M; Gecko's prefs as the build's defaults, S.
    - **The spikes' patches that are encriox's**, about 20 of 30, rewritten without the gate and with `.encriox.key`,
      M.
    - **What the spikes left**: closing at a lock, carried from the spike's patch 0012 (W20); Fenix's records of

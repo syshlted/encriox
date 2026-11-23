@@ -4,6 +4,22 @@ What happened, newest first. Why is in `docs/decisions/`, and what is next is in
 
 ## Unreleased
 
+### encriox's series begins (2026-11-23)
+
+On the user's word, encriox has a series of its own (W26): `firefox-release` names the Firefox release it is built on,
+160.0, and `scripts/fetch` and `scripts/build` make a checkout of that tag with `patches/` committed on it and build
+it, Gecko and application-services' megazord in tree, then Fenix. Its first six patches are stage 3's sealing of
+application-services' databases, carried from nine of the spike's commits with their fixes folded in: obfsvfs, the
+sealed opens of places, the logins and autofill, Android Components' database keys, SQLite's recovery, and the check
+and repair. Nothing else of Fenix's is changed yet, so a build keeps its databases in the clear and is checked, never
+used; the stores' keys and the prompt at start need `.encriox.key` and encri's unlock, which come with the rest of the
+spikes' patches. History and bookmarks needed nothing turned on: W17's plan to have them off was never built, and on
+the G6 a build of the series recorded a page in History, kept its bookmark, and listed both again in a new process,
+in places' database through obfsvfs. Found and fixed on the way: Fenix's debug build was killed at its first start on
+the G6 by its own StrictMode, for LG's framework, which stage 1's fix for it, now encriox's patch 0007, ignores; and a
+comment in places' sealed open said its database's name carries the key, which stage 3's patch 0005 had made a handle
+(stage 3's patch 0018). The first build took 80 minutes, and `fetch` 17.
+
 ### A prompt at start for a sealed database that does not open (2026-11-22)
 
 On the user's word, stage 3 reads each of its three sealed databases through under its key at start, before its store

@@ -5,8 +5,11 @@ would land in the vault, and its live stores, such as cookies, history and the c
 encrypted with a key only the unlocked vault can give it. It reaches the vault through the
 [encri-api](https://github.com/syshlted/encri-api) client library, as Encri Images does.
 
-**Pre-release. Nothing of encriox is built yet.** What is built is the stage 1 spike, a throwaway, measured on three
-phones ([`scripts/spike/stage-1/`](scripts/spike/stage-1/README.md)). The design is the Firefox fork that
+**Pre-release.** encriox's own series has begun: [`patches/`](patches/) on **Firefox 160.0**, `FIREFOX_160_0_RELEASE`,
+as [`firefox-release`](firefox-release) names it, made into a checkout and built by `scripts/fetch` and `scripts/build`
+([W26](docs/decisions/W026-encriox-s-series-begins.md)). It holds the sealing of history, bookmarks, logins and cards,
+and nothing of Fenix's yet, so nothing of it is used. What is built and measured are the spikes, throwaways, on four
+phones ([`scripts/spike/`](scripts/spike/stage-1/README.md)). The design is the Firefox fork that
 [`docs/feasibility-study.md`](docs/feasibility-study.md) found the most feasible of three, chosen in
 [W1](docs/decisions/W001-a-firefox-fork-reaching-the-vault-through-encri-api.md). See [`ROADMAP.md`](ROADMAP.md) for
 what comes next: encriox's first usable build, planned in

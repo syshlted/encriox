@@ -87,3 +87,9 @@ Each entry corrects a record. Its bold lead names the record possessively ("W1's
   kept one's store is refused its key that session, so that nothing opens it; nothing is deleted unasked.
 - **W24's first flag** (2026-11-22, W25): the prompt at start does not read the components' messages; it tells a
   wrong key from damage by obfsvfs's own check, before the store opens anything.
+- **W4's second flag** (2026-11-23, W26): encriox's own debug build keeps Fenix's StrictMode, which kills, with LG's
+  framework ignored, stage 1's patch 0004 carried as encriox's 0007; the spike's StrictMode that never kills stays in
+  the spike.
+- **W17's order of item 6** (2026-11-23, W26): history and bookmarks needed nothing turned on, W17's plan to have
+  them off never having been built; and stage 3's patches could be carried only once encriox had a series, so the
+  layout W9 settled came first. Stage 3's Fenix half waits for the spikes' patches that are encriox's.

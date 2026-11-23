@@ -96,7 +96,8 @@ test vault, which held nothing.
 1. **The whole of the G6's test vault was allowed to the spike**, against W1's one folder, because there was no folder
    to give it. The measurements do not depend on the scope.
 2. **The spike's StrictMode never kills**, so a debug build of encriox would not die of the violations above. Release
-   builds never kill on StrictMode.
+   builds never kill on StrictMode. *(Amended by W26: encriox's own debug build ignores LG's framework alone, stage
+   1's patch 0004, and otherwise kills as Fenix's does.)*
 
 #### Rejected
 
@@ -114,5 +115,8 @@ test vault, which held nothing.
 - **W4's, W5's, W6's and W21's private and sealed results** (2026-11-20, W23): they searched copies of the app's data that
   nothing checked were whole. Run again with `copy-data` on the G6, the A20 and the S24, they held; the S9's rest on
   the old copies until it is attached.
+- **W4's second flag** (2026-11-23, W26): encriox's own debug build keeps Fenix's StrictMode, which kills, with LG's
+  framework ignored, stage 1's patch 0004 carried as encriox's 0007; the spike's StrictMode that never kills stays in
+  the spike.
 
 <!-- /amendments -->

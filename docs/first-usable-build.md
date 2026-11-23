@@ -120,7 +120,8 @@ under `.encriox.key` (W10):
 | stage 1, 0015 to 0019 | the browser's own key in the vault, and the logins' and the cards' keys sealed with it (W6) |
 
 The gate, the loopback server, the debug build's StrictMode workarounds, the private-tabs switch and the bench stay in
-the spikes. **M**
+the spikes. **M** *(Amended, W26: stage 1's 0004, which has Fenix's StrictMode ignore LG's framework, is encriox's
+patch 0007, without which its debug build does not start on the G6; stage 1's 0006, which never kills, stays.)*
 
 ### 3. What the spikes left
 
