@@ -7,7 +7,7 @@ Subject: [PATCH] feat: let an app keep the logins' and autofill's keys in its
 Android Components kept both keys in SecureAbove22Preferences, which a
 release of Fenix stores in plaintext. Its interface is public now, and
 the two stores take any implementation, so encriox's spike can seal
-them with a key the vault holds (encri-firefox W6).
+them with a key the vault holds (encriox W6).
 
 Such a store may not be readable yet, so the interface gains
 awaitReady(), which the two key managers wait on before asking for a

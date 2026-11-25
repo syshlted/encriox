@@ -6,7 +6,7 @@ Subject: [PATCH] feat: let the spike's gate drop the vault's key, as a lock
 
 `--ez drop true` drops the browser's key from memory, as a lock of the
 vault does, and leaves the vault open, so that the profile's keys are
-locked in Gecko the way a lock locks them (encri-firefox, stage 2's
+locked in Gecko the way a lock locks them (encriox, stage 2's
 second round); the gate's next start reads the key again, which unlocks
 them. The G6's vault, once locked by the spike, did not open again with
 the passphrase on file (W5), so no other phone's is locked to measure
@@ -18,7 +18,7 @@ Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
  1 file changed, 8 insertions(+)
 
 diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt
-index 66c29494b3..7627caccd2 100644
+index 7cf6eedbe9..c9948c2bed 100644
 --- a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt
 +++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt
 @@ -62,6 +62,9 @@ import org.mozilla.fenix.settings.downloads.DownloadLocationManager

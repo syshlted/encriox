@@ -5,7 +5,7 @@ Subject: [PATCH] feat: let a GeckoView embedder keep the profile's keys under
  its secret
 
 encriox's spike keeps Lockstore's keys under a key from its vault, in
-place of a primary password (encri-firefox, stage 2's second round).
+place of a primary password (encriox, stage 2's second round).
 GeckoRuntimeSettings takes a ProfileSecretDelegate, which Gecko asks at
 startup, ahead of profile-do-change, on its own thread: a JNI call from
 SyncProfileKekAtStartup, so the app's main thread is never held. The
@@ -32,7 +32,7 @@ Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
  create mode 100644 mobile/shared/modules/geckoview/GeckoViewLockstore.sys.mjs
 
 diff --git a/mobile/android/geckoview/src/main/java/org/mozilla/geckoview/GeckoRuntime.java b/mobile/android/geckoview/src/main/java/org/mozilla/geckoview/GeckoRuntime.java
-index 0db7b0efdd..56f605a979 100644
+index 0db7b0efdd..763b23e834 100644
 --- a/mobile/android/geckoview/src/main/java/org/mozilla/geckoview/GeckoRuntime.java
 +++ b/mobile/android/geckoview/src/main/java/org/mozilla/geckoview/GeckoRuntime.java
 @@ -38,6 +38,7 @@ import java.io.FileNotFoundException;
@@ -49,7 +49,7 @@ index 0db7b0efdd..56f605a979 100644
  
 +  /**
 +   * Where Gecko asks for the secret the profile's Lockstore keys are kept under, in place of a
-+   * primary password: encriox's spike keeps them under a key from its vault (encri-firefox, stage
++   * primary password: encriox's spike keeps them under a key from its vault (stage
 +   * 2). Set with {@link GeckoRuntimeSettings.Builder#profileSecretDelegate}.
 +   */
 +  public interface ProfileSecretDelegate {
@@ -127,7 +127,7 @@ index 0db7b0efdd..56f605a979 100644
     * Called by mozilla::dom::ClientOpenWindow to retrieve the window id to use for a
     * ServiceWorkerClients.openWindow() request.
 diff --git a/mobile/android/geckoview/src/main/java/org/mozilla/geckoview/GeckoRuntimeSettings.java b/mobile/android/geckoview/src/main/java/org/mozilla/geckoview/GeckoRuntimeSettings.java
-index 2c0746bc67..a29f807e13 100644
+index 2c0746bc67..34e539bfa6 100644
 --- a/mobile/android/geckoview/src/main/java/org/mozilla/geckoview/GeckoRuntimeSettings.java
 +++ b/mobile/android/geckoview/src/main/java/org/mozilla/geckoview/GeckoRuntimeSettings.java
 @@ -495,6 +495,21 @@ public final class GeckoRuntimeSettings extends RuntimeSettings {
@@ -136,7 +136,7 @@ index 2c0746bc67..a29f807e13 100644
  
 +    /**
 +     * Set where Gecko asks, once at startup, for the secret the profile's Lockstore keys are kept
-+     * under (encriox's spike, encri-firefox stage 2). With none, the profile keeps no keys under a
++     * under (encriox's spike, stage 2). With none, the profile keeps no keys under a
 +     * secret of the embedder's.
 +     *
 +     * @param delegate The {@link GeckoRuntime.ProfileSecretDelegate}, or null for none.
@@ -203,7 +203,7 @@ index fb883b8efb..43180aed03 100644
            ged: [
 diff --git a/mobile/shared/modules/geckoview/GeckoViewLockstore.sys.mjs b/mobile/shared/modules/geckoview/GeckoViewLockstore.sys.mjs
 new file mode 100644
-index 0000000000..57a818794b
+index 0000000000..502a5b0014
 --- /dev/null
 +++ b/mobile/shared/modules/geckoview/GeckoViewLockstore.sys.mjs
 @@ -0,0 +1,42 @@
@@ -221,7 +221,7 @@ index 0000000000..57a818794b
 +// Unlocked for the rest of the session; lockstore takes a u64.
 +const FOR_THE_SESSION_MS = Number.MAX_SAFE_INTEGER;
 +
-+// encriox's spike (encri-firefox, stage 2): the embedder locks the profile KEK
++// encriox's spike (stage 2): the embedder locks the profile KEK
 +// when its vault locks, and unlocks it when the vault opens again. What Gecko
 +// has already opened keeps its keys; only what opens next needs the KEK.
 +export const GeckoViewLockstore = {
@@ -262,7 +262,7 @@ index 296b1c5a4f..e428f3d175 100644
      "GeckoViewModule.sys.mjs",
      "GeckoViewNavigation.sys.mjs",
 diff --git a/security/lockstore/ProfileKek.cpp b/security/lockstore/ProfileKek.cpp
-index 05162390a1..c776868601 100644
+index 05162390a1..869b4a3a46 100644
 --- a/security/lockstore/ProfileKek.cpp
 +++ b/security/lockstore/ProfileKek.cpp
 @@ -6,9 +6,12 @@
@@ -316,7 +316,7 @@ index 05162390a1..c776868601 100644
 +  Given,
 +};
 +
-+// encriox's spike (encri-firefox, stage 2): a GeckoView embedder may keep the
++// encriox's spike (stage 2): a GeckoView embedder may keep the
 +// profile KEK under a secret of its own, as encriox keeps it under a key from
 +// its vault, in place of the primary password. GeckoView asks the embedder on
 +// this thread, Gecko's, which waits for the answer, so the app's own main

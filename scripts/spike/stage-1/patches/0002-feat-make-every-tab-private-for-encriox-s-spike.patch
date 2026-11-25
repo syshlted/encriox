@@ -3,7 +3,7 @@ From: Jeremy Melanson <1080872+zish@users.noreply.github.com>
 Date: Sat, 14 Nov 2026 01:04:08 +0000
 Subject: [PATCH] feat: make every tab private, for encriox's spike
 
-In a private tab Gecko keeps its live stores off disk (encri-firefox
+In a private tab Gecko keeps its live stores off disk (encriox
 W1). A link from another app opens privately too. A setting turns this
 off for the control run of the spike's plaintext check alone.
 
@@ -15,7 +15,7 @@ Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
  3 files changed, 13 insertions(+), 4 deletions(-)
 
 diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/IntentReceiverActivity.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/IntentReceiverActivity.kt
-index 07bd9fdbe1..c984d83751 100644
+index 07bd9fdbe1..f368ff29d8 100644
 --- a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/IntentReceiverActivity.kt
 +++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/IntentReceiverActivity.kt
 @@ -75,7 +75,8 @@ class IntentReceiverActivity : Activity() {
@@ -23,13 +23,13 @@ index 07bd9fdbe1..c984d83751 100644
          // Call process for side effects, short on the first that returns true
  
 -        var private = components.settings.openLinksInAPrivateTab
-+        // encriox (encri-firefox W1): a link from another app opens in a private tab too.
++        // encriox (W1): a link from another app opens in a private tab too.
 +        var private = components.settings.openLinksInAPrivateTab || components.settings.encrioxPrivate
          if (!private) {
              // if PRIVATE_BROWSING_MODE is already set to true, honor that
              private = intent.getBooleanExtra(PRIVATE_BROWSING_MODE, false)
 diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/browser/browsingmode/BrowsingModeManager.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/browser/browsingmode/BrowsingModeManager.kt
-index 9a6bb86dc2..77ea99eb24 100644
+index 9a6bb86dc2..525a96ef72 100644
 --- a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/browser/browsingmode/BrowsingModeManager.kt
 +++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/browser/browsingmode/BrowsingModeManager.kt
 @@ -52,9 +52,11 @@ class DefaultBrowsingModeManager(
@@ -39,7 +39,7 @@ index 9a6bb86dc2..77ea99eb24 100644
 -            field = value
 -            settings.lastKnownMode = value
 -            onModeChange(value)
-+            // encriox (encri-firefox W1): every tab is private, so Gecko keeps its live stores off disk.
++            // encriox (W1): every tab is private, so Gecko keeps its live stores off disk.
 +            val mode = if (settings.encrioxPrivate) BrowsingMode.Private else value
 +            field = mode
 +            settings.lastKnownMode = mode
@@ -48,7 +48,7 @@ index 9a6bb86dc2..77ea99eb24 100644
  
      init {
 diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/utils/Settings.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/utils/Settings.kt
-index c8f3815c48..7745aaf27e 100644
+index c8f3815c48..304d63f6c4 100644
 --- a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/utils/Settings.kt
 +++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/utils/Settings.kt
 @@ -650,6 +650,12 @@ class Settings(
@@ -56,7 +56,7 @@ index c8f3815c48..7745aaf27e 100644
          )
  
 +    /**
-+     * encriox's stage 1 spike (encri-firefox W1): every tab is private, a link from another app's included. Turned
++     * encriox's stage 1 spike (W1): every tab is private, a link from another app's included. Turned
 +     * off only for the control run of `scripts/spike/stage-1/check-plaintext`.
 +     */
 +    var encrioxPrivate by booleanPreference("encriox_private", default = true)

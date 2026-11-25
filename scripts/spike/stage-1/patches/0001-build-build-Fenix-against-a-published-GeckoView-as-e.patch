@@ -4,7 +4,7 @@ Date: Sat, 14 Nov 2026 01:03:51 +0000
 Subject: [PATCH] build: build Fenix against a published GeckoView, as
  encriox's spike
 
-The stage 1 spike (encri-firefox W1) compiles nothing of Gecko: the
+The stage 1 spike (encriox W1) compiles nothing of Gecko: the
 GeckoView it uses is named in full by `-Pencriox.geckoview`. It is a
 throwaway package, com.systemhalted.encri.browser.spike, at encri's
 floor of API 27, and it includes encri-api from source, as encri's
@@ -18,14 +18,14 @@ Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
  3 files changed, 17 insertions(+), 3 deletions(-)
 
 diff --git a/mobile/android/android-components/components/browser/engine-gecko/build.gradle b/mobile/android/android-components/components/browser/engine-gecko/build.gradle
-index 699c64e20e..d9aae8fbee 100644
+index 699c64e20e..b4568ee0ee 100644
 --- a/mobile/android/android-components/components/browser/engine-gecko/build.gradle
 +++ b/mobile/android/android-components/components/browser/engine-gecko/build.gradle
 @@ -150,6 +150,12 @@ def computeArtifactId() {
  }
  
  def getGeckoViewDependency() {
-+    // encriox (encri-firefox W1): a GeckoView Mozilla has published, named in full, so nothing of Gecko is built.
++    // encriox (W1): a GeckoView Mozilla has published, named in full, so nothing of Gecko is built.
 +    def published = providers.gradleProperty("encriox.geckoview").getOrNull()
 +    if (published != null) {
 +        rootProject.logger.lifecycle("Getting geckoview: ${published}")
@@ -35,7 +35,7 @@ index 699c64e20e..d9aae8fbee 100644
      if ('https://hg.mozilla.org/try' == System.env.GECKO_HEAD_REPOSITORY) {
          rootProject.logger.lifecycle("Getting geckoview on try: ${computeArtifactId()}:+")
 diff --git a/mobile/android/fenix/app/build.gradle b/mobile/android/fenix/app/build.gradle
-index 03399d00fc..c09e558688 100644
+index 03399d00fc..8834479f3a 100644
 --- a/mobile/android/fenix/app/build.gradle
 +++ b/mobile/android/fenix/app/build.gradle
 @@ -47,8 +47,10 @@ android {
@@ -44,7 +44,7 @@ index 03399d00fc..c09e558688 100644
  
 -        applicationId "org.mozilla"
 -        minSdk config.minSdkVersion
-+        // encriox's stage 1 spike (encri-firefox W1): a throwaway package, never published.
++        // encriox's stage 1 spike (W1): a throwaway package, never published.
 +        applicationId "com.systemhalted.encri.browser"
 +        // encri's floor (encri D14), which encri-client declares: below it there is no encri to reach.
 +        minSdk 27

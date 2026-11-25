@@ -6,7 +6,7 @@ Subject: [PATCH] feat: let a default pref turn SQLite encryption on, for
 
 all.js locked security.storage.encryption.sqlite.enabled off, so the
 default prefs a GeckoView embedder gives, MOZ_DEFAULT_PREFS, could not
-turn it on (encri-firefox W12). Unlocked, the value is the YAML's,
+turn it on (encriox W12). Unlocked, the value is the YAML's,
 false, until an embedder's default replaces it when Preferences
 starts. As the YAML says, it goes on over a fresh profile only.
 
@@ -18,14 +18,14 @@ Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
  3 files changed, 2 insertions(+), 8 deletions(-)
 
 diff --git a/modules/libpref/init/StaticPrefList.yaml b/modules/libpref/init/StaticPrefList.yaml
-index 17f9237d1f..4b561a66c1 100644
+index 17f9237d1f..959aa930ad 100644
 --- a/modules/libpref/init/StaticPrefList.yaml
 +++ b/modules/libpref/init/StaticPrefList.yaml
 @@ -19783,6 +19783,8 @@
  # via obfsvfs; enabling without the rest of the key-management stack will
  # corrupt profiles by reopening existing unencrypted databases expecting
  # ciphertext. Read at Connection::initialize, not hot-reloadable.
-+# Not locked in encriox's spike (encri-firefox W13), so that the default prefs
++# Not locked in encriox's spike (W13), so that the default prefs
 +# a GeckoView embedder gives can turn it on, over a fresh profile only.
  - name: security.storage.encryption.sqlite.enabled
    type: RelaxedAtomicBool

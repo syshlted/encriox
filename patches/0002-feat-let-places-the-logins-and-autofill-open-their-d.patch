@@ -12,7 +12,7 @@ wrappers of places and the logins taking the key. Each connection
 opens the database by a name that carries a handle to the key, never
 the key, and the key handed in is zeroed once obfsvfs holds it.
 
-The stage 3 spike's patch 0002 (encri-firefox, W21).
+The stage 3 spike's patch 0002 (encriox W21).
 
 Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
 ---
@@ -37,7 +37,7 @@ Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
  18 files changed, 239 insertions(+), 9 deletions(-)
 
 diff --git a/third_party/application-services/components/autofill/src/autofill.udl b/third_party/application-services/components/autofill/src/autofill.udl
-index f7dca58b14..b066d29a70 100644
+index f7dca58b14..08fa3d11d3 100644
 --- a/third_party/application-services/components/autofill/src/autofill.udl
 +++ b/third_party/application-services/components/autofill/src/autofill.udl
 @@ -9,6 +9,11 @@ namespace autofill {
@@ -46,7 +46,7 @@ index f7dca58b14..b066d29a70 100644
      Store create_autofill_store_with_static_key_manager(string path, string key);
 +
 +    /// The same, with the database sealed under `db_key`, 32 bytes, through sql-support's obfsvfs: for an app that
-+    /// keeps every field of its cards and addresses sealed, such as encriox (encri-firefox, `docs/sealed-history.md`).
++    /// keeps every field of its cards and addresses sealed, such as encriox (`docs/sealed-history.md`).
 +    [Throws=AutofillApiError]
 +    Store create_sealed_autofill_store_with_static_key_manager(string path, bytes db_key, string key);
  };
@@ -215,7 +215,7 @@ index a9b71aacbb..968b457ecf 100644
      IOError(#[from] std::io::Error),
  
 diff --git a/third_party/application-services/components/logins/src/logins.udl b/third_party/application-services/components/logins/src/logins.udl
-index 0ba079306a..65c88d8b45 100644
+index 0ba079306a..56229a9a8e 100644
 --- a/third_party/application-services/components/logins/src/logins.udl
 +++ b/third_party/application-services/components/logins/src/logins.udl
 @@ -154,6 +154,12 @@ interface LoginStore {
@@ -223,8 +223,8 @@ index 0ba079306a..65c88d8b45 100644
      constructor(string path, EncryptorDecryptor encdec);
  
 +    // The same, with the database sealed under `key`, 32 bytes, through sql-support's obfsvfs: for an app that keeps
-+    // its logins' origins and times sealed as well as their usernames and passwords, such as encriox (encri-firefox,
-+    // `docs/sealed-history.md`).
++    // its logins' origins and times sealed as well as their usernames and passwords, such as encriox
++    // (`docs/sealed-history.md`).
 +    [Name=new_sealed, Throws=LoginsApiError]
 +    constructor(string path, bytes key, EncryptorDecryptor encdec);
 +
@@ -349,7 +349,7 @@ index cf69997e51..0cc5388b7d 100644
  pub use crate::error::{ApiResult, PlacesApiError};
  use crate::glean_metrics;
 diff --git a/third_party/application-services/components/places/src/places.udl b/third_party/application-services/components/places/src/places.udl
-index 6cca8d71f1..025545e3b7 100644
+index 6cca8d71f1..ee836fb7da 100644
 --- a/third_party/application-services/components/places/src/places.udl
 +++ b/third_party/application-services/components/places/src/places.udl
 @@ -14,6 +14,11 @@ typedef string Guid;
@@ -358,14 +358,14 @@ index 6cca8d71f1..025545e3b7 100644
      PlacesApi places_api_new(string db_path);
 +
 +    // The same, with the database sealed under `key`, 32 bytes, through sql-support's obfsvfs: for an app that keeps
-+    // its history and bookmarks sealed, such as encriox (encri-firefox, `docs/sealed-history.md`).
++    // its history and bookmarks sealed, such as encriox (`docs/sealed-history.md`).
 +    [Throws=PlacesApiError]
 +    PlacesApi places_api_new_sealed(string db_path, bytes key);
  };
  
  enum ConnectionType {
 diff --git a/toolkit/components/uniffi-bindgen-gecko-js/android/components/autofill/android/src/main/java/mozilla/appservices/autofill/autofill.kt b/toolkit/components/uniffi-bindgen-gecko-js/android/components/autofill/android/src/main/java/mozilla/appservices/autofill/autofill.kt
-index ca8657b78a..ff328cb2d4 100644
+index ca8657b78a..a79252842a 100644
 --- a/toolkit/components/uniffi-bindgen-gecko-js/android/components/autofill/android/src/main/java/mozilla/appservices/autofill/autofill.kt
 +++ b/toolkit/components/uniffi-bindgen-gecko-js/android/components/autofill/android/src/main/java/mozilla/appservices/autofill/autofill.kt
 @@ -681,6 +681,8 @@ internal object IntegrityCheckingUniffiLib {
@@ -418,7 +418,7 @@ index ca8657b78a..ff328cb2d4 100644
  
 +        /**
 +         * The same, with the database sealed under `db_key`, 32 bytes, through sql-support's obfsvfs: for an app that
-+         * keeps every field of its cards and addresses sealed, such as encriox (encri-firefox, `docs/sealed-history.md`).
++         * keeps every field of its cards and addresses sealed, such as encriox (`docs/sealed-history.md`).
 +         */
 +    @Throws(AutofillApiException::class) fun `createSealedAutofillStoreWithStaticKeyManager`(`path`: kotlin.String, `dbKey`: kotlin.ByteArray, `key`: kotlin.String): Store {
 +            return FfiConverterTypeStore.lift(

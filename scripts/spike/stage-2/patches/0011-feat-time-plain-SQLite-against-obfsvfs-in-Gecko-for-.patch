@@ -5,7 +5,7 @@ Subject: [PATCH] feat: time plain SQLite against obfsvfs in Gecko, for
  encriox's spike
 
 Stage 2's third round asks what obfsvfs costs against plain SQLite
-(encri-firefox). GeckoViewSQLiteBench answers GeckoView:SQLite:Bench by
+(encriox). GeckoViewSQLiteBench answers GeckoView:SQLite:Bench by
 timing the same work in Gecko's own SQLite and mozStorage on three kinds
 of database, made afresh outside the profile so that Lockstore makes no
 key for them: plain with mozStorage's 32 KiB pages, plain with 8 KiB
@@ -27,7 +27,7 @@ Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
  create mode 100644 mobile/shared/modules/geckoview/GeckoViewSQLiteBench.sys.mjs
 
 diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt
-index 15cc43cfe5..52b5ba9ca3 100644
+index 3766d49160..ac107d4e61 100644
 --- a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt
 +++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt
 @@ -33,9 +33,12 @@ import mozilla.components.feature.downloads.INTENT_EXTRA_DOWNLOAD_ID
@@ -42,7 +42,7 @@ index 15cc43cfe5..52b5ba9ca3 100644
 +import org.mozilla.gecko.util.GeckoBundle
  
  /**
-  * The stage 1 spike's controls, started over adb by `scripts/spike/stage-1/` (encri-firefox W1). It always first opens
+  * The stage 1 spike's controls, started over adb by `scripts/spike/stage-1/` (encriox W1). It always first opens
 @@ -60,6 +63,9 @@ import org.mozilla.fenix.settings.downloads.DownloadLocationManager
   *   Every status it passes through is logged, then `fetch settled`;
   * - `--ez list true` logs what the vault holds of the two;
@@ -123,7 +123,7 @@ index 43180aed03..712ae9bdf1 100644
            ged: [
 diff --git a/mobile/shared/modules/geckoview/GeckoViewSQLiteBench.sys.mjs b/mobile/shared/modules/geckoview/GeckoViewSQLiteBench.sys.mjs
 new file mode 100644
-index 0000000000..82a96b5484
+index 0000000000..2dd3f93564
 --- /dev/null
 +++ b/mobile/shared/modules/geckoview/GeckoViewSQLiteBench.sys.mjs
 @@ -0,0 +1,222 @@
@@ -135,7 +135,7 @@ index 0000000000..82a96b5484
 +
 +const { debug } = GeckoViewUtils.initLogging("GeckoViewSQLiteBench");
 +
-+// encriox's spike (encri-firefox, stage 2's third round): what obfsvfs costs
++// encriox's spike (stage 2's third round): what obfsvfs costs
 +// against plain SQLite, in this Gecko's own SQLite and mozStorage, on the
 +// phone. Each kind of database is made afresh in the same directory, outside
 +// the profile so that Lockstore makes no key for it, and the same work is

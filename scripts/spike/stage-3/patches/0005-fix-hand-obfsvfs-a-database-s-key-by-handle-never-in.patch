@@ -17,7 +17,7 @@ Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
  1 file changed, 46 insertions(+), 36 deletions(-)
 
 diff --git a/third_party/application-services/components/support/sql/src/obfsvfs.rs b/third_party/application-services/components/support/sql/src/obfsvfs.rs
-index a510458eb5..16e641e7d8 100644
+index afff9893c7..09d99577cb 100644
 --- a/third_party/application-services/components/support/sql/src/obfsvfs.rs
 +++ b/third_party/application-services/components/support/sql/src/obfsvfs.rs
 @@ -10,8 +10,9 @@

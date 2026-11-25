@@ -22,7 +22,7 @@ to a row lost with the damaged pages are then dropped, and counted: a
 visit without its page, a bookmark without its folder.
 
 The stage 3 spike's patch 0011, and 0016's repair, as one
-(encri-firefox, W25).
+(encriox W25).
 
 Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
 ---
@@ -45,7 +45,7 @@ index 7474fc2323..9848fb3cf9 100644
  pub mod path;
  mod repeat;
 diff --git a/third_party/application-services/components/support/sql/src/obfsvfs.rs b/third_party/application-services/components/support/sql/src/obfsvfs.rs
-index 5c58c6fafd..c257fb05a0 100644
+index c0178af0b2..e2a7270f3c 100644
 --- a/third_party/application-services/components/support/sql/src/obfsvfs.rs
 +++ b/third_party/application-services/components/support/sql/src/obfsvfs.rs
 @@ -26,6 +26,9 @@
@@ -265,7 +265,7 @@ index 5c58c6fafd..c257fb05a0 100644
      key.fill(0);
 diff --git a/third_party/application-services/components/support/sql/src/obfsvfs_repair.rs b/third_party/application-services/components/support/sql/src/obfsvfs_repair.rs
 new file mode 100644
-index 0000000000..8c85100f7d
+index 0000000000..aa41b12f3f
 --- /dev/null
 +++ b/third_party/application-services/components/support/sql/src/obfsvfs_repair.rs
 @@ -0,0 +1,551 @@
@@ -275,7 +275,7 @@ index 0000000000..8c85100f7d
 +
 +//! Whether a sealed database opens, and the repair of one that is damaged, for an app that asks its user what to do
 +//! with a database that does not open: encriox, whose history, bookmarks, logins and cards are sealed
-+//! (encri-firefox, W22).
++//! (encriox W22).
 +//!
 +//! - [`check`] opens the database as its component would, and reads it through: its header, its schema, and every
 +//!   page SQLite's quick check reads, each the newest of its copies, the log's or the database's. A key not the

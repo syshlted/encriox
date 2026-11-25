@@ -11,7 +11,7 @@ opens its database. Without one, a store keeps its database in the
 clear, as it always has. Places' connection is the process's own, so
 every store of it must agree on whether it is sealed.
 
-The stage 3 spike's patch 0003 (encri-firefox, W21), on the release
+The stage 3 spike's patch 0003 (encriox W21), on the release
 rather than on stage 1's changes to the logins' and autofill's stores.
 
 Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>

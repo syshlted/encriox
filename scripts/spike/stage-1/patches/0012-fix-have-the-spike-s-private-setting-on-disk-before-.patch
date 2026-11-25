@@ -16,7 +16,7 @@ Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
  2 files changed, 13 insertions(+), 2 deletions(-)
 
 diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt
-index a8d0b662e3..f0261e8620 100644
+index b204bdd306..b34152ea4b 100644
 --- a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt
 +++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt
 @@ -66,7 +66,7 @@ class EncriGateActivity : ComponentActivity() {
@@ -29,21 +29,21 @@ index a8d0b662e3..f0261e8620 100644
              return
          }
 diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/utils/Settings.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/utils/Settings.kt
-index 7745aaf27e..0844c53ec1 100644
+index 304d63f6c4..0a51512456 100644
 --- a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/utils/Settings.kt
 +++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/utils/Settings.kt
 @@ -81,6 +81,9 @@ import org.mozilla.fenix.wallpapers.Wallpaper
  private const val AUTOPLAY_USER_SETTING = "AUTOPLAY_USER_SETTING"
  private const val MAX_ANIMATION_FOREGROUND = 5
  
-+// encriox's stage 1 spike (encri-firefox W1): the key of Settings.encrioxPrivate.
++// encriox's stage 1 spike (W1): the key of Settings.encrioxPrivate.
 +private const val ENCRIOX_PRIVATE = "encriox_private"
 +
  /**
   * A simple wrapper for SharedPreferences that makes reading preference a little bit easier.
   *
 @@ -654,7 +657,15 @@ class Settings(
-      * encriox's stage 1 spike (encri-firefox W1): every tab is private, a link from another app's included. Turned
+      * encriox's stage 1 spike (W1): every tab is private, a link from another app's included. Turned
       * off only for the control run of `scripts/spike/stage-1/check-plaintext`.
       */
 -    var encrioxPrivate by booleanPreference("encriox_private", default = true)

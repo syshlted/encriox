@@ -15,7 +15,7 @@ Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
  2 files changed, 21 insertions(+), 8 deletions(-)
 
 diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriStores.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriStores.kt
-index 3d09e96f5a..ea23a275b9 100644
+index f916e90432..47f1cefaa8 100644
 --- a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriStores.kt
 +++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriStores.kt
 @@ -152,10 +152,7 @@ object EncriStores {

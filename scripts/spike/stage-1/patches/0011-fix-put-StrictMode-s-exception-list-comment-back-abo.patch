@@ -13,7 +13,7 @@ Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
  1 file changed, 6 insertions(+), 6 deletions(-)
 
 diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/perf/StrictModeManager.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/perf/StrictModeManager.kt
-index 54a3db9691..3527f0c1ad 100644
+index d1e226bd15..ef680d1055 100644
 --- a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/perf/StrictModeManager.kt
 +++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/perf/StrictModeManager.kt
 @@ -234,12 +234,6 @@ open class StrictModeManager(
@@ -27,7 +27,7 @@ index 54a3db9691..3527f0c1ad 100644
 - * to get the exact name of the manufacturer.
 - */
  /**
-  * encriox's spike (encri-firefox W1): a debug build logs StrictMode violations and is never killed for one. On the LG G6
+  * encriox's spike (W1): a debug build logs StrictMode violations and is never killed for one. On the LG G6
   * at API 28 it was killed for violations in LG's framework, in Android Components' notification for a finished
 @@ -247,6 +241,12 @@ open class StrictModeManager(
   */

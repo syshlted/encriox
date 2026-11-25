@@ -7,7 +7,7 @@ The spike's Fenix gives places', the logins' and autofill's stores a
 key each, an HMAC of the browser's own key in the vault under a label
 of its own, which waits for the vault's key: none of the three
 databases is opened before the vault is open to the browser
-(encri-firefox, stage 3; docs/sealed-history.md).
+(encriox, stage 3; docs/sealed-history.md).
 
 The gate gains stage 3's controls: --es sealing on|off for the control
 run, --es seal write|read|forget|plain with a marker, and --ei
@@ -24,7 +24,7 @@ Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
  create mode 100644 mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriDatabaseKeys.kt
 
 diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/components/Core.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/components/Core.kt
-index e6868fc9fa..aa457d2bba 100644
+index 9058289da5..fdea43e900 100644
 --- a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/components/Core.kt
 +++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/components/Core.kt
 @@ -122,6 +122,7 @@ import org.mozilla.fenix.components.search.ApplicationSearchMiddleware
@@ -42,7 +42,7 @@ index e6868fc9fa..aa457d2bba 100644
 -    val lazyHistoryStorage = lazyMonitored { PlacesHistoryStorage(context, crashReporter) }
 -    val lazyBookmarksStorage = lazyMonitored { PlacesBookmarksStorage(context) }
 +    // encriox's spike seals places' database, the history and the bookmarks, the logins' and the cards' with keys from
-+    // the one the vault holds (encri-firefox, stage 3), where a release keeps them in the clear, as the control run of
++    // the one the vault holds (encriox, stage 3), where a release keeps them in the clear, as the control run of
 +    // check-sealed does.
 +    private fun sealedWith(key: suspend () -> ByteArray) =
 +        key.takeUnless { context.components.settings.encrioxUnsealed }
@@ -53,7 +53,7 @@ index e6868fc9fa..aa457d2bba 100644
 +        PlacesBookmarksStorage(context, databaseKey = sealedWith(EncriDatabaseKeys::places))
 +    }
      // encriox's spike seals the logins' and the cards' keys with the key the vault holds, where a release kept them in
-     // plaintext beside the stores (encri-firefox W6).
+     // plaintext beside the stores (encriox W6).
      private val lazyEncriKeys = lazy { EncriKeyPreferences(context) }
 -    val lazyPasswordsStorage = lazyMonitored { SyncableLoginsStorage(context, lazyEncriKeys) }
 -    val lazyAutofillStorage = lazyMonitored { AutofillCreditCardsAddressesStorage(context, lazyEncriKeys) }
@@ -72,7 +72,7 @@ index e6868fc9fa..aa457d2bba 100644
          // and set priority 1 for the domains provider to ensure other providers' results are shown first.
 diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriDatabaseKeys.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriDatabaseKeys.kt
 new file mode 100644
-index 0000000000..ca9e7d46c9
+index 0000000000..8aa9413ad1
 --- /dev/null
 +++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriDatabaseKeys.kt
 @@ -0,0 +1,44 @@
@@ -88,7 +88,7 @@ index 0000000000..ca9e7d46c9
 +import javax.crypto.spec.SecretKeySpec
 +
 +/**
-+ * The keys application-services' databases are sealed with (encri-firefox, stage 3; `docs/sealed-history.md`):
++ * The keys application-services' databases are sealed with (encriox, stage 3; `docs/sealed-history.md`):
 + * places', which holds the history and the bookmarks, the logins' and autofill's. Each is an HMAC of the browser's own
 + * key in the vault, [EncriKey], under a label of its own, as Gecko's secret is ([EncriProfileSecret]), and each waits
 + * for that key: none of the three databases is opened before the vault is open to the browser, and a start without
@@ -121,7 +121,7 @@ index 0000000000..ca9e7d46c9
 +    }
 +}
 diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt
-index 52b5ba9ca3..b120994532 100644
+index ac107d4e61..03c1aea9fe 100644
 --- a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt
 +++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt
 @@ -23,11 +23,21 @@ import kotlinx.coroutines.SupervisorJob
@@ -421,7 +421,7 @@ index 52b5ba9ca3..b120994532 100644
              rows: Int,
              rounds: Int,
 diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriKey.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriKey.kt
-index b90d2ba22c..0e857968b4 100644
+index b745914bf1..e8ca406363 100644
 --- a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriKey.kt
 +++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriKey.kt
 @@ -67,6 +67,17 @@ object EncriKey {
@@ -443,7 +443,7 @@ index b90d2ba22c..0e857968b4 100644
       * Reads the key from the folder [session]'s grant is rooted at, or makes it there if there is none, and holds it
       * until the vault locks or the session ends.
 diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/utils/Settings.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/utils/Settings.kt
-index c3d5ff9967..8b6352e5ef 100644
+index ed86c5de12..3c209e4907 100644
 --- a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/utils/Settings.kt
 +++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/utils/Settings.kt
 @@ -87,6 +87,9 @@ private const val ENCRIOX_PRIVATE = "encriox_private"

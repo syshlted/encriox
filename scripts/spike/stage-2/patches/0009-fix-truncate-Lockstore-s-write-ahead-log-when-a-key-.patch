@@ -8,7 +8,7 @@ secure_delete zeroed a record and deleted it in the database, and its
 comment allowed that the bytes "may persist on disk until the relevant
 WAL pages are checkpointed and overwritten". They did: after a profile
 made under LocalKeys had its keys moved under the profile's password
-KEK, and the LocalKeys deleted (encri-firefox, stage 2's second round),
+KEK, and the LocalKeys deleted (encriox, stage 2's second round),
 the S9's lockstore.keys.sqlite-wal held 83 copies of their records,
 kek_bytes and all, beside the DEKs they wrapped. Moving a profile under
 a secret left it readable without one.
@@ -38,7 +38,7 @@ index e0efb3246f..2d017f0422 100644
  serde_json = { version = "1", features = ["float_roundtrip"] }
  thiserror = "1"
 diff --git a/security/lockstore/lockstore_rs/src/crypto.rs b/security/lockstore/lockstore_rs/src/crypto.rs
-index f2d5fe07b0..854f072e35 100644
+index f2d5fe07b0..1303f5ee06 100644
 --- a/security/lockstore/lockstore_rs/src/crypto.rs
 +++ b/security/lockstore/lockstore_rs/src/crypto.rs
 @@ -3,6 +3,7 @@
@@ -69,7 +69,7 @@ index f2d5fe07b0..854f072e35 100644
 +/// Checkpoints the store's write-ahead log into the database, and truncates
 +/// the log. The log keeps each page as it was written until SQLite writes
 +/// over it, so a value zeroed and deleted in the database is still on disk
-+/// there: in encriox's spike (encri-firefox, stage 2), after a profile's
++/// there: in encriox's spike (stage 2), after a profile's
 +/// LocalKeys were moved under its password KEK and deleted, the S9's
 +/// `lockstore.keys.sqlite-wal` held 83 copies of their records, `kek_bytes`
 +/// and all. The database's own freed cells are zeroed by skv's

@@ -6,7 +6,7 @@ Subject: [PATCH] feat: ask encri to unlock at startup, and stop if the vault
 
 The spike's Gecko asks for the profile's secret at startup and waited
 up to 10 seconds for the vault, then started with the profile's keys
-locked. On the user's word (encri-firefox W15), a browser with its vault
+locked. On the user's word (encriox W15), a browser with its vault
 locked brings up encri's unlock instead, and does not go on without it.
 
 EncriUnlock shows encri's own screens, letting the browser in and
@@ -31,7 +31,7 @@ Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
  create mode 100644 mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriUnlockActivity.kt
 
 diff --git a/mobile/android/fenix/app/src/main/AndroidManifest.xml b/mobile/android/fenix/app/src/main/AndroidManifest.xml
-index 798cd61677..08bf4e5981 100644
+index b884327b48..bdd98839c3 100644
 --- a/mobile/android/fenix/app/src/main/AndroidManifest.xml
 +++ b/mobile/android/fenix/app/src/main/AndroidManifest.xml
 @@ -519,6 +519,13 @@
@@ -49,7 +49,7 @@ index 798cd61677..08bf4e5981 100644
              android:name=".HomeActivity"
              android:theme="@style/SplashScreenThemeBase"
 diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt
-index 7627caccd2..15cc43cfe5 100644
+index c9948c2bed..3766d49160 100644
 --- a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt
 +++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt
 @@ -13,9 +13,7 @@ import android.os.SystemClock
@@ -103,7 +103,7 @@ index 7627caccd2..15cc43cfe5 100644
          private const val MIB_SHIFT = 20
          private const val PIECE = 32 * 1024
 diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriProfileSecret.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriProfileSecret.kt
-index 04e622ea07..667b12d0f6 100644
+index d38af033c0..1983eff43b 100644
 --- a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriProfileSecret.kt
 +++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriProfileSecret.kt
 @@ -23,30 +23,37 @@ import org.mozilla.geckoview.GeckoRuntime
@@ -118,7 +118,7 @@ index 04e622ea07..667b12d0f6 100644
 + * opens the vault for it, and where the vault is locked or has not let the browser in, brings up encri's own screens
 + * for the user ([EncriUnlock]). If the vault is still not open once they are done, or does not answer, the browser
 + * stops there, before Gecko has opened anything of the profile: it does not start without the vault (the user's word,
-+ * encri-firefox W15). Then, for as long as the process lives, [follow] locks Gecko's keys when the vault's key is
++ * encriox W15). Then, for as long as the process lives, [follow] locks Gecko's keys when the vault's key is
 + * dropped, at a lock, and unlocks them when it is held again.
   *
 - * With `--es kek withhold` at the gate, it answers with nothing and never unlocks, whatever the vault does: Gecko's
@@ -189,7 +189,7 @@ index 04e622ea07..667b12d0f6 100644
              if (opening !is EncriVault.Opening.Open) {
 diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriUnlock.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriUnlock.kt
 new file mode 100644
-index 0000000000..792eddae84
+index 0000000000..1006af8739
 --- /dev/null
 +++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriUnlock.kt
 @@ -0,0 +1,135 @@
@@ -216,7 +216,7 @@ index 0000000000..792eddae84
 +
 +/**
 + * Brings up encri's own screens when the browser needs the vault open and it is not: the one that lets the browser in,
-+ * and the one that unlocks the vault (encri-firefox, stage 2). Gecko's startup asks, through [EncriProfileSecret], and
++ * and the one that unlocks the vault (encriox, stage 2). Gecko's startup asks, through [EncriProfileSecret], and
 + * so does the gate; one request is shown at a time, and every caller waits on the same answer.
 + *
 + * The screens are started from whichever of the browser's activities is in the foreground, or from the next one to

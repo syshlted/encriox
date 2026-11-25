@@ -19,7 +19,7 @@ Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
  2 files changed, 137 insertions(+), 5 deletions(-)
 
 diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriDatabaseKeys.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriDatabaseKeys.kt
-index ca9e7d46c9..5b4caa1ee3 100644
+index 8aa9413ad1..7c6e403fe7 100644
 --- a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriDatabaseKeys.kt
 +++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriDatabaseKeys.kt
 @@ -29,6 +29,9 @@ object EncriDatabaseKeys {
@@ -33,7 +33,7 @@ index ca9e7d46c9..5b4caa1ee3 100644
          val asked = SystemClock.elapsedRealtime()
          val key =
 diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt
-index 7115db014a..bd2a4d72ea 100644
+index 36c418f6d7..d565a7d94e 100644
 --- a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt
 +++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt
 @@ -26,9 +26,14 @@ import kotlinx.coroutines.launch

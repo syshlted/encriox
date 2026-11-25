@@ -27,7 +27,7 @@ Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
  create mode 100644 mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriStoresActivity.kt
 
 diff --git a/mobile/android/fenix/app/src/main/AndroidManifest.xml b/mobile/android/fenix/app/src/main/AndroidManifest.xml
-index 08bf4e5981..c074f87c33 100644
+index bdd98839c3..3218678b1d 100644
 --- a/mobile/android/fenix/app/src/main/AndroidManifest.xml
 +++ b/mobile/android/fenix/app/src/main/AndroidManifest.xml
 @@ -519,6 +519,13 @@
@@ -45,7 +45,7 @@ index 08bf4e5981..c074f87c33 100644
          <activity
              android:name=".encri.EncriUnlockActivity"
 diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/components/Core.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/components/Core.kt
-index aa457d2bba..94db5bea98 100644
+index fdea43e900..c7911e60ec 100644
 --- a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/components/Core.kt
 +++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/components/Core.kt
 @@ -122,7 +122,7 @@ import org.mozilla.fenix.components.search.ApplicationSearchMiddleware
@@ -60,7 +60,7 @@ index aa457d2bba..94db5bea98 100644
 @@ -544,26 +544,27 @@ class Core(
      // We can fully initialize GeckoEngine without initialized our storage.
      // encriox's spike seals places' database, the history and the bookmarks, the logins' and the cards' with keys from
-     // the one the vault holds (encri-firefox, stage 3), where a release keeps them in the clear, as the control run of
+     // the one the vault holds (encriox, stage 3), where a release keeps them in the clear, as the control run of
 -    // check-sealed does.
 -    private fun sealedWith(key: suspend () -> ByteArray) =
 -        key.takeUnless { context.components.settings.encrioxUnsealed }
@@ -77,7 +77,7 @@ index aa457d2bba..94db5bea98 100644
 +        PlacesBookmarksStorage(context, databaseKey = sealedWith(EncriStores.Store.PLACES))
      }
      // encriox's spike seals the logins' and the cards' keys with the key the vault holds, where a release kept them in
-     // plaintext beside the stores (encri-firefox W6).
+     // plaintext beside the stores (encriox W6).
      private val lazyEncriKeys = lazy { EncriKeyPreferences(context) }
      val lazyPasswordsStorage = lazyMonitored {
 -        SyncableLoginsStorage(context, lazyEncriKeys, databaseKey = sealedWith(EncriDatabaseKeys::logins))
@@ -93,7 +93,7 @@ index aa457d2bba..94db5bea98 100644
      }
      val lazyDomainsAutocompleteProvider = lazyMonitored {
 diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt
-index bd2a4d72ea..f3b004852c 100644
+index d565a7d94e..f9f8988466 100644
 --- a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt
 +++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt
 @@ -101,10 +101,14 @@ import org.mozilla.gecko.util.GeckoBundle
@@ -156,7 +156,7 @@ index bd2a4d72ea..f3b004852c 100644
                          runCatching {
 diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriStores.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriStores.kt
 new file mode 100644
-index 0000000000..7caaa9fc57
+index 0000000000..b0c11a62c8
 --- /dev/null
 +++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriStores.kt
 @@ -0,0 +1,274 @@
@@ -185,7 +185,7 @@ index 0000000000..7caaa9fc57
 +import mozilla.appservices.places.uniffi.sealedDatabaseRepair
 +
 +/**
-+ * Asks the user what to do with a sealed database that does not open, before its store opens it (encri-firefox W22):
++ * Asks the user what to do with a sealed database that does not open, before its store opens it (encriox W22):
 + * places', which holds the history and the bookmarks, the logins' and autofill's. Each store's key waits here, once a
 + * process, for its database to be read through under it. One that opens, or is not there yet, goes on at once. One
 + * that does not brings up a question, from whichever of the browser's activities is in the foreground, and its store
@@ -496,7 +496,7 @@ index 0000000000..c83f5fdd3a
 +    }
 +}
 diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriUnlock.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriUnlock.kt
-index 36f4e00288..ffd734397b 100644
+index a5d7b66a5f..c6128c46a9 100644
 --- a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriUnlock.kt
 +++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriUnlock.kt
 @@ -37,6 +37,7 @@ object EncriUnlock {

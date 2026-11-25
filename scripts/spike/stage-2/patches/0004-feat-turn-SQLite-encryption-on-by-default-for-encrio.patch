@@ -9,7 +9,7 @@ security.storage.encryption.sqlite.enabled in XRE_mainStartup, before
 XPCOM and Preferences start, so it sees the YAML's value and no other.
 With the switch turned on by a GeckoView embedder's default prefs, the
 first start encrypted the profile and wrote its EncryptedDatabases
-marker, and the next start was refused, on the S9 (encri-firefox W13).
+marker, and the next start was refused, on the S9 (encriox W13).
 On by default, the guard and the session agree. An embedder's default
 can still turn it off, for a profile of one session.
 
@@ -19,12 +19,12 @@ Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
  1 file changed, 4 insertions(+), 1 deletion(-)
 
 diff --git a/modules/libpref/init/StaticPrefList.yaml b/modules/libpref/init/StaticPrefList.yaml
-index 4b561a66c1..3d1b5f0308 100644
+index 959aa930ad..af078cfb7e 100644
 --- a/modules/libpref/init/StaticPrefList.yaml
 +++ b/modules/libpref/init/StaticPrefList.yaml
 @@ -19785,9 +19785,12 @@
  # ciphertext. Read at Connection::initialize, not hot-reloadable.
- # Not locked in encriox's spike (encri-firefox W13), so that the default prefs
+ # Not locked in encriox's spike (W13), so that the default prefs
  # a GeckoView embedder gives can turn it on, over a fresh profile only.
 +# On by default there: the launch guard (nsAppRunner.cpp) reads it before
 +# Preferences starts, so it sees this value and nothing else, and refuses a

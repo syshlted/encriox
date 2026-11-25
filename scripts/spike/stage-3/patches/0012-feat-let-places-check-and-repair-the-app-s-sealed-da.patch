@@ -92,17 +92,17 @@ index 0cc5388b7d..cb9e1ba78b 100644
  pub use crate::error::{ApiResult, PlacesApiError};
  use crate::glean_metrics;
 diff --git a/third_party/application-services/components/places/src/places.udl b/third_party/application-services/components/places/src/places.udl
-index 025545e3b7..cd7f24d059 100644
+index ee836fb7da..289122b03c 100644
 --- a/third_party/application-services/components/places/src/places.udl
 +++ b/third_party/application-services/components/places/src/places.udl
 @@ -19,6 +19,35 @@ namespace places {
-     // its history and bookmarks sealed, such as encriox (encri-firefox, `docs/sealed-history.md`).
+     // its history and bookmarks sealed, such as encriox (`docs/sealed-history.md`).
      [Throws=PlacesApiError]
      PlacesApi places_api_new_sealed(string db_path, bytes key);
 +
 +    // Whether the sealed database at `db_path` opens under `key`, read through, before its component opens it:
 +    // places', or any other an app seals through sql-support's obfsvfs, the logins' and autofill's too. It changes
-+    // nothing but the log's index. For an app that asks its user about a database that does not open (encri-firefox,
++    // nothing but the log's index. For an app that asks its user about a database that does not open (encriox,
 +    // W22).
 +    [Throws=PlacesApiError]
 +    SealedDatabaseState sealed_database_check(string db_path, bytes key);

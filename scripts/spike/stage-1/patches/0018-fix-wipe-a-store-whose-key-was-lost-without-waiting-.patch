@@ -14,7 +14,7 @@ through getStorage() too, and waited the same way.
 
 The spike hit it on the S9, whose old canaries from Fenix's own keys
 made the keys sealed with the vault's key look lost: saving a login
-never returned (encri-firefox W6). The store now wipes or scrubs the
+never returned (encriox W6). The store now wipes or scrubs the
 connection it has just made, and recovery asked for from elsewhere,
 such as sync's key providers, does so only once the store is open.
 

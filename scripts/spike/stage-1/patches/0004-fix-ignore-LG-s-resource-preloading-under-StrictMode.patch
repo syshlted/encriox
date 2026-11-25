@@ -15,7 +15,7 @@ Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
  1 file changed, 13 insertions(+), 1 deletion(-)
 
 diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/perf/ThreadPenaltyDeathWithIgnoresListener.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/perf/ThreadPenaltyDeathWithIgnoresListener.kt
-index dd184cd30b..bb4bb76d2d 100644
+index dd184cd30b..50e4131c96 100644
 --- a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/perf/ThreadPenaltyDeathWithIgnoresListener.kt
 +++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/perf/ThreadPenaltyDeathWithIgnoresListener.kt
 @@ -19,6 +19,7 @@ private const val ACTIVITY_MANAGER_SERVICE_CLASS = "com.android.server.am.Activi
@@ -41,7 +41,7 @@ index dd184cd30b..bb4bb76d2d 100644
      }
  
 +    private fun isLgParallelResourceLoading(violation: Violation): Boolean {
-+        // encriox's spike (encri-firefox W1): on the LG G6 at API 28, LG's ResourcesImpl reads and writes the disk on
++        // encriox's spike (W1): on the LG G6 at API 28, LG's ResourcesImpl reads and writes the disk on
 +        // the main thread, in startParallelLoading at every activity launch and in onFinishFirstPerformTraversals at
 +        // the first frame. A debug build dies before any code of its own runs.
 +        return manufacturerChecker.isLG() &&

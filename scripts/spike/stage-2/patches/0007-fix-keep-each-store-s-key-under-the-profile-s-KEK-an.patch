@@ -6,7 +6,7 @@ Subject: [PATCH] fix: keep each store's key under the profile's KEK, and never
 
 Moved under a password KEK by an embedder's secret, the profile's keys
 were asked for by the KEK each store had made them under, by name, and
-were not found. On the S9 (encri-firefox, stage 2's second round), with
+were not found. On the S9 (encriox, stage 2's second round), with
 the secret given, every SQLite open failed at the next start: the
 cookie store moved cookies.sqlite aside as corrupt, and site storage
 could not start. The HTTP cache deleted its moved key and made a new
@@ -218,7 +218,7 @@ index 35450f2c4e..7292573544 100644
    ioMan->mCacheDirectory.swap(directory);
  
 diff --git a/security/lockstore/ProfileKek.cpp b/security/lockstore/ProfileKek.cpp
-index c776868601..8483e50c20 100644
+index 869b4a3a46..d1c8a73a3c 100644
 --- a/security/lockstore/ProfileKek.cpp
 +++ b/security/lockstore/ProfileKek.cpp
 @@ -351,6 +351,14 @@ static nsresult MoveLocalDeksToProfileKek(LockstoreService* aLockstore,

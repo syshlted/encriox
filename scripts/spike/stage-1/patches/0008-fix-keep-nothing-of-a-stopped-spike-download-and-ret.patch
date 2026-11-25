@@ -24,7 +24,7 @@ Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
  3 files changed, 39 insertions(+), 6 deletions(-)
 
 diff --git a/mobile/android/android-components/components/feature/downloads/src/main/java/mozilla/components/feature/downloads/AbstractFetchDownloadService.kt b/mobile/android/android-components/components/feature/downloads/src/main/java/mozilla/components/feature/downloads/AbstractFetchDownloadService.kt
-index 7a51af9589..ea801cc277 100644
+index 7a51af9589..bb3b84a4a4 100644
 --- a/mobile/android/android-components/components/feature/downloads/src/main/java/mozilla/components/feature/downloads/AbstractFetchDownloadService.kt
 +++ b/mobile/android/android-components/components/feature/downloads/src/main/java/mozilla/components/feature/downloads/AbstractFetchDownloadService.kt
 @@ -174,6 +174,22 @@ abstract class AbstractFetchDownloadService : Service() {
@@ -32,7 +32,7 @@ index 7a51af9589..ea801cc277 100644
      }
  
 +    /**
-+     * encriox (encri-firefox W5): whether the download is still running, for a writer that keeps nothing of a download
++     * encriox (W5): whether the download is still running, for a writer that keeps nothing of a download
 +     * that stopped. A pause or a cancel ends the copy just as the end of the response does, so such a writer asks
 +     * this once the copy returns.
 +     */
@@ -40,7 +40,7 @@ index 7a51af9589..ea801cc277 100644
 +        downloadJobs[downloadId]?.let { getDownloadJobStatus(it) == DOWNLOADING } == true
 +
 +    /**
-+     * encriox (encri-firefox W5): forgets what was copied, for a writer that kept none of it, so that a retry asks for
++     * encriox (W5): forgets what was copied, for a writer that kept none of it, so that a retry asks for
 +     * the whole file and not for the rest of it.
 +     */
 +    protected fun forgetCopiedBytes(downloadId: String) {
@@ -51,7 +51,7 @@ index 7a51af9589..ea801cc277 100644
          object : BroadcastReceiver() {
              @Suppress("LongMethod")
 diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/downloads/DownloadService.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/downloads/DownloadService.kt
-index 34e7172075..7631b3a816 100644
+index c97ee24669..e385d6823e 100644
 --- a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/downloads/DownloadService.kt
 +++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/downloads/DownloadService.kt
 @@ -50,6 +50,8 @@ class DownloadService : AbstractFetchDownloadService() {
@@ -64,7 +64,7 @@ index 34e7172075..7631b3a816 100644
      }
  }
 diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriDownloadFileWriter.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriDownloadFileWriter.kt
-index 031045f802..901a222a1d 100644
+index f0fd6a67ef..44915074a3 100644
 --- a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriDownloadFileWriter.kt
 +++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriDownloadFileWriter.kt
 @@ -24,10 +24,15 @@ import mozilla.components.feature.downloads.filewriter.DownloadFileWriter

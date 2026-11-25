@@ -17,7 +17,7 @@ Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
  1 file changed, 12 insertions(+), 2 deletions(-)
 
 diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriVault.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriVault.kt
-index e79a2f9dc6..26e4eacfe6 100644
+index 7aec98f03a..1050493dd9 100644
 --- a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriVault.kt
 +++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriVault.kt
 @@ -8,7 +8,9 @@ import android.content.Context
@@ -33,7 +33,7 @@ index e79a2f9dc6..26e4eacfe6 100644
 @@ -16,7 +18,7 @@ import kotlinx.coroutines.sync.withLock
  
  /**
-  * The stage 1 spike's way into the vault (encri-firefox W1): one connection and one session, opened on first use and
+  * The stage 1 spike's way into the vault (encriox W1): one connection and one session, opened on first use and
 - * kept until a request finds it gone. Nothing here asks the user anything; [EncriGateActivity] does.
 + * kept while encri answers it. Nothing here asks the user anything; [EncriGateActivity] does.
   */

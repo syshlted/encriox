@@ -13,7 +13,7 @@ without it throws rather than answering that nothing is stored.
 
 The gate saves, lists and deletes a login and a card of the spike's
 own, and asks for the logins before the vault is open, to see when
-they arrive (encri-firefox W6).
+they arrive (encriox W6).
 
 Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
 ---
@@ -24,7 +24,7 @@ Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
  create mode 100644 mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriKeyPreferences.kt
 
 diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/components/Core.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/components/Core.kt
-index e3007a552f..e6868fc9fa 100644
+index e3007a552f..9058289da5 100644
 --- a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/components/Core.kt
 +++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/components/Core.kt
 @@ -122,6 +122,7 @@ import org.mozilla.fenix.components.search.ApplicationSearchMiddleware
@@ -42,7 +42,7 @@ index e3007a552f..e6868fc9fa 100644
 -    val lazyPasswordsStorage = lazyMonitored { SyncableLoginsStorage(context, lazySecurePrefs) }
 -    val lazyAutofillStorage = lazyMonitored { AutofillCreditCardsAddressesStorage(context, lazySecurePrefs) }
 +    // encriox's spike seals the logins' and the cards' keys with the key the vault holds, where a release kept them in
-+    // plaintext beside the stores (encri-firefox W6).
++    // plaintext beside the stores (encriox W6).
 +    private val lazyEncriKeys = lazy { EncriKeyPreferences(context) }
 +    val lazyPasswordsStorage = lazyMonitored { SyncableLoginsStorage(context, lazyEncriKeys) }
 +    val lazyAutofillStorage = lazyMonitored { AutofillCreditCardsAddressesStorage(context, lazyEncriKeys) }
@@ -50,7 +50,7 @@ index e3007a552f..e6868fc9fa 100644
          // Assume this is used together with other autocomplete providers (like history) which have priority 0
          // and set priority 1 for the domains provider to ensure other providers' results are shown first.
 diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt
-index dcc84fb485..9967c0cb4d 100644
+index ab23e889de..12f687f9a5 100644
 --- a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt
 +++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt
 @@ -9,6 +9,7 @@ import android.content.Intent
@@ -203,7 +203,7 @@ index dcc84fb485..9967c0cb4d 100644
              val answer =
 diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriKeyPreferences.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriKeyPreferences.kt
 new file mode 100644
-index 0000000000..242ebe7c9f
+index 0000000000..25c5e4d17e
 --- /dev/null
 +++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriKeyPreferences.kt
 @@ -0,0 +1,103 @@
@@ -224,7 +224,7 @@ index 0000000000..242ebe7c9f
 +import mozilla.components.lib.dataprotect.KeyValuePreferences
 +
 +/**
-+ * Where the logins' and the cards' own keys are kept (encri-firefox W6): sealed with [EncriKey], the key the vault
++ * Where the logins' and the cards' own keys are kept (encriox W6): sealed with [EncriKey], the key the vault
 + * holds, in preferences of their own, instead of in Fenix's `SecureAbove22Preferences`, which a release keeps in
 + * plaintext beside the stores.
 + *

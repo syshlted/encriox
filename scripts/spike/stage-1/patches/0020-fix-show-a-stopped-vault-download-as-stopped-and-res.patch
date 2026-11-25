@@ -9,7 +9,7 @@ failed. The vault's writer throws once the copy returns, to abandon a
 write the vault cannot keep in part, and the download service marked
 failed any download whose writer threw, over the status the user had
 asked for. Resume then looked for the partial file in Download/, found
-none, and failed too, so only Try again worked (encri-firefox W5).
+none, and failed too, so only Try again worked (encriox W5).
 
 The service now leaves a paused or cancelled download as it is when its
 writer throws, and resumes one nothing was kept of from the start, file
@@ -24,13 +24,13 @@ Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
  2 files changed, 31 insertions(+), 9 deletions(-)
 
 diff --git a/mobile/android/android-components/components/feature/downloads/src/main/java/mozilla/components/feature/downloads/AbstractFetchDownloadService.kt b/mobile/android/android-components/components/feature/downloads/src/main/java/mozilla/components/feature/downloads/AbstractFetchDownloadService.kt
-index ea801cc277..66b9343988 100644
+index bb3b84a4a4..58d5ed88f8 100644
 --- a/mobile/android/android-components/components/feature/downloads/src/main/java/mozilla/components/feature/downloads/AbstractFetchDownloadService.kt
 +++ b/mobile/android/android-components/components/feature/downloads/src/main/java/mozilla/components/feature/downloads/AbstractFetchDownloadService.kt
 @@ -184,10 +184,12 @@ abstract class AbstractFetchDownloadService : Service() {
  
      /**
-      * encriox (encri-firefox W5): forgets what was copied, for a writer that kept none of it, so that a retry asks for
+      * encriox (W5): forgets what was copied, for a writer that kept none of it, so that a retry asks for
 -     * the whole file and not for the rest of it.
 +     * the whole file and not for the rest of it, and the download no longer shows a part of it as copied.
       */
@@ -47,7 +47,7 @@ index ea801cc277..66b9343988 100644
                                  fileName = currentDownloadJobState.state.fileName,
                              )
 -                        if (!fileExists) {
-+                        // encriox (encri-firefox W5): a download nothing was kept of has no file to resume into, and
++                        // encriox (W5): a download nothing was kept of has no file to resume into, and
 +                        // starts again from the start, as a writer into the vault leaves every one it stopped.
 +                        val keptNothing = currentDownloadJobState.currentBytesCopied == 0L
 +                        if (!fileExists && !keptNothing) {
@@ -58,7 +58,7 @@ index ea801cc277..66b9343988 100644
          try {
              performDownload(currentDownloadJobState)
          } catch (e: Exception) {
-+            // encriox (encri-firefox W5): a writer that keeps nothing of a stopped download throws once its copy
++            // encriox (W5): a writer that keeps nothing of a stopped download throws once its copy
 +            // returns. It was paused or cancelled, as the user asked, and has not failed.
 +            if (getDownloadJobStatus(currentDownloadJobState) in listOf(PAUSED, CANCELLED)) {
 +                logger.debug("Download for ${currentDownloadJobState.state.id} stopped; its writer kept nothing", e)
@@ -68,7 +68,7 @@ index ea801cc277..66b9343988 100644
              setDownloadJobStatus(currentDownloadJobState, FAILED)
          }
 diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt
-index 9967c0cb4d..0f30c6efc3 100644
+index 12f687f9a5..1f4e091062 100644
 --- a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt
 +++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt
 @@ -54,7 +54,8 @@ import org.mozilla.fenix.settings.downloads.DownloadLocationManager

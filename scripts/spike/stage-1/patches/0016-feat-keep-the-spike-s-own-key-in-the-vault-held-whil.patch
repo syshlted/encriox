@@ -4,7 +4,7 @@ Date: Mon, 16 Nov 2026 21:47:29 +0000
 Subject: [PATCH] feat: keep the spike's own key in the vault, held while it is
  open
 
-The study's vault-gated key (encri-firefox W6): 32 random bytes in a
+The study's vault-gated key (encriox W6): 32 random bytes in a
 document named encriox.key, in the folder the vault allows the browser.
 The gate reads it once the vault is open, or makes it there and reads
 it back before using it, and holds it in memory alone until the vault
@@ -19,12 +19,12 @@ Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
  create mode 100644 mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriKey.kt
 
 diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt
-index f0261e8620..dcc84fb485 100644
+index b34152ea4b..ab23e889de 100644
 --- a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt
 +++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriGateActivity.kt
 @@ -39,7 +39,7 @@ import org.mozilla.fenix.settings.downloads.DownloadLocationManager
  /**
-  * The stage 1 spike's controls, started over adb by `scripts/spike/stage-1/` (encri-firefox W1). It always first opens
+  * The stage 1 spike's controls, started over adb by `scripts/spike/stage-1/` (encriox W1). It always first opens
   * the vault to this browser: encri's own screens ask the user to allow a folder and to unlock, and it logs what it
 - * holds.
 + * holds. Then it holds the browser's own key, which it reads from that folder or makes there ([EncriKey], W6).
@@ -48,7 +48,7 @@ index f0261e8620..dcc84fb485 100644
              }
 diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriKey.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriKey.kt
 new file mode 100644
-index 0000000000..0ac0201e9b
+index 0000000000..b075997c34
 --- /dev/null
 +++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriKey.kt
 @@ -0,0 +1,163 @@
@@ -78,7 +78,7 @@ index 0000000000..0ac0201e9b
 +import kotlinx.coroutines.withContext
 +
 +/**
-+ * The browser's own key, the study's *vault-gated key* (encri-firefox W6): 32 random bytes, kept as a document in the
++ * The browser's own key, the study's *vault-gated key* (encriox W6): 32 random bytes, kept as a document in the
 + * folder the vault allows this browser, read once the vault is open to it, and held in memory alone until the vault
 + * locks or the session ends. It is the browser's key and not one of encri's, the content of a document, so encri's
 + * *keys never leave encri* holds.

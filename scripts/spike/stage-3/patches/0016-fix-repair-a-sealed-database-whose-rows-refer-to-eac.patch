@@ -22,7 +22,7 @@ Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
  5 files changed, 97 insertions(+), 11 deletions(-)
 
 diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriStores.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriStores.kt
-index ec21c3ce88..3d09e96f5a 100644
+index 4f18cdd3f6..f916e90432 100644
 --- a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriStores.kt
 +++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriStores.kt
 @@ -167,14 +167,14 @@ object EncriStores {
@@ -63,7 +63,7 @@ index 8c2b76c8be..a9ffddcc60 100644
  }
  
 diff --git a/third_party/application-services/components/places/src/places.udl b/third_party/application-services/components/places/src/places.udl
-index cd7f24d059..b70e0a06b8 100644
+index 289122b03c..90d78ce358 100644
 --- a/third_party/application-services/components/places/src/places.udl
 +++ b/third_party/application-services/components/places/src/places.udl
 @@ -48,6 +48,7 @@ dictionary SealedDatabaseRepair {
@@ -75,7 +75,7 @@ index cd7f24d059..b70e0a06b8 100644
  
  enum ConnectionType {
 diff --git a/third_party/application-services/components/support/sql/src/obfsvfs_repair.rs b/third_party/application-services/components/support/sql/src/obfsvfs_repair.rs
-index 170cbfad21..8c85100f7d 100644
+index a244b6ec18..aa41b12f3f 100644
 --- a/third_party/application-services/components/support/sql/src/obfsvfs_repair.rs
 +++ b/third_party/application-services/components/support/sql/src/obfsvfs_repair.rs
 @@ -45,6 +45,9 @@ pub struct Repaired {

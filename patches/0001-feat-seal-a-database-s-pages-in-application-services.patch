@@ -6,7 +6,7 @@ Subject: [PATCH] feat: seal a database's pages in application-services, for
 
 sql-support gains obfsvfs, for an app that keeps its databases sealed:
 encriox, whose history, bookmarks, logins and cards are sealed with
-keys from the user's vault (encri-firefox, W21). It is the scheme of
+keys from the user's vault (encriox W21). It is the scheme of
 Gecko's obfuscating VFS, brought to application-services' own SQLite
 with AES-256-GCM from NSS: each 8192-byte page, its log's and its
 journal's, sealed under a key handed to obfsvfs by a handle, never in
@@ -27,7 +27,7 @@ On Android, where application-services has a SQLite of its own, it is
 SQLite's default VFS before any database opens, and refuses a sealed
 database opened without its key, and one in the clear with a key.
 
-The stage 3 spike's patches 0001, 0005 and 0008, as one (encri-firefox,
+The stage 3 spike's patches 0001, 0005 and 0008, as one (encriox,
 W21, W24).
 
 Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
@@ -84,7 +84,7 @@ index e7b7aacfd5..7474fc2323 100644
  mod repeat;
 diff --git a/third_party/application-services/components/support/sql/src/obfsvfs.rs b/third_party/application-services/components/support/sql/src/obfsvfs.rs
 new file mode 100644
-index 0000000000..5c58c6fafd
+index 0000000000..c0178af0b2
 --- /dev/null
 +++ b/third_party/application-services/components/support/sql/src/obfsvfs.rs
 @@ -0,0 +1,1220 @@
@@ -94,7 +94,7 @@ index 0000000000..5c58c6fafd
 +
 +//! A VFS shim that seals a database's pages under a key given with its name, for an app that keeps its databases
 +//! sealed: encriox, whose history, bookmarks, logins and cards are sealed with a key from the user's vault
-+//! (encri-firefox, `docs/sealed-history.md`).
++//! (encriox, `docs/sealed-history.md`).
 +//!
 +//! It is the scheme of Gecko's obfuscating VFS (`storage/ObfuscatingVFS.cpp`, after SQLite's public-domain obfsvfs
 +//! demo), which seals Gecko's own profile databases, brought to application-services' SQLite, with AES-256-GCM from

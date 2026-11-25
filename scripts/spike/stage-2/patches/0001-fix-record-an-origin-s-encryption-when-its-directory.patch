@@ -11,7 +11,7 @@ the OriginInfo did. With dom.quotaManager.encryption.enabled on, an
 origin whose data was encrypted was recorded as plaintext, and the
 next session opened its databases without their key: on two of three
 phones, the next start could not read the site's local storage,
-IndexedDB or Cache API (encri-firefox W12). The encrypted state is now
+IndexedDB or Cache API (encriox W12). The encrypted state is now
 taken from the OriginInfo with the rest of the origin's state.
 
 Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>

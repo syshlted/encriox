@@ -36,7 +36,7 @@ index 7474fc2323..9848fb3cf9 100644
  pub mod path;
  mod repeat;
 diff --git a/third_party/application-services/components/support/sql/src/obfsvfs.rs b/third_party/application-services/components/support/sql/src/obfsvfs.rs
-index f54c0ccc71..ebab374ef3 100644
+index 93ee6dc520..6219c09019 100644
 --- a/third_party/application-services/components/support/sql/src/obfsvfs.rs
 +++ b/third_party/application-services/components/support/sql/src/obfsvfs.rs
 @@ -26,6 +26,9 @@
@@ -256,7 +256,7 @@ index f54c0ccc71..ebab374ef3 100644
      key.fill(0);
 diff --git a/third_party/application-services/components/support/sql/src/obfsvfs_repair.rs b/third_party/application-services/components/support/sql/src/obfsvfs_repair.rs
 new file mode 100644
-index 0000000000..170cbfad21
+index 0000000000..a244b6ec18
 --- /dev/null
 +++ b/third_party/application-services/components/support/sql/src/obfsvfs_repair.rs
 @@ -0,0 +1,473 @@
@@ -266,7 +266,7 @@ index 0000000000..170cbfad21
 +
 +//! Whether a sealed database opens, and the repair of one that is damaged, for an app that asks its user what to do
 +//! with a database that does not open: encriox, whose history, bookmarks, logins and cards are sealed
-+//! (encri-firefox, W22).
++//! (encriox W22).
 +//!
 +//! - [`check`] opens the database as its component would, and reads it through: its header, its schema, and every
 +//!   page SQLite's quick check reads, each the newest of its copies, the log's or the database's. A key not the

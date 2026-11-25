@@ -13,7 +13,7 @@ Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
  1 file changed, 17 insertions(+), 7 deletions(-)
 
 diff --git a/mobile/android/android-components/components/browser/thumbnails/src/main/java/mozilla/components/browser/thumbnails/storage/ThumbnailStorage.kt b/mobile/android/android-components/components/browser/thumbnails/src/main/java/mozilla/components/browser/thumbnails/storage/ThumbnailStorage.kt
-index f365a51379..478bb4ca2e 100644
+index 4b32df1b58..40e8068c05 100644
 --- a/mobile/android/android-components/components/browser/thumbnails/src/main/java/mozilla/components/browser/thumbnails/storage/ThumbnailStorage.kt
 +++ b/mobile/android/android-components/components/browser/thumbnails/src/main/java/mozilla/components/browser/thumbnails/storage/ThumbnailStorage.kt
 @@ -42,12 +42,14 @@ internal val privateDiskCache = ThumbnailDiskCache(isPrivate = true)

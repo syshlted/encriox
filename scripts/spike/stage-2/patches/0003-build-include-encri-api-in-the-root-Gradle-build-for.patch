@@ -7,7 +7,7 @@ Subject: [PATCH] build: include encri-api in the root Gradle build, for
 Stage 2 of encriox's spike builds Fenix against this checkout's own
 GeckoView, which is a project only of the root build, so that build
 includes encri-api from source as Fenix's own settings.gradle does
-(encri-firefox W13). mach's own Gradle runs name no encri.api.dir and
+(encriox W13). mach's own Gradle runs name no encri.api.dir and
 include nothing.
 
 Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
@@ -16,14 +16,14 @@ Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
  1 file changed, 7 insertions(+)
 
 diff --git a/settings.gradle b/settings.gradle
-index ef34933d89..a8253417fc 100644
+index ef34933d89..f869176ac7 100644
 --- a/settings.gradle
 +++ b/settings.gradle
 @@ -62,6 +62,13 @@ if (!gradle.mozconfig.substs.MOZ_ANDROID_SUBPROJECT || gradle.mozconfig.substs.M
      project(':fenix:longfox').projectDir = new File("${gradle.mozconfig.topsrcdir}/mobile/android/fenix/app/longfox")
      include ':fenix:benchmark'
      project(':fenix:benchmark').projectDir = new File("${gradle.mozconfig.topsrcdir}/mobile/android/fenix/benchmark")
-+    // encri-api, from source, as Fenix's own settings.gradle includes it for encriox's spike (encri-firefox W1, W13):
++    // encri-api, from source, as Fenix's own settings.gradle includes it for encriox's spike (W1, W13):
 +    // this root build is the one that builds Fenix against this checkout's GeckoView. mach's own Gradle runs name no
 +    // `encri.api.dir`, and build no Fenix.
 +    def encriApiDir = providers.gradleProperty("encri.api.dir").getOrNull()

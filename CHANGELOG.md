@@ -8,8 +8,11 @@ What happened, newest first. Why is in `docs/decisions/`, and what is next is in
 
 On the user's word, the repository takes the app's name: its directory in the suite is `encriox/`, as its GitHub
 remote, `syshlted/encriox`, already was, and it is cited as *encriox W1*. Its titles and the suite's pointers to it
-changed with it. What was written before, in the changelogs, the decision records and the patches, still says
-*encri-firefox*, which is this repository.
+changed with it. What was written before, in the changelogs and the decision records, still says *encri-firefox*,
+which is this repository. The patches say encriox: every commit of the four series, on the checkouts' branches, was
+written again with the name changed in its comments and its message, signed, with its author and dates kept, and the
+patches written out from them, each series checked to apply to the same tree as its branch. Nothing but comments and
+messages changed, so the spikes' builds measured before are of the same code.
 
 ### A frozen browser keeps its keys through a lock (2026-11-25)
 

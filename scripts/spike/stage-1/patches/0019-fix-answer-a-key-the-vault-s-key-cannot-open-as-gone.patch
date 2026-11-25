@@ -11,7 +11,7 @@ for good with an exception their callers do not catch, and saving a
 login could take the app down. SecureAbove22Preferences answers a value
 Keystore cannot open as absent, so the key manager makes a new key and
 the stores start again; the spike's store does the same now, and logs
-it. Without the vault's key at all, it still throws (encri-firefox W6).
+it. Without the vault's key at all, it still throws (encriox W6).
 
 Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
 ---
@@ -19,7 +19,7 @@ Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
  1 file changed, 17 insertions(+), 5 deletions(-)
 
 diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriKeyPreferences.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriKeyPreferences.kt
-index 242ebe7c9f..dca7e7fbf6 100644
+index 25c5e4d17e..26e5531308 100644
 --- a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriKeyPreferences.kt
 +++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/encri/EncriKeyPreferences.kt
 @@ -7,6 +7,8 @@ package org.mozilla.fenix.encri

@@ -5,7 +5,7 @@ Subject: [PATCH] fix: keep a private tab's thumbnail in memory, never on disk
 
 Android Components wrote a full-screen JPEG of each private tab to
 no_backup/ and deleted it only at the next start, so the spike left one
-unencrypted on every phone (encri-firefox W4, W5). It is kept in memory
+unencrypted on every phone (encriox W4, W5). It is kept in memory
 now, compressed as the disk cache keeps it, and goes with the process.
 What an earlier build left on disk is still cleared at start.
 
@@ -15,7 +15,7 @@ Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
  1 file changed, 20 insertions(+), 3 deletions(-)
 
 diff --git a/mobile/android/android-components/components/browser/thumbnails/src/main/java/mozilla/components/browser/thumbnails/storage/ThumbnailStorage.kt b/mobile/android/android-components/components/browser/thumbnails/src/main/java/mozilla/components/browser/thumbnails/storage/ThumbnailStorage.kt
-index 6b9892b89d..f365a51379 100644
+index 6b9892b89d..4b32df1b58 100644
 --- a/mobile/android/android-components/components/browser/thumbnails/src/main/java/mozilla/components/browser/thumbnails/storage/ThumbnailStorage.kt
 +++ b/mobile/android/android-components/components/browser/thumbnails/src/main/java/mozilla/components/browser/thumbnails/storage/ThumbnailStorage.kt
 @@ -6,7 +6,9 @@ package mozilla.components.browser.thumbnails.storage
@@ -37,7 +37,7 @@ index 6b9892b89d..f365a51379 100644
  internal val privateDiskCache = ThumbnailDiskCache(isPrivate = true)
  
 +// encriox writes nothing of a private tab to disk, where a full-screen JPEG of it stayed until the next start
-+// (encri-firefox W4): its thumbnail is kept here, compressed as the disk cache keeps it, and goes with the process.
++// (encriox W4): its thumbnail is kept here, compressed as the disk cache keeps it, and goes with the process.
 +private const val PRIVATE_THUMBNAILS_BYTES = 16 * 1024 * 1024
 +private const val PRIVATE_THUMBNAIL_QUALITY = 90
 +

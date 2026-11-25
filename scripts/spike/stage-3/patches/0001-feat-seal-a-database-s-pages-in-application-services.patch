@@ -6,7 +6,7 @@ Subject: [PATCH] feat: seal a database's pages in application-services, for
 
 sql-support gains obfsvfs, for an app that keeps its databases sealed:
 encriox's spike, whose history, bookmarks, logins and cards are sealed
-with keys from the user's vault (encri-firefox, stage 3). It is the
+with keys from the user's vault (encriox, stage 3). It is the
 scheme of Gecko's obfuscating VFS, brought to application-services'
 own SQLite with AES-256-GCM from NSS: each 8192-byte page, its log's
 and its journal's, sealed under a key given in the database's URI.
@@ -71,7 +71,7 @@ index e7b7aacfd5..7474fc2323 100644
  mod repeat;
 diff --git a/third_party/application-services/components/support/sql/src/obfsvfs.rs b/third_party/application-services/components/support/sql/src/obfsvfs.rs
 new file mode 100644
-index 0000000000..a510458eb5
+index 0000000000..afff9893c7
 --- /dev/null
 +++ b/third_party/application-services/components/support/sql/src/obfsvfs.rs
 @@ -0,0 +1,941 @@
@@ -81,7 +81,7 @@ index 0000000000..a510458eb5
 +
 +//! A VFS shim that seals a database's pages under a key given with its name, for an app that keeps its databases
 +//! sealed: encriox, whose history, bookmarks, logins and cards are sealed with a key from the user's vault
-+//! (encri-firefox, `docs/sealed-history.md`).
++//! (encriox, `docs/sealed-history.md`).
 +//!
 +//! It is the scheme of Gecko's obfuscating VFS (`storage/ObfuscatingVFS.cpp`, after SQLite's public-domain obfsvfs
 +//! demo), which seals Gecko's own profile databases, brought to application-services' SQLite, with AES-256-GCM from
