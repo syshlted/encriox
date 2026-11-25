@@ -215,7 +215,15 @@ and asks the user at start about one that does not open (W25). encriox's own ser
 - **Android 14 and later freeze a cached app's process**: the gate finishes at once, and the S24's bench stopped in
   its first run with nothing said. `bench-places` keeps the process unfrozen with `am unfreeze --sticky`, which
   changes no setting, and fails if it finds it frozen (W23). A lock may reach a frozen browser only once it is
-  unfrozen: unmeasured.
+  unfrozen: `stage-2/check-frozen` measures it, with the phone's owner there to lock the vault and open it again.
+- **This machine's `awk` is mawk, which holds back what it reads from a pipe**: a filter following `adb logcat`
+  through it saw a gate's answer late or never. `check-frozen` follows the log through `grep --line-buffered`.
+- **Android 17 renames `dumpsys` fields**: the activity in front is `topResumedActivity`, not `mResumedActivity`,
+  and a recent task's activity `mActivityComponent`, not `realActivity`. A check grepping the old names finds
+  nothing there, and reads it as the browser not in front, or not in the recent apps.
+- **Anything over the browser sends it to the background**: on the S24, an alarm's screen came up during
+  `check-frozen`'s minute in front, and Android froze the browser before the home screen did. `check-frozen` requires
+  the browser in front first.
 - **With stage 3, the app's own start asks for the vault's key before the gate does**, for its databases' keys, and
   the gate then logs `key held` in a new process. `check-keys` looks for a key read in the process instead (W23).
 - **The A20's vault locks while a long bench runs**, as Samsung's process manager kills encri in the background:

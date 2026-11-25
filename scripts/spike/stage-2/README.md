@@ -89,6 +89,13 @@ starts Gecko with the profile's keys locked, or makes a profile in the clear.
   first, so that its pages' stores are kept, and on at its end. `WATCHED` names the app's directories it compares,
   `files/mozilla cache` by default; stage 3's run adds application-services' databases with `files databases cache`. It types the passphrase on file into
   encri's screen, never printing it, so it is for a test vault whose passphrase is on file; the G6's would not open.
+- `check-frozen <serial> before`, then `after <marker> <since>`: a lock that reaches a browser Android has frozen
+  (W23), on Android 14 or later, with the phone's owner there, as no passphrase is on file. `before` writes a page's
+  stores in a normal tab from a fresh start, goes to the home screen, and times each process's freeze; the owner then
+  locks the vault in encri's own screen; `after` watches the frozen browser for `WAIT` seconds, opens it from its
+  launcher entry and times what follows by the phone's log, then opens the vault again through encri's unlock, which
+  the owner types, and reads the page back. It captures nothing of the screen, and keeps of the log only the lines
+  that name the browser or encri.
 - `check-obfsvfs <serial>`: the third round (W16), in two parts (its header). Gecko's SQLite, plain and through
   obfsvfs, timed by the gate's `--ei sqlbench <rows> --ei rounds <n>`; then IndexedDB, as a site uses it, on a page
   from `../stage-1/serve`'s `/idb`, on fresh profiles of stage 2's build, `APK`, and of `PLAIN_APK`, a build of the

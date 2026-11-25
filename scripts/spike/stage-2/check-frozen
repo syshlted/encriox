@@ -1,0 +1,301 @@
+#!/bin/sh
+# A lock of the vault that reaches a browser Android has frozen (W23's unmeasured; ROADMAP.md, item 6). Android 14 and
+# later freeze a cached app's process, and encri tells a session of a lock by a oneway call, which a frozen process
+# can take only once it is unfrozen: the browser's close at a lock (patch 0012, W20) waits for it, and the keys it
+# holds stay in its memory until then. In two steps, with the phone's owner there to lock the vault in encri's own
+# screen between them, and to type its passphrase whenever encri asks: no passphrase is on file for such a phone.
+#
+#   scripts/spike/stage-2/check-frozen <adb serial> before
+#   scripts/spike/stage-2/check-frozen <adb serial> after <marker> <since>
+#
+# `before`: a fresh start, as stage 3's check-sealed makes one, Gecko's profile and the stores' three databases
+# deleted; the vault opened to the spike, through encri's unlock if it is locked; a page's stores written in a normal
+# tab, with a minute in front for them to reach the disk; then the home screen, and the time Android takes to freeze
+# each of the browser's processes. It ends by printing the `after` to run once the vault is locked, with the page's
+# marker and the time `before` ended, from which `after` reads the phone's log.
+#
+# `after`: what the log says of the browser and encri since `before` ended; then for WAIT seconds, 120 by default,
+# whether the browser's processes are still there and frozen, the app having said nothing; then the browser opened
+# from its launcher entry, as its user opens it, and what followed, timed from the launch by the phone's log: each
+# process unfrozen, the activity resumed, the close, and each process gone. Then the vault opened to the spike again,
+# through encri's unlock, and the page's stores read back.
+#
+# It captures nothing of the phone's screen, and keeps nothing of the phone's log but the lines that name the browser
+# or encri, the app's own, and in `after` those of the browser's process: the rest never reaches this machine's disk.
+# It looks at the browser's processes with `ps` and `am isfrozen`, which do not unfreeze them. Its pages are in
+# normal tabs, whose stores are kept, so it turns the spike's private setting off, and on again at the end of `after`.
+# For a build that closes at a lock, patch 0012's: stage 2's or stage 3's.
+set -eu
+export LC_ALL=C
+
+here=$(cd "$(dirname "$0")" && pwd)
+stage1=$(cd "$here/../stage-1" && pwd)
+usage="usage: check-frozen <adb serial> before | after <marker> <since>"
+serial=${1:?$usage}
+step=${2:?$usage}
+package=com.systemhalted.encri.browser.spike
+encri=com.systemhalted.encri
+adb="${ADB:-$HOME/Android/Sdk/platform-tools/adb} -s $serial"
+port=8648
+work=$(mktemp -d)
+server=
+recorder=
+trap '[ -z "$server" ] || kill "$server" 2>/dev/null || true; [ -z "$recorder" ] || kill "$recorder" 2>/dev/null || true; $adb reverse --remove tcp:$port 2>/dev/null || true; rm -rf "$work"' EXIT
+
+fail() {
+    echo "check-frozen: $*" >&2
+    exit 1
+}
+
+# The phone's clock, which its log is timed by, to the millisecond, as logcat's -T takes it.
+phonenow() { $adb shell date +%s.%N | tr -d '\r' | sed 's/\(\.[0-9][0-9][0-9]\).*/\1/'; }
+# Seconds from $1 to $2.
+between() { awk -v a="$1" -v b="$2" 'BEGIN { printf "%.1f", b - a }'; }
+
+# Follows the phone's log from $1, a time by its clock, into $work/log, keeping the lines that name the browser or
+# encri, the app's own, and with $2 those of the browser's process $2. The rest goes through a pipe and is dropped.
+record() {
+    mkfifo "$work/raw"
+    $adb logcat -v epoch -b main,system,events -T "$1" > "$work/raw" 2>/dev/null &
+    recorder=$!
+    # A line of logcat's is its time, then its process's pid.
+    ours=encriox-spike
+    [ -z "${2:-}" ] || ours="^ *[0-9.]+ +$2 "
+    # grep, as mawk holds back what it reads from a pipe.
+    grep --line-buffered -E -e "$encri" -e encriox-spike -e "$ours" < "$work/raw" > "$work/log" &
+}
+
+lines() { wc -l < "$work/log" | tr -d ' '; }
+# The app's own log after line $1 of the recording, without logcat's prefix.
+applog() { tail -n +"$((${1:-0} + 1))" "$work/log" | sed -n 's/^.*encriox-spike: //p'; }
+
+# Waits up to $2 seconds for a line of the app's own log after line $3 matching $1.
+awaitlog() {
+    for _ in $(seq "$2"); do
+        applog "$3" | grep -qE "$1" && return 0
+        sleep 1
+    done
+    applog "$3" | sed 's/^/    /' >&2
+    fail "the app did not log /$1/ within $2s"
+}
+
+# The recording's lines of the browser's and encri's processes, activities and freezes, and the app's own, from $2,
+# or from $1, each timed from $1, by the phone's clock. Android 10 renamed the activities' am_ events wm_.
+timeline() {
+    awk -v t="$1" -v from="${2:-$1}" '
+        $1 < from { next }
+        { tag = $5; sub(/:$/, "", tag) }
+        tag ~ /^(am_(freeze|unfreeze|proc_start|proc_died|kill)|(wm|am)_(resume_activity|finish_activity|destroy_activity|on_(resume|paused|stop|destroy)_called)|encriox-spike)$/ ||
+            tag ~ /[Ff]reecess/ {
+            msg = $0
+            sub(/^[^:]*: /, "", msg)
+            printf "    %+8.2fs  %s: %s\n", $1 - t, tag, msg
+        }' "$work/log"
+}
+
+# The gate started with the extras given; its log follows line $from.
+gate() {
+    from=$(lines)
+    $adb shell am start -n $package/org.mozilla.fenix.encri.EncriGateActivity "$@" >/dev/null
+}
+
+# The phone awake and unlocked: on its owner's phone, by its owner.
+wake() {
+    $adb shell input keyevent KEYCODE_WAKEUP
+    for i in $(seq 120); do
+        $adb shell dumpsys window | grep -m1 mCurrentFocus | grep -qE 'NotificationShade|Keyguard|StatusBar' || return 0
+        [ "$i" -ne 1 ] || echo "  the phone is locked: its owner unlocks it"
+        sleep 1
+    done
+    fail "the phone stayed locked"
+}
+
+# Opens the vault to the spike through the gate, through encri's unlock if it is locked, then stops the app.
+openvault() {
+    wake
+    gate --ez list true
+    echo "  the vault opened to the spike: if encri asks for its passphrase, its owner types it"
+    awaitlog "^gate (open|still locked|not authorized|refused)" 300 "$from"
+    applog "$from" | grep -q '^gate open$' ||
+        fail "the vault did not open to the spike: $(applog "$from" | grep '^gate ' | tail -1)"
+    $adb shell am force-stop $package
+}
+
+# Each of the browser's processes: its pid, its name past the package's, and whether Android has it frozen.
+procs() {
+    $adb shell "ps -A -o PID,NAME | while read p n; do case \$n in $package) echo \$p main \$(am isfrozen \$p 2>&1) ;; $package:*) echo \$p \${n#*:} \$(am isfrozen \$p 2>&1) ;; esac; done" |
+        tr -d '\r'
+}
+
+# One line of procs' file $1: each process by name, frozen or running.
+states() { awk '{ print $2 "=" ($3 == "true" ? "frozen" : $3 == "false" ? "running" : $3) }' "$1" | sort | tr '\n' ' '; }
+
+# Android 17 names a task's activity mActivityComponent, where earlier releases name it realActivity.
+recents() {
+    if $adb shell dumpsys activity recents | grep -qE "(realActivity|mActivityComponent)=$package/"; then
+        echo yes
+    else
+        echo no
+    fi
+}
+
+# Whose activity is in front, the browser's, encri's, or neither, and nothing of any other app's.
+front() {
+    case $($adb shell dumpsys activity activities | grep -m1 -E 'mResumedActivity|topResumedActivity|ResumedActivity:') in
+        *"$package/"*) echo "the browser" ;;
+        *"$encri/"*) echo "encri" ;;
+        *) echo "neither the browser nor encri" ;;
+    esac
+}
+
+# The page at $1 with the marker $2, from stage 1's server, in a normal tab; waits for $3 of its stores to report.
+page() {
+    [ -z "$server" ] || kill "$server" 2>/dev/null || true
+    "$stage1/serve" $port "$2" > "$work/served" 2>&1 &
+    server=$!
+    $adb reverse tcp:$port tcp:$port >/dev/null
+    sleep 1
+    wake
+    case $1 in
+        /) url="http://127.0.0.1:$port/?run=$2" ;;
+        *) url="http://127.0.0.1:$port/read?m=$2" ;;
+    esac
+    timeout 120 $adb shell am start -W -a android.intent.action.VIEW -d "$url" \
+        -n $package/org.mozilla.fenix.IntentReceiverActivity >/dev/null || fail "$url did not open in 2 minutes"
+    reported=0
+    for _ in $(seq 300); do
+        reported=$(grep -c '^report' "$work/served" || true)
+        [ "$reported" -ge "$3" ] && break
+        sleep 0.2
+    done
+    echo "  $url: $reported of $3 stores reported"
+    grep '^report' "$work/served" | sed 's/^report /    /'
+}
+
+case $step in
+    before)
+        [ $# -eq 2 ] || fail "$usage"
+        echo "== $serial: before. A fresh start, the vault opened to the spike, and a page's stores written"
+        "$here/fresh-profile" "$serial" >/dev/null
+        $adb shell "run-as $package sh -c 'rm -f files/places.sqlite* databases/logins2.sqlite* databases/autofill.sqlite*'"
+        record "$(phonenow)"
+        openvault
+        # Gecko given its secret, the stores sealed, and the tabs normal, whatever an earlier run left.
+        gate --es kek give
+        awaitlog "kek withheld=false" 30 "$from"
+        $adb shell am force-stop $package
+        gate --es sealing on
+        awaitlog "sealing unsealed=false" 30 "$from"
+        $adb shell am force-stop $package
+        gate --es private false
+        awaitlog "^gate private=false" 30 "$from"
+        $adb shell am force-stop $package
+        marker="ENCRIOX$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')"
+        page / "$marker" 8
+        [ "$reported" -ge 8 ] || fail "the page's stores did not all report"
+        sleep "${SETTLE:-60}"
+
+        echo "== the home screen, and the time until Android freezes each of the browser's processes"
+        # Anything over the browser, an alarm's screen say, sends it to the background before the home screen does.
+        [ "$(front)" = "the browser" ] ||
+            fail "the browser was not in front at the end of its minute, so its freeze would not be timed from the home screen"
+        procs > "$work/procs"
+        echo "  before the home screen: $(states "$work/procs")"
+        home=$($adb shell 'date +%s.%N; input keyevent KEYCODE_HOME' | head -1 | tr -d '\r' | cut -c1-14)
+        last=$(states "$work/procs")
+        frozen=
+        for i in $(seq "${FREEZE_WAIT:-900}"); do
+            procs > "$work/procs"
+            now=$(phonenow)
+            state=$(states "$work/procs")
+            [ "$state" = "$last" ] || echo "  $(between "$home" "$now")s: $state"
+            last=$state
+            if awk '$2 == "main" && $3 == "true" { found = 1 } END { exit !found }' "$work/procs"; then
+                [ -n "$frozen" ] || frozen=$now
+                # Every process frozen, or the app's own frozen for 30 seconds.
+                awk '$3 != "true" { exit 1 }' "$work/procs" && break
+                [ "$(between "$frozen" "$now" | cut -d. -f1)" -lt 30 ] || break
+            else
+                frozen=
+            fi
+            sleep 1
+        done
+        [ -n "$frozen" ] || fail "Android did not freeze the browser in ${FREEZE_WAIT:-900}s"
+        echo "  the app's own process frozen $(between "$home" "$frozen")s after the home screen, by ps and am"
+        echo "  by the phone's log, from the home screen:"
+        timeline "$home"
+        echo "  in the recent apps: $(recents)"
+        echo "== now: the vault locked in encri's own screen, the browser left in the background; then"
+        echo "  $0 $serial after $marker $(phonenow)"
+        ;;
+
+    after)
+        [ $# -eq 4 ] || fail "$usage"
+        marker=$3
+        since=$4
+        procs > "$work/procs"
+        main=$(awk '$2 == "main" { print $1 }' "$work/procs")
+        [ -n "$main" ] || fail "the browser is not running"
+        record "$since" "$main"
+        sleep 3
+        echo "== $serial: after. Since before ended, by the phone's log:"
+        timeline "$since"
+        echo "  the browser's processes: $(states "$work/procs")"
+
+        echo "== the browser in the background with the vault locked, for ${WAIT:-120}s"
+        began=$(phonenow)
+        said=$(lines)
+        last=$(states "$work/procs")
+        for _ in $(seq $((${WAIT:-120} / 2))); do
+            sleep 2
+            procs > "$work/procs"
+            state=$(states "$work/procs")
+            [ "$state" = "$last" ] || echo "  $(between "$began" "$(phonenow)")s: $state"
+            last=$state
+        done
+        if [ -n "$(applog "$said")" ]; then
+            echo "  the app said:"
+            applog "$said" | sed 's/^/    /'
+        else
+            echo "  the app said nothing"
+        fi
+        echo "  the browser's processes at the end: $last"
+        echo "  in the recent apps: $(recents)"
+
+        echo "== the browser opened from its launcher entry"
+        wake
+        # Gecko's crash helper holds no page and no key, and may outlive the session (W20).
+        session=$(grep -v ' crashhelper' "$work/procs" | cut -d' ' -f1)
+        launched=$($adb shell "date +%s.%N; am start -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -n $package/.App >/dev/null" |
+            head -1 | tr -d '\r' | cut -c1-14)
+        gone=
+        for _ in $(seq 150); do
+            $adb shell ps -A -o PID | tr -d '\r' > "$work/pids"
+            if ! printf '%s\n' "$session" | grep -Fqx -f "$work/pids"; then
+                gone=$(phonenow)
+                break
+            fi
+            sleep 0.2
+        done
+        sleep 3
+        if [ -n "$gone" ]; then
+            echo "  the session's processes gone within $(between "$launched" "$gone")s of the launch"
+        else
+            echo "  WRONG: the session's processes still there 30s after the launch"
+        fi
+        echo "  by the phone's log, from the launch:"
+        timeline "$launched" "$began"
+        echo "  in front: $(front); in the recent apps: $(recents)"
+
+        echo "== the vault opened to the spike again, and the page's stores read back"
+        $adb shell am force-stop $package
+        openvault
+        page /read "$marker" 6
+        echo "  read back with the marker: $(grep -c "^report .*value=$marker\$" "$work/served" || true) of 6"
+        gate --es private true
+        awaitlog "^gate private=true" 30 "$from"
+        $adb shell am force-stop $package
+        ;;
+
+    *) fail "$usage" ;;
+esac
