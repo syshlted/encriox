@@ -1,8 +1,15 @@
-# encri-firefox — changelog
+# encriox — changelog
 
 What happened, newest first. Why is in `docs/decisions/`, and what is next is in `ROADMAP.md`.
 
 ## Unreleased
+
+### The repository is encriox (2026-11-25)
+
+On the user's word, the repository takes the app's name: its directory in the suite is `encriox/`, as its GitHub
+remote, `syshlted/encriox`, already was, and it is cited as *encriox W1*. Its titles and the suite's pointers to it
+changed with it. What was written before, in the changelogs, the decision records and the patches, still says
+*encri-firefox*, which is this repository.
 
 ### A frozen browser keeps its keys through a lock (2026-11-25)
 

@@ -1,4 +1,4 @@
-# encri-firefox — agent guide
+# encriox — agent guide
 
 > **Level 0 of four**, loaded into every session: only what is true for every component, laid out as the suite's
 > `docs/documentation.md` says (encri D127). The rest loads when you touch a component or is read when needed. Keep it
@@ -70,7 +70,7 @@ These are external facts, each sourced in the study. They are not negotiable.
    and a key it holds sits in its memory while it runs.
 3. **The product's name cannot contain "Firefox"**, nor follow the "[Something]-fox" pattern Mozilla's policy names,
    nor contain "Chrome", "Chromium" or "Blink" on the other engine: each vendor's trademark policy requires the fork's
-   own branding. The app is encriox (W3); `encri-firefox` is a repository name, not an app name.
+   own branding. The app is encriox (W3), and so is its repository, named encri-firefox until 2026-11-25.
 4. **Files a Firefox fork modifies stay MPL-2.0**, and their source must be published.
 5. **A grant is keyed on the package for good** (encri D120, D145), and lapses with every update encri's registry has
    not reviewed (encri D120, D130). At Firefox's two-week cadence an unlisted browser would ask the user again twice a

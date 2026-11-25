@@ -1,4 +1,4 @@
-# encri-firefox
+# encriox
 
 **encriox** is a browser for an encri vault: a fork of Firefox for Android. Its downloads, extension packages and session snapshots
 would land in the vault, and its live stores, such as cookies, history and the cache, would stay off disk or be

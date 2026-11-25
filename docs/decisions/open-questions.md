@@ -1,4 +1,4 @@
-# encri-firefox — open questions
+# encriox — open questions
 
 Questions a decision left open. One that is answered is struck through, followed by the record that answers it.
 The first four were the study's *Open questions*, moved here when W1 was recorded on 2026-11-13.

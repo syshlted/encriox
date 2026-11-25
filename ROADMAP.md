@@ -1,4 +1,4 @@
-# encri-firefox — roadmap
+# encriox — roadmap
 
 What is next, and in what order. Why is in `docs/decisions/`, and what happened is in `CHANGELOG.md`. When they
 disagree, the decision records win.

@@ -1,4 +1,4 @@
-# encri-firefox — decision index
+# encriox — decision index
 
 Level 2 of the knowledge map in `AGENTS.md`: one line per decision. The full record is the
 linked file (level 3). *Briefs* names the component briefs in `.claude/rules/` (level 1) that

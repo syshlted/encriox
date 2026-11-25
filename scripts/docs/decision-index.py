@@ -121,7 +121,7 @@ def main():
                      ", ".join(cited.get(did, []))))
     rows.sort()
     out = [
-        "# encri-firefox — decision index\n",
+        "# encriox — decision index\n",
         "\n",
         "Level 2 of the knowledge map in `AGENTS.md`: one line per decision. The full record is the\n",
         "linked file (level 3). *Briefs* names the component briefs in `.claude/rules/` (level 1) that\n",
