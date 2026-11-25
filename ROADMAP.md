@@ -127,10 +127,19 @@ sources are there, and are not repeated here:
      `check-unlock` with the databases watched.~~ Pages over TLS and `check-unlock` with the databases watched, done on
      the A20 (W21). ~~Owed here: the S24.~~ **On the S24 too, 2026-11-20 (W23)**, with `check-kek`; `check-unlock`,
      which locks the vault, was not run there.
-   - **What a lock does to a browser Android has frozen** (W23): on Android 14 and later a cached app's process is
+   - ~~**What a lock does to a browser Android has frozen** (W23): on Android 14 and later a cached app's process is
      frozen, and a lock reaches it only when it is unfrozen. Measure it on the S24, which needs its vault locked, so
      its owner's word and its owner there to unlock it; then whether encriox keeps itself from being frozen while it
-     holds the keys, by a foreground service of its own, or closes as it goes to the background. S.
+     holds the keys, by a foreground service of its own, or closes as it goes to the background. S.~~ **Measured and
+     decided 2026-11-25 (W27)**: frozen 71 s after the home screen, the S24's browser kept every key through a lock
+     until it was opened, 3½ minutes later, then closed in a third of a second and kept what its page wrote. The user
+     chose a foreground service while it holds the keys, and a close after five minutes in the background.
+   - **A foreground service while the browser holds the vault's keys, and a close after five minutes in the
+     background** (W27): in the spike, on stage 3's series, measured on the S24 with `check-frozen`, a lock in the
+     background closing the browser at once, then carried with the spikes' patches that are encriox's. S.
+   - **Whether a phone writes swapped memory to its storage** (W27): Samsung's RAM Plus can back swap with the
+     phone's storage, and the S24 had compacted the frozen browser's memory and put 31 MB of encri's in swap. Read the
+     S24's swap and zram setup; it bears on every key in memory, encri's own among them, so encri is told. S.
    - ~~**History and bookmarks on in encriox's menus**, which W17 had off, and Fenix's history delegate set, S; and the
      stage 3 patches carried into encriox's series with the in-tree build in its mozconfig, S.~~ **Done 2026-11-23
      (W26)**, with the layout below first, which the series needed: W17's history and bookmarks off was never built,

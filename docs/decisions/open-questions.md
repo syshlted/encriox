@@ -100,7 +100,12 @@ The first four were the study's *Open questions*, moved here when W1 was recorde
 - **For encri: Samsung's process manager kills encri in the background**, which locks the vault (W20). On the A20,
   with its memory reported low, Chimera killed encri four times in eleven minutes while the browser sat at the home
   screen, and encriox, which closes at a lock, closed each time. Whether encri keeps itself alive while it is unlocked,
-  with a foreground service, say, is encri's to weigh; how often it happens on the other phones is unmeasured.
+  with a foreground service, say, is encri's to weigh; how often it happens on the other phones is unmeasured. The
+  S24 does it too (W27): its low-memory killer ended encri frozen in the background with the browser, 4 minutes after
+  both were frozen. Once encriox keeps a foreground service while it holds the keys, encri, bound by it, is not frozen
+  or ended in the background either, and the vault stays open until a lock: whether it should lock after a time of its
+  own is then encri's question. And whether the S24's swap reaches its storage, which bears on encri's key in memory,
+  is to be read.
 - ~~**A key-encryption key from the vault without a Gecko build.**~~ No (W14): an extension runs only once Gecko is up,
   after the profile's databases have opened, and at 160 SQLite and the HTTP cache ask for their keys under their own
   LocalKeys by name, so keys moved under a password KEK cannot be found. Stage 2's Gecko takes the secret at startup

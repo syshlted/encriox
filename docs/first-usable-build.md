@@ -39,7 +39,9 @@ vault's key does not open the profile is open. The spike is a debug build of 239
    its process. The next start asks for the unlock (W15) and reopens the saved tabs. This ends both bugs a lock has
    now: the logins' and the cards' keys left in memory (S3), and local storage lost when a page wrote it just before
    (S1). Whether Gecko's shutdown writes that local storage before it ends is to be measured. The alternative, tabs
-   kept running with nothing written, keeps keys in memory and needs every store to hold its writes.
+   kept running with nothing written, keeps keys in memory and needs every store to hold its writes. *(Amended, W27:
+   the close reaches a browser Android has frozen only once it is opened, so encriox keeps a foreground service while
+   it holds the keys, and closes after five minutes in the background.)*
 
 2. **Fenix's own records of pages.** Recommended: **each is sealed with the vault's key or kept in memory, and history
    and bookmarks are off in the first build**:

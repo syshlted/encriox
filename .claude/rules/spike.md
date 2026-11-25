@@ -215,7 +215,7 @@ and asks the user at start about one that does not open (W25). encriox's own ser
 - **Android 14 and later freeze a cached app's process**: the gate finishes at once, and the S24's bench stopped in
   its first run with nothing said. `bench-places` keeps the process unfrozen with `am unfreeze --sticky`, which
   changes no setting, and fails if it finds it frozen (W23). A lock may reach a frozen browser only once it is
-  unfrozen: `stage-2/check-frozen` measures it, with the phone's owner there to lock the vault and open it again.
+  unfrozen: `stage-2/check-frozen` measured it on the S24 (W27), its keys kept through the lock until it was opened.
 - **This machine's `awk` is mawk, which holds back what it reads from a pipe**: a filter following `adb logcat`
   through it saw a gate's answer late or never. `check-frozen` follows the log through `grep --line-buffered`.
 - **Android 17 renames `dumpsys` fields**: the activity in front is `topResumedActivity`, not `mResumedActivity`,
@@ -227,7 +227,11 @@ and asks the user at start about one that does not open (W25). encriox's own ser
 - **With stage 3, the app's own start asks for the vault's key before the gate does**, for its databases' keys, and
   the gate then logs `key held` in a new process. `check-keys` looks for a key read in the process instead (W23).
 - **The A20's vault locks while a long bench runs**, as Samsung's process manager kills encri in the background:
-  check that the vault is open before a check that needs it.
+  check that the vault is open before a check that needs it. The S24's did too, twice, once at `lmkd`'s end of encri
+  frozen in the background (W27).
+- **Fenix asks to be the default browser** after 4 cold starts, through Android's role dialog over its page, at most 3
+  times, 14 days apart (Nimbus's `default-browser-prompt`): a fresh profile's starts reach 4, and the dialog sends the
+  browser to the background. On the owner's phone, the owner cancels it (W27).
 - **Under zsh, `$adb` holding `adb -s <serial>` is one word**, and the command is not found: a loop waiting on it
   waits for good. Scripts run under `sh`; at the prompt, write `${=adb}`.
 - **The spike's private setting outlives a script**: `check-plaintext normal` leaves it off, and `check-unlock`
@@ -320,6 +324,9 @@ and asks the user at start about one that does not open (W25). encriox's own ser
 - **Stage 2's first Gecko build took 76 minutes**, 69 of them `mach build` at 86% of 8 cores, and a change to one pref
   8½. Its objdir holds 11 GB and its mach state 6.6 GB, on the drive for large builds; the checkout's clone took 14
   minutes, for 5.9 GB (W13).
+- **A browser Android has frozen keeps its keys through a lock** (W27, `check-frozen`): on the S24, frozen 71 s after
+  the home screen, it said nothing for 3½ minutes after encri's end locked the vault, every process there; opened, it
+  was unfrozen in 0.09 s, closed at 0.33 s, gone by 1.1 s, and its page's six stores read back.
 
 ## Decisions
 
@@ -343,6 +350,7 @@ and asks the user at start about one that does not open (W25). encriox's own ser
 | W23 | Stages 1 and 3 on the S24; a copy of the app's data cut short fails its check (`copy-data`) |
 | W24 | A check of its key in each sealed page: a wrong key refused, a damaged page damage, a torn log ended |
 | W25 | A sealed database that does not open is asked about at start: repaired, deleted or kept, never unasked |
+| W27 | A frozen browser keeps its keys through a lock until opened: a foreground service, and a close after 5 minutes |
 | encri-api L11, L12 | `write` saves only a finished writer; a writer's failure is told encri's reason |
 | encri D120, D145 | A grant is keyed on the package for good |
 
@@ -356,8 +364,8 @@ and asks the user at start about one that does not open (W25). encriox's own ser
 - Patch 0010's locked path on the G6, which locks its vault, so with its owner there to unlock it (`ROADMAP.md`).
 - W13's three flags, W15's four and W16's three.
 - W17's three flags, and W20's three: the 10 seconds, the crash helper, and S1 closed unreproduced.
-- W22's three flags, W23's two, W24's four and W25's five; a lock reaching a browser Android has frozen, on the S24
-  (`ROADMAP.md`).
+- W22's three flags, W23's two, W24's four, W25's five and W27's five; the foreground service and the close after five
+  minutes in the background W27 decided, and whether the S24 writes swapped memory to its storage (`ROADMAP.md`).
 
 ## Read next
 

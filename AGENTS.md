@@ -16,10 +16,11 @@ and measured on three phones (`scripts/spike/stage-1/`, W4 to W6); the stage 2 s
 with prefs alone (`scripts/spike/stage-2/`, W12), and stage 2 now builds its own Gecko, on which all three of
 Lockstore's switches work (W13) and the profile's keys are kept under a secret from the vault's key (W14), which does
 not start without the vault (W15), and whose encryption of SQLite was measured (W16), and which closes at a lock,
-letting Gecko write what it holds first (W20). Stage 3 builds application-services in Firefox's tree on stage 2's, and
-seals places', the logins' and autofill's databases with keys from the vault's (`scripts/spike/stage-3/`, W21), each
-page carrying a check of its key (W24), and a database that does not open asked about at start, to be repaired, deleted
-or kept (W25). encriox's first usable build is planned and accepted (W17; `ROADMAP.md`, item 6), and carries them.
+letting Gecko write what it holds first (W20), though one Android has frozen only once it is opened (W27). Stage 3
+builds application-services in Firefox's tree on stage 2's, and seals places', the logins' and autofill's databases with
+keys from the vault's (`scripts/spike/stage-3/`, W21), each page carrying a check of its key (W24), and a database that
+does not open asked about at start, to be repaired, deleted or kept (W25). encriox's first usable build is planned and
+accepted (W17; `ROADMAP.md`, item 6), and carries them.
 
 ## Relationship to the other repositories
 

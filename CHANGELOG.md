@@ -4,6 +4,16 @@ What happened, newest first. Why is in `docs/decisions/`, and what is next is in
 
 ## Unreleased
 
+### A frozen browser keeps its keys through a lock (2026-11-25)
+
+On the S24, with its owner there, a new check, stage 2's `check-frozen`, measured what a lock does to a browser
+Android 14 and later have frozen in the background (W27): frozen 71 seconds after the home screen, with encri's process,
+the spike kept every key through a lock for 3½ minutes, until it was opened, then closed in a third of a second and
+kept what its page wrote. The lock was Android's low-memory killer ending encri's frozen process, which locks the vault.
+On the user's word, encriox will keep a foreground service of its own while it holds the vault's keys, so that it is
+never frozen and a lock closes it at once, and close after five minutes in the background; it is built in the spike
+first. Whether the S24 writes swapped memory to its storage, which bears on every key in memory, is to be read.
+
 ### encriox's series begins (2026-11-23)
 
 On the user's word, encriox has a series of its own (W26): `firefox-release` names the Firefox release it is built on,

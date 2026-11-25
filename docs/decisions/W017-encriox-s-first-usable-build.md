@@ -105,5 +105,8 @@ encriox, and again only if encriox's key is ever rotated.
 - **W17's order of item 6** (2026-11-23, W26): history and bookmarks needed nothing turned on, W17's plan to have
   them off never having been built; and stage 3's patches could be carried only once encriox had a series, so the
   layout W9 settled came first. Stage 3's Fenix half waits for the spikes' patches that are encriox's.
+- **W17's first decision, the close at a lock** (2026-11-25, W27): it reaches a browser Android has frozen only once
+  the browser is opened, so a foreground service keeps encriox from being frozen while it holds the keys, and it
+  closes after five minutes in the background as at a lock.
 
 <!-- /amendments -->

@@ -102,5 +102,9 @@ it started the browser again in the background, where it waited at the locked va
   0012. The browser closed at the vault's key dropped, and the third origin read back whole, local storage among it.
 - **W19's, W20's and W21's unmeasured S24** (2026-11-20, W23): measured, on its owner's word, all as on the other
   phones; W20's real lock not, which would lock the S24's vault.
+- **W20's and W23's unmeasured lock of a browser Android has frozen** (2026-11-25, W27): measured on the S24, at a
+  lock by encri's end in the background: the frozen browser kept every key for 3½ minutes, until it was opened, then
+  closed in a third of a second and kept what its page wrote. On the user's word, encriox keeps a foreground service
+  while it holds the keys, and closes after five minutes in the background.
 
 <!-- /amendments -->

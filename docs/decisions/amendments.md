@@ -93,3 +93,10 @@ Each entry corrects a record. Its bold lead names the record possessively ("W1's
 - **W17's order of item 6** (2026-11-23, W26): history and bookmarks needed nothing turned on, W17's plan to have
   them off never having been built; and stage 3's patches could be carried only once encriox had a series, so the
   layout W9 settled came first. Stage 3's Fenix half waits for the spikes' patches that are encriox's.
+- **W20's and W23's unmeasured lock of a browser Android has frozen** (2026-11-25, W27): measured on the S24, at a
+  lock by encri's end in the background: the frozen browser kept every key for 3½ minutes, until it was opened, then
+  closed in a third of a second and kept what its page wrote. On the user's word, encriox keeps a foreground service
+  while it holds the keys, and closes after five minutes in the background.
+- **W17's first decision, the close at a lock** (2026-11-25, W27): it reaches a browser Android has frozen only once
+  the browser is opened, so a foreground service keeps encriox from being frozen while it holds the keys, and it
+  closes after five minutes in the background as at a lock.
