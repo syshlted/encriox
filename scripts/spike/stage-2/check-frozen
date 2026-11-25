@@ -7,6 +7,7 @@
 #
 #   scripts/spike/stage-2/check-frozen <adb serial> before
 #   scripts/spike/stage-2/check-frozen <adb serial> after <marker> <since>
+#   scripts/spike/stage-2/check-frozen <adb serial> read <marker>
 #
 # `before`: a fresh start, as stage 3's check-sealed makes one, Gecko's profile and the stores' three databases
 # deleted; the vault opened to the spike, through encri's unlock if it is locked; a page's stores written in a normal
@@ -20,6 +21,9 @@
 # process unfrozen, the activity resumed, the close, and each process gone. Then the vault opened to the spike again,
 # through encri's unlock, and the page's stores read back.
 #
+# `read`: that read-back alone, for an `after` whose unlock was not typed in time. Each step waits UNLOCK_WAIT seconds
+# for the owner to type the passphrase, 600 by default.
+#
 # It captures nothing of the phone's screen, and keeps nothing of the phone's log but the lines that name the browser
 # or encri, the app's own, and in `after` those of the browser's process: the rest never reaches this machine's disk.
 # It looks at the browser's processes with `ps` and `am isfrozen`, which do not unfreeze them. Its pages are in
@@ -30,7 +34,7 @@ export LC_ALL=C
 
 here=$(cd "$(dirname "$0")" && pwd)
 stage1=$(cd "$here/../stage-1" && pwd)
-usage="usage: check-frozen <adb serial> before | after <marker> <since>"
+usage="usage: check-frozen <adb serial> before | after <marker> <since> | read <marker>"
 serial=${1:?$usage}
 step=${2:?$usage}
 package=com.systemhalted.encri.browser.spike
@@ -85,7 +89,7 @@ timeline() {
     awk -v t="$1" -v from="${2:-$1}" '
         $1 < from { next }
         { tag = $5; sub(/:$/, "", tag) }
-        tag ~ /^(am_(freeze|unfreeze|proc_start|proc_died|kill)|(wm|am)_(resume_activity|finish_activity|destroy_activity|on_(resume|paused|stop|destroy)_called)|encriox-spike)$/ ||
+        tag ~ /^(lmkd|am_(freeze|unfreeze|proc_start|proc_died|kill)|(wm|am)_(resume_activity|finish_activity|destroy_activity|on_(resume|paused|stop|destroy)_called)|encriox-spike)$/ ||
             tag ~ /[Ff]reecess/ {
             msg = $0
             sub(/^[^:]*: /, "", msg)
@@ -115,7 +119,7 @@ openvault() {
     wake
     gate --ez list true
     echo "  the vault opened to the spike: if encri asks for its passphrase, its owner types it"
-    awaitlog "^gate (open|still locked|not authorized|refused)" 300 "$from"
+    awaitlog "^gate (open|still locked|not authorized|refused)" "${UNLOCK_WAIT:-600}" "$from"
     applog "$from" | grep -q '^gate open$' ||
         fail "the vault did not open to the spike: $(applog "$from" | grep '^gate ' | tail -1)"
     $adb shell am force-stop $package
@@ -146,6 +150,32 @@ front() {
         *"$encri/"*) echo "encri" ;;
         *) echo "neither the browser nor encri" ;;
     esac
+}
+
+# Waits up to a minute for the recording to stop growing for 3 seconds: a recording from a time minutes ago comes
+# over the network first.
+caughtup() {
+    size=-1
+    still=0
+    for _ in $(seq 60); do
+        now=$(wc -c < "$work/log")
+        if [ "$now" -eq "$size" ]; then still=$((still + 1)); else still=0; fi
+        [ "$still" -lt 3 ] || return 0
+        size=$now
+        sleep 1
+    done
+}
+
+# The page's stores read back, through the vault opened to the spike again, and the private setting on again.
+readback() {
+    echo "== the vault opened to the spike again, and the page's stores read back"
+    $adb shell am force-stop $package
+    openvault
+    page /read "$1" 6
+    echo "  read back with the marker: $(grep -c "^report .*value=$1\$" "$work/served" || true) of 6"
+    gate --es private true
+    awaitlog "^gate private=true" 30 "$from"
+    $adb shell am force-stop $package
 }
 
 # The page at $1 with the marker $2, from stage 1's server, in a normal tab; waits for $3 of its stores to report.
@@ -237,7 +267,7 @@ case $step in
         main=$(awk '$2 == "main" { print $1 }' "$work/procs")
         [ -n "$main" ] || fail "the browser is not running"
         record "$since" "$main"
-        sleep 3
+        caughtup
         echo "== $serial: after. Since before ended, by the phone's log:"
         timeline "$since"
         echo "  the browser's processes: $(states "$work/procs")"
@@ -286,15 +316,13 @@ case $step in
         echo "  by the phone's log, from the launch:"
         timeline "$launched" "$began"
         echo "  in front: $(front); in the recent apps: $(recents)"
+        readback "$marker"
+        ;;
 
-        echo "== the vault opened to the spike again, and the page's stores read back"
-        $adb shell am force-stop $package
-        openvault
-        page /read "$marker" 6
-        echo "  read back with the marker: $(grep -c "^report .*value=$marker\$" "$work/served" || true) of 6"
-        gate --es private true
-        awaitlog "^gate private=true" 30 "$from"
-        $adb shell am force-stop $package
+    read)
+        [ $# -eq 3 ] || fail "$usage"
+        record "$(phonenow)"
+        readback "$3"
         ;;
 
     *) fail "$usage" ;;
