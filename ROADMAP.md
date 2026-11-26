@@ -209,8 +209,9 @@ sources are there, and are not repeated here:
   could not be queried. ~~Whether counsel runs a clearance search before the first public build is the user's to
   say.~~ **None, 2026-11-20** (W3's amendment): encriox keeps its name, and a cease-and-desist renames it.
 - **A public remote** for this repository, before any build leaves the test phones (W2): ~~owed~~ **made by the user
-  2026-11-20**, `syshlted/encriox` on GitHub, public, holding only GitHub's first commit of `LICENSE` on `main`. This
-  repository's history is not pushed yet; its branch is `master` (`AGENTS.md`).
+  2026-11-20**, `syshlted/encriox` on GitHub, public, holding only GitHub's first commit of `LICENSE` on `main`.
+  ~~This repository's history is not pushed yet~~ **Pushed 2026-11-26**, as `master` (`AGENTS.md`), beside `main`.
+  Owed: `master` made GitHub's default branch, and `main` deleted, whose `LICENSE` is this one byte for byte.
 - ~~**How encriox keeps its own key**: a document in the vault, as the spike does (W6, flag 1), the same wrapped by a
   Keystore key of its own, or wrapped by encri for its package, which is a change to the contract
   (`open-questions.md`).~~ **A hidden document in the vault, `.encriox.key`, for now (W10).**

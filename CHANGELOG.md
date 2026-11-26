@@ -4,6 +4,12 @@ What happened, newest first. Why is in `docs/decisions/`, and what is next is in
 
 ## Unreleased
 
+### Pushed (2026-11-26)
+
+On the user's word, this repository's history is on its public remote, `syshlted/encriox`, as `master`, every commit
+signed. The remote's `main`, GitHub's first commit of the same `LICENSE`, is still there and still its default
+branch. The Firefox checkouts' branches, which the patches are exported from, have no remote and are not pushed.
+
 ### The repository is encriox (2026-11-25)
 
 On the user's word, the repository takes the app's name: its directory in the suite is `encriox/`, as its GitHub
