@@ -211,7 +211,8 @@ sources are there, and are not repeated here:
 - **A public remote** for this repository, before any build leaves the test phones (W2): ~~owed~~ **made by the user
   2026-11-20**, `syshlted/encriox` on GitHub, public, holding only GitHub's first commit of `LICENSE` on `main`.
   ~~This repository's history is not pushed yet~~ **Pushed 2026-11-26**, as `master` (`AGENTS.md`), beside `main`.
-  Owed: `master` made GitHub's default branch, and `main` deleted, whose `LICENSE` is this one byte for byte.
+  ~~Owed: `master` made GitHub's default branch, and `main` deleted, whose `LICENSE` is this one byte for byte.~~
+  **Done 2026-11-26**, on the user's word: `master` is the only branch there.
 - ~~**How encriox keeps its own key**: a document in the vault, as the spike does (W6, flag 1), the same wrapped by a
   Keystore key of its own, or wrapped by encri for its package, which is a change to the contract
   (`open-questions.md`).~~ **A hidden document in the vault, `.encriox.key`, for now (W10).**
